@@ -1621,18 +1621,26 @@ function renderMarkdown(mdText) {
   return tmp.innerHTML;
 }
 
-// 渲染后给 markdown 待办 checkbox 加 modified-checkbox 专用类
-// 同时给父级 <li> 补 task-item / task-done，确保 CSS 伪元素能命中
+// 渲染后处理 markdown 待办 checkbox：
+//   1. 父级 <li> 标记 task-item / task-done（CSS 伪元素绘制方框 + 对勾）
+//   2. 直接 REMOVE 原生 <input> 节点 — 彻底消除浏览器原生 checkbox 的视觉痕迹
+//      （备用 CSS 已加 vanish-checkbox class + 极端隐藏，做双保险）
 function applyTaskCheckboxClasses(rootEl) {
   if (!rootEl || !rootEl.querySelectorAll) return;
   rootEl.querySelectorAll('input[type="checkbox"]').forEach((cb) => {
-    cb.classList.add('modified-checkbox');
+    cb.classList.add('modified-checkbox', 'vanish-checkbox');
     const li = cb.closest('li');
-    if (!li) return;
-    if (!li.classList.contains('task-item')) li.classList.add('task-item');
-    if (cb.hasAttribute('checked') && !li.classList.contains('task-done')) {
-      li.classList.add('task-done');
+    if (li) {
+      if (!li.classList.contains('task-item')) li.classList.add('task-item');
+      const isChecked = cb.checked || cb.hasAttribute('checked');
+      if (isChecked && !li.classList.contains('task-done')) {
+        li.classList.add('task-done');
+      }
     }
+    // 清掉空白文本节点（avoid 残留 ' '/`\n` 推开布局）
+    const next = cb.nextSibling;
+    cb.remove();
+    if (next && next.nodeType === 3 && /^\s+$/.test(next.nodeValue)) next.remove();
   });
 }
 

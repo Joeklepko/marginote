@@ -1732,21 +1732,37 @@
     margin: 0 !important;
     display: inline !important;
   }
-  /* 隐藏原生 checkbox（全部尺寸 / flex / display 强制锁死）*/
+  /* 备用兜底：JS 直接 remove 原生 input 后这里通常无对象，但保留以防万一
+     （如禁 JS / DOM 操作失败）。.vanish-checkbox 是 JS 注入的专用类。*/
+  .preview input.vanish-checkbox,
+  .preview input.modified-checkbox,
+  .preview li.task-item input,
   .preview li.task-item input[type="checkbox"],
-  .preview li.task-item input[type="checkbox"].modified-checkbox,
+  .preview li.task-item p input,
   .preview li.task-item p input[type="checkbox"] {
     display: none !important;
+    visibility: hidden !important;
+    appearance: none !important;
+    -webkit-appearance: none !important;
+    position: fixed !important;
+    left: -100vw !important;
+    top: -100vh !important;
     width: 0 !important;
     height: 0 !important;
     min-width: 0 !important;
     max-width: 0 !important;
+    min-height: 0 !important;
+    max-height: 0 !important;
     flex: none !important;
     margin: 0 !important;
     padding: 0 !important;
-    visibility: hidden !important;
-    position: absolute !important;
-    left: -9999px !important;
+    border: none !important;
+    outline: none !important;
+    opacity: 0 !important;
+    pointer-events: none !important;
+    overflow: hidden !important;
+    clip: rect(0 0 0 0) !important;
+    clip-path: inset(50%) !important;
   }
   /* ::before 绘制 14x14 方框 */
   .preview li.task-item::before {
