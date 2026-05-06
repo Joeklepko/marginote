@@ -3824,8 +3824,32 @@ function bindV12() {
   // outline / split
   const ob = document.getElementById('outlineBtn');
   if (ob) ob.addEventListener('click', toggleOutline);
+  const oc = document.getElementById('outlineClose');
+  if (oc) oc.addEventListener('click', toggleOutline);
   const sb = document.getElementById('splitBtn');
   if (sb) sb.addEventListener('click', toggleSplitView);
+
+  // 双击切换 编辑/预览：
+  //   预览模式下双击渲染文字 -> 切回编辑
+  //   编辑模式下双击非输入区空白 -> 切到预览
+  const FORM_SEL = 'input, textarea, select, button, .icon-btn, .tag-pill, .tag-input-wrap, .editor-toolbar, .modal, .outline-panel';
+  function bindDblToggle(rootId, previewId, isPreviewFn, toggleFn, isActiveFn) {
+    const root = document.getElementById(rootId);
+    if (!root) return;
+    root.addEventListener('dblclick', (e) => {
+      if (!isActiveFn()) return;
+      const t = e.target;
+      const previewEl = document.getElementById(previewId);
+      const inPreview = previewEl && previewEl.contains(t);
+      if (isPreviewFn() && inPreview) {
+        toggleFn();
+      } else if (!isPreviewFn() && !t.closest(FORM_SEL)) {
+        toggleFn();
+      }
+    });
+  }
+  bindDblToggle('editor',         'preview',     () => isPreviewMode,     togglePreview,     () => !!currentNote);
+  bindDblToggle('todoEditorWrap', 'todoPreview', () => isTodoPreviewMode, toggleTodoPreview, () => !!currentTodo);
 
   // 搜索 placeholder 加语法提示
   const si = document.getElementById('searchInput');

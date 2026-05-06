@@ -1734,11 +1734,32 @@
   }
   .preview .task-item input[type=checkbox] {
     flex: 0 0 auto;
+    appearance: none;
+    -webkit-appearance: none;
     width: 16px;
     height: 16px;
-    margin: 5px 0 0;
-    accent-color: var(--accent);
+    margin: 6px 0 0;
+    border: 1.5px solid var(--ink-mute);
+    border-radius: 50%;
+    background: var(--paper);
+    position: relative;
     cursor: default;
+    transition: background 0.15s, border-color 0.15s;
+  }
+  .preview .task-item input[type=checkbox]:checked {
+    background: var(--accent);
+    border-color: var(--accent);
+  }
+  .preview .task-item input[type=checkbox]:checked::after {
+    content: '';
+    position: absolute;
+    left: 3px;
+    top: 0px;
+    width: 4px;
+    height: 8px;
+    border: solid var(--paper);
+    border-width: 0 1.5px 1.5px 0;
+    transform: rotate(45deg);
   }
   .preview .task-item.task-done {
     color: var(--ink-mute);
@@ -2304,21 +2325,36 @@
   .outline-panel {
     position: fixed;
     right: 0;
-    top: 0;
+    top: 56px;
     bottom: 0;
     width: 240px;
     background: var(--bg-warm);
     border-left: 1px solid var(--rule);
-    padding: 60px 16px 24px;
+    padding: 16px 16px 24px;
     transform: translateX(100%);
     transition: transform 0.25s ease;
-    z-index: 50;
+    z-index: 9;
     overflow-y: auto;
   }
   .outline-panel.show {
     transform: translateX(0);
     box-shadow: -8px 0 24px rgba(0,0,0,0.15);
   }
+  .outline-close {
+    position: absolute;
+    top: 8px;
+    right: 10px;
+    width: 28px;
+    height: 28px;
+    border: none;
+    background: transparent;
+    color: var(--ink-mute);
+    font-size: 22px;
+    line-height: 1;
+    cursor: pointer;
+    border-radius: 4px;
+  }
+  .outline-close:hover { background: var(--rule-soft); color: var(--ink); }
   .outline-panel h4 {
     font-family: 'JetBrains Mono', monospace;
     font-size: 10px;
@@ -3235,6 +3271,7 @@
 
 <!-- 大纲面板 -->
 <aside class="outline-panel" id="outlinePanel" aria-label="大纲">
+  <button class="outline-close" id="outlineClose" aria-label="关闭大纲" data-tip="关闭">×</button>
   <h4>大纲</h4>
   <div id="outlineList"></div>
 </aside>
