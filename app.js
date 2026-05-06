@@ -2470,7 +2470,6 @@ function renderAiProviderList() {
         if (aiConfig.activeId === id) aiConfig.activeId = aiConfig.providers[0]?.id || null;
         saveAiConfig();
         renderAiProviderList();
-        if (typeof syncProxyToBackground === 'function') syncProxyToBackground();
       });
     });
   });
@@ -2531,7 +2530,6 @@ function saveAiProviderForm() {
   saveAiConfig();
   renderAiProviderList();
   closeAiProviderForm();
-  if (typeof syncProxyToBackground === 'function') syncProxyToBackground();
   showToast('已保存');
 }
 
@@ -2606,16 +2604,10 @@ function buildProxyRules() {
 }
 
 async function syncProxyToBackground() {
+  // 启动时清理可能残留的旧版全局代理设置
   if (typeof chrome === 'undefined' || !chrome.runtime || !chrome.runtime.id) return;
-  const rules = buildProxyRules();
-  try {
-    if (rules.length) {
-      const res = await chrome.runtime.sendMessage({ type: 'applyProxyRules', rules });
-      if (res && res.error) { logError(new Error(res.error), 'apply-proxy'); showToast('代理应用失败：' + res.error); }
-    } else {
-      await chrome.runtime.sendMessage({ type: 'clearProxy' });
-    }
-  } catch (e) { logError(e, 'sync-proxy'); }
+  try { await chrome.runtime.sendMessage({ type: 'clearProxy' }); }
+  catch (e) { logError(e, 'clear-proxy-on-startup'); }
 }
 
 async function callAi(messages, opts) {
@@ -2628,6 +2620,36 @@ async function callAi(messages, opts) {
     stream: false
   };
   const url = resolveAiUrl(p);
+  const proxyParsed = parseProxyUrl(p.proxyPrefix || '');
+  // HTTP 代理 → 走 background，仅在该请求期间设置代理，不影响其他页面
+  if (proxyParsed.kind === 'http') {
+    const res = await chrome.runtime.sendMessage({
+      type: 'proxyFetch',
+      url,
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer ' + (p.apiKey || '')
+      },
+      body: JSON.stringify(body),
+      proxyConfig: {
+        providerHost: (() => { try { return new URL(p.endpoint).hostname; } catch { return ''; } })(),
+        host: proxyParsed.host,
+        port: proxyParsed.port,
+        scheme: proxyParsed.scheme,
+        user: proxyParsed.user,
+        pass: proxyParsed.pass
+      }
+    });
+    if (!res.ok) {
+      throw new Error(`HTTP ${res.status}: ${(res.body || '').slice(0, 200)}`);
+    }
+    const data = JSON.parse(res.body);
+    const content = data?.choices?.[0]?.message?.content;
+    if (typeof content !== 'string') throw new Error('返回数据缺少 choices[0].message.content');
+    return content.trim();
+  }
+  // 直连或 URL 反代 → 直接 fetch
   const res = await fetch(url, {
     method: 'POST',
     headers: {
