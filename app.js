@@ -2834,6 +2834,8 @@ function migrateInlineImages() {
 async function init() {
   loadErrorLog();
   loadData();
+  // 清理历史版本注入的「功能说明书」笔记（含 marginalia / marginote 旧 ID）
+  purgeLegacyManualNotes();
   loadAiConfig();
   await initImagesIdb();
   migrateInlineImages();
@@ -4169,44 +4171,25 @@ document.addEventListener('keydown', e => {
 
 console.info('[Marginote] v1.2 优化批已加载（' + new Date().toISOString().slice(0, 10) + '）');
 
-// ---------- 启动注入功能说明书笔记 ----------
-const MANUAL_FLAG_KEY = 'marginote.manualGenerated';
-const MANUAL_VERSION = 'v1.7';
-async function ensureManualNote() {
-  if (localStorage.getItem(MANUAL_FLAG_KEY) === MANUAL_VERSION) return;
-  if (!notebooks.length) return;
-  let content = '';
-  try {
-    const url = (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.getURL)
-      ? chrome.runtime.getURL('manual.md')
-      : 'manual.md';
-    const res = await fetch(url);
-    if (!res.ok) throw new Error('HTTP ' + res.status);
-    content = await res.text();
-  } catch (e) {
-    logError(e, 'load-manual');
-    return;
-  }
-  notes.unshift({
-    id: 'marginote-manual-' + MANUAL_VERSION,
-    notebookId: notebooks[0].id,
-    folderId: null,
-    title: '📖 Marginote 功能说明书 ' + MANUAL_VERSION,
-    content,
-    tags: ['说明书', '指南'],
-    starred: true,
-    deleted: false,
-    createdAt: Date.now(),
-    updatedAt: Date.now()
+// ---------- 清理历史版本自动注入的功能说明书笔记 ----------
+function purgeLegacyManualNotes() {
+  if (!Array.isArray(notes) || !notes.length) return;
+  const before = notes.length;
+  notes = notes.filter(n => {
+    if (!n) return false;
+    const id = String(n.id || '');
+    if (id.startsWith('marginote-manual-') || id.startsWith('marginalia-manual-')) return false;
+    if (/功能说明书/.test(n.title || '')) return false;
+    return true;
   });
-  saveData();
-  localStorage.setItem(MANUAL_FLAG_KEY, MANUAL_VERSION);
-  renderNotebooks();
-  renderTagFilters();
-  if (!currentView.startsWith('todo:')) renderNotesList();
+  // 同步清掉过期标志
+  try {
+    localStorage.removeItem('marginote.manualGenerated');
+    localStorage.removeItem('marginalia.manualGenerated');
+  } catch {}
+  if (notes.length !== before) saveData();
 }
 
 init()
-  .then(ensureManualNote)
   .then(() => { if (typeof syncProxyToBackground === 'function') syncProxyToBackground(); })
   .catch(e => { logError(e, 'init'); console.error(e); });
