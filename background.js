@@ -131,6 +131,27 @@ chrome.runtime.onMessage.addListener((msg, sender, send) => {
     return true; // 保持 channel 开放
   }
 
+  // 直连 fetch（绕过 CSP 限制，用于 HTTP 非 localhost 的 API 地址）
+  if (msg && msg.type === 'simpleFetch') {
+    const { url, method, headers, body } = msg;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 60000);
+    const fetchOpts = { method: method || 'POST', headers, signal: controller.signal };
+    if (body) fetchOpts.body = body;
+    fetch(url, fetchOpts)
+      .then(async res => {
+        clearTimeout(timer);
+        const text = await res.text();
+        return { ok: res.ok, status: res.status, body: text };
+      })
+      .then(result => send(result))
+      .catch(err => {
+        clearTimeout(timer);
+        send({ ok: false, error: String(err) });
+      });
+    return true;
+  }
+
   // 旧版兼容：保留但不触发浏览器全局代理（只重置为 system）
   if (msg && msg.type === 'applyProxyRules') {
     clearProxy().then(() => send({ ok: true })).catch(e => send({ ok: false, error: String(e) }));

@@ -2650,6 +2650,27 @@ async function callAi(messages, opts) {
     return content.trim();
   }
   // 直连或 URL 反代 → 直接 fetch
+  // 但 HTTP 非 localhost 地址会被 CSP 拦截，走 background 转发
+  const urlLower = url.toLowerCase();
+  if (urlLower.startsWith('http://') && !urlLower.startsWith('http://localhost')) {
+    const res = await chrome.runtime.sendMessage({
+      type: 'simpleFetch',
+      url,
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer ' + (p.apiKey || '')
+      },
+      body: JSON.stringify(body)
+    });
+    if (!res.ok) {
+      throw new Error(`HTTP ${res.status}: ${(res.body || '').slice(0, 200)}`);
+    }
+    const data = JSON.parse(res.body);
+    const content = data?.choices?.[0]?.message?.content;
+    if (typeof content !== 'string') throw new Error('返回数据缺少 choices[0].message.content');
+    return content.trim();
+  }
   const res = await fetch(url, {
     method: 'POST',
     headers: {
