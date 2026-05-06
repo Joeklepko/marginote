@@ -1555,7 +1555,7 @@ function getMdRenderer() {
   const md = window.markdownit({
     html: true,
     linkify: true,
-    breaks: false,
+    breaks: true,
     typographer: false
   });
   const dft = md.renderer.rules.link_open || function (tokens, idx, options, env, self) {
@@ -1827,6 +1827,77 @@ function attachImagePaste(textareaId, target) {
     if (files.length) {
       e.preventDefault();
       files.forEach(f => handleImageInsert(f, target));
+    }
+  });
+}
+
+// ===================== Markdown 编辑增强（Tab 缩进 + 列表续行）=====================
+function attachMarkdownEditor(textareaId) {
+  const ta = document.getElementById(textareaId);
+  if (!ta) return;
+  ta.addEventListener('keydown', (e) => {
+    const start = ta.selectionStart;
+    const end = ta.selectionEnd;
+    const v = ta.value;
+
+    if (e.key === 'Tab') {
+      e.preventDefault();
+      if (start !== end) {
+        // 多行选择：缩进 / 反缩进所选行
+        const lineStart = v.lastIndexOf('\n', start - 1) + 1;
+        const sel = v.slice(lineStart, end);
+        const replaced = e.shiftKey
+          ? sel.replace(/^(?: {1,2}|\t)/gm, '')
+          : sel.replace(/^/gm, '  ');
+        ta.value = v.slice(0, lineStart) + replaced + v.slice(end);
+        ta.selectionStart = lineStart;
+        ta.selectionEnd = lineStart + replaced.length;
+      } else if (e.shiftKey) {
+        // 单行反缩进
+        const ls = v.lastIndexOf('\n', start - 1) + 1;
+        const m = v.slice(ls).match(/^( {1,2}|\t)/);
+        if (m) {
+          const cut = m[0].length;
+          ta.value = v.slice(0, ls) + v.slice(ls + cut);
+          ta.selectionStart = ta.selectionEnd = Math.max(ls, start - cut);
+        }
+      } else {
+        // 插入两空格
+        ta.value = v.slice(0, start) + '  ' + v.slice(end);
+        ta.selectionStart = ta.selectionEnd = start + 2;
+      }
+      ta.dispatchEvent(new Event('input', { bubbles: true }));
+      return;
+    }
+
+    if (e.key === 'Enter' && !e.shiftKey && !e.ctrlKey && !e.metaKey) {
+      const ls = v.lastIndexOf('\n', start - 1) + 1;
+      const line = v.slice(ls, start);
+      // 匹配 -, *, +, 1., 2. 等列表前缀，可选 [ ] / [x] checkbox
+      const m = line.match(/^(\s*)(([-*+]|\d+\.)\s+)(\[[ xX]\]\s+)?(.*)$/);
+      if (!m) return;
+      const indent = m[1];
+      const bulletRaw = m[2];
+      const checkbox = m[4] || '';
+      const content = m[5];
+      if (!content) {
+        // 空 bullet 行：退出列表 → 删本行前缀
+        e.preventDefault();
+        ta.value = v.slice(0, ls) + v.slice(start);
+        ta.selectionStart = ta.selectionEnd = ls;
+        ta.dispatchEvent(new Event('input', { bubbles: true }));
+        return;
+      }
+      // 续行：自增数字序号；checkbox 总是空 [ ]
+      e.preventDefault();
+      let nextBullet = bulletRaw;
+      const numM = bulletRaw.match(/^(\d+)\.(\s+)$/);
+      if (numM) nextBullet = (parseInt(numM[1], 10) + 1) + '.' + numM[2];
+      const nextCb = checkbox ? '[ ] ' : '';
+      const insert = '\n' + indent + nextBullet + nextCb;
+      ta.value = v.slice(0, start) + insert + v.slice(end);
+      ta.selectionStart = ta.selectionEnd = start + insert.length;
+      ta.dispatchEvent(new Event('input', { bubbles: true }));
     }
   });
 }
@@ -3005,6 +3076,10 @@ async function init() {
   // 粘贴 / 拖入图片
   attachImagePaste('contentInput', 'note');
   attachImagePaste('todoEditContent', 'todo');
+
+  // Markdown 编辑增强：Tab 缩进 + 列表回车续行
+  attachMarkdownEditor('contentInput');
+  attachMarkdownEditor('todoEditContent');
 
   // 待办编辑器绑定
   document.getElementById('todoEditTitle').addEventListener('input', autoSaveTodo);
