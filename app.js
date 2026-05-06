@@ -1852,7 +1852,7 @@ function showToast(msg) {
   t.textContent = msg;
   t.classList.add('show');
   clearTimeout(t._timer);
-  t._timer = setTimeout(() => t.classList.remove('show'), 1800);
+  t._timer = setTimeout(() => t.classList.remove('show'), 3000);
 }
 
 function showModal(title, text, callback) {
@@ -2623,25 +2623,32 @@ async function callAi(messages, opts) {
   const proxyParsed = parseProxyUrl(p.proxyPrefix || '');
   // HTTP 代理 → 走 background，仅在该请求期间设置代理，不影响其他页面
   if (proxyParsed.kind === 'http') {
-    const res = await chrome.runtime.sendMessage({
-      type: 'proxyFetch',
-      url,
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': 'Bearer ' + (p.apiKey || '')
-      },
-      body: JSON.stringify(body),
-      proxyConfig: {
-        providerHost: (() => { try { return new URL(p.endpoint).hostname; } catch { return ''; } })(),
-        host: proxyParsed.host,
-        port: proxyParsed.port,
-        scheme: proxyParsed.scheme,
-        user: proxyParsed.user,
-        pass: proxyParsed.pass
-      }
-    });
+    let res;
+    try {
+      res = await chrome.runtime.sendMessage({
+        type: 'proxyFetch',
+        url,
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer ' + (p.apiKey || '')
+        },
+        body: JSON.stringify(body),
+        proxyConfig: {
+          providerHost: (() => { try { return new URL(p.endpoint).hostname; } catch { return ''; } })(),
+          host: proxyParsed.host,
+          port: proxyParsed.port,
+          scheme: proxyParsed.scheme,
+          user: proxyParsed.user,
+          pass: proxyParsed.pass
+        }
+      });
+    } catch (e) {
+      throw new Error('无法连接扩展后台: ' + (e.message || e));
+    }
     if (!res.ok) {
+      // 检查 background worker 返回的错误信息
+      if (res.error) throw new Error(res.error);
       throw new Error(`HTTP ${res.status}: ${(res.body || '').slice(0, 200)}`);
     }
     const data = JSON.parse(res.body);
@@ -2649,28 +2656,7 @@ async function callAi(messages, opts) {
     if (typeof content !== 'string') throw new Error('返回数据缺少 choices[0].message.content');
     return content.trim();
   }
-  // 直连或 URL 反代 → 直接 fetch
-  // 但 HTTP 非 localhost 地址会被 CSP 拦截，走 background 转发
-  const urlLower = url.toLowerCase();
-  if (urlLower.startsWith('http://') && !urlLower.startsWith('http://localhost')) {
-    const res = await chrome.runtime.sendMessage({
-      type: 'simpleFetch',
-      url,
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': 'Bearer ' + (p.apiKey || '')
-      },
-      body: JSON.stringify(body)
-    });
-    if (!res.ok) {
-      throw new Error(`HTTP ${res.status}: ${(res.body || '').slice(0, 200)}`);
-    }
-    const data = JSON.parse(res.body);
-    const content = data?.choices?.[0]?.message?.content;
-    if (typeof content !== 'string') throw new Error('返回数据缺少 choices[0].message.content');
-    return content.trim();
-  }
+  // 直连或 URL 反代 → 直接 fetch（CSP 已放行 http:）
   const res = await fetch(url, {
     method: 'POST',
     headers: {
