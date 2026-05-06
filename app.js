@@ -214,6 +214,10 @@ function loadData() {
 - 全文 **搜索**
 - 一键 **导出/导入** JSON 备份
 
+## 待办事项
+
+左栏「待办」可创建任务，支持优先级、截止时间和系统级提醒（提前 N 分 × 重复 K 次）。笔记里也能写 \`- [ ]\` 创建待办行。
+
 > 文字是思想的脚印，留下它们，未来的你会感谢现在的你。
 
 ## 快捷键
@@ -232,52 +236,6 @@ function loadData() {
         folderId: null,
         createdAt: Date.now(),
         updatedAt: Date.now()
-      },
-      {
-        id: uid(),
-        notebookId: notebooks[0].id,
-        title: '今日所思',
-        content: `今天读到一句话：「真正的发现之旅不在于寻找新的风景，而在于拥有新的眼睛。」——普鲁斯特
-
-## 想法
-
-- 每日记录三件值得感激的事
-- 阅读，但更要思考
-- 写下来，会比你以为的更重要
-
-## 待办
-
-- [ ] 完成季度总结
-- [x] 整理书架
-- [ ] 给朋友写一封长信`,
-        tags: ['日记', '思考'],
-        starred: false,
-        deleted: false,
-        folderId: null,
-        createdAt: Date.now() - 86400000,
-        updatedAt: Date.now() - 86400000
-      },
-      {
-        id: uid(),
-        notebookId: notebooks[2].id,
-        title: '关于设计的几则笔记',
-        content: `# 关于设计
-
-> "Good design is as little design as possible." — Dieter Rams
-
-设计不是给物件添加什么，而是去掉所有不必要的部分，直到留下的就是答案本身。
-
-## 三个原则
-
-1. **诚实** — 不假装，不模仿
-2. **克制** — 少即是多
-3. **耐用** — 经得起时间的检验`,
-        tags: ['设计', '引用'],
-        starred: true,
-        deleted: false,
-        folderId: null,
-        createdAt: Date.now() - 172800000,
-        updatedAt: Date.now() - 172800000
       }
     ];
   }
@@ -1025,7 +983,7 @@ const REGION_VAR_MAP = {
   sidebar: { sel: '.sidebar', bg: '--bg',      ink: '--ink' },
   editor:  { sel: '.editor',  bg: '--paper',   ink: '--ink-soft' }
 };
-let currentThemePreset = 'light';
+let currentThemePreset = 'mono';
 
 function applyTheme(name) {
   const preset = THEMES[name] || THEMES.light;
@@ -1638,10 +1596,10 @@ function renderMarkdown(mdText) {
     html = '<pre>' + escapeHtml(processed) + '</pre>';
   }
 
-  // 4. 任务列表 post-process
+  // 4. 任务列表 post-process（同时处理紧凑 <li>[ ] 和松散 <li><p>[ ] 两种渲染）
   html = html
-    .replace(/<li>\[ \] /g, '<li class="task-item"><input type="checkbox" disabled> ')
-    .replace(/<li>\[x\] /gi, '<li class="task-item"><input type="checkbox" checked disabled> ');
+    .replace(/<li>(\s*<p>)?\[ \]\s+/g, (_m, p) => `<li class="task-item">${p || ''}<input type="checkbox" disabled> `)
+    .replace(/<li>(\s*<p>)?\[x\]\s+/gi, (_m, p) => `<li class="task-item task-done">${p || ''}<input type="checkbox" checked disabled> `);
 
   // 5. DOMPurify XSS 清洗
   if (window.DOMPurify) {
@@ -2822,10 +2780,9 @@ async function init() {
   const months = ['一月', '二月', '三月', '四月', '五月', '六月', '七月', '八月', '九月', '十月', '十一月', '十二月'];
   document.getElementById('todayDate').textContent = `${months[today.getMonth()]} ${today.getDate()}, ${today.getFullYear()}`;
 
-  // 主题恢复
-  const savedTheme = localStorage.getItem(THEME_KEY) ||
-    (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
-  applyTheme(THEMES[savedTheme] ? savedTheme : 'light');
+  // 主题恢复（默认黑白）
+  const savedTheme = localStorage.getItem(THEME_KEY) || 'mono';
+  applyTheme(THEMES[savedTheme] ? savedTheme : 'mono');
   document.getElementById('themeToggle').addEventListener('click', openThemeModal);
 
   // 主题模态框

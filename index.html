@@ -1698,14 +1698,34 @@
     display: block;
     box-shadow: var(--shadow-soft);
   }
-  .preview .task-item {
+  .preview .task-item,
+  .preview li.task-item {
     list-style: none;
     margin-left: -20px;
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+  }
+  .preview .task-item > p {
+    margin: 0;
+    flex: 1;
   }
   .preview .task-item input[type=checkbox] {
-    margin-right: 8px;
+    flex: 0 0 auto;
+    width: 16px;
+    height: 16px;
+    margin: 5px 0 0;
     accent-color: var(--accent);
-    vertical-align: -1px;
+    cursor: default;
+  }
+  .preview .task-item.task-done {
+    color: var(--ink-mute);
+    text-decoration: line-through;
+    text-decoration-thickness: 1px;
+    opacity: 0.7;
+  }
+  .preview .task-item.task-done > p {
+    color: var(--ink-mute);
   }
 
   /* 错误日志查看器 */
