@@ -1048,7 +1048,7 @@
   .editor-content {
     max-width: 1080px;
     margin: 0 auto;
-    padding: 56px 80px 120px;
+    padding: 32px 80px 80px;
   }
 
   .editor-meta {
@@ -1060,8 +1060,8 @@
     color: var(--ink-mute);
     letter-spacing: 0.08em;
     text-transform: uppercase;
-    margin-top: 12px;
-    margin-bottom: 28px;
+    margin-top: 4px;
+    margin-bottom: 14px;
   }
   .editor-meta .dot {
     width: 4px;
@@ -1097,13 +1097,13 @@
     border: none;
     background: transparent;
     font-family: 'Fraunces', 'Noto Serif SC', serif;
-    font-size: 48px;
+    font-size: 32px;
     font-weight: 500;
-    line-height: 1.1;
+    line-height: 1.15;
     color: var(--ink);
-    letter-spacing: -0.03em;
+    letter-spacing: -0.02em;
     outline: none;
-    margin-bottom: 8px;
+    margin-bottom: 4px;
     font-feature-settings: "ss01";
     caret-color: #c9532a;
   }
@@ -1117,8 +1117,8 @@
     display: flex;
     gap: 8px;
     align-items: center;
-    margin-bottom: 32px;
-    padding-bottom: 24px;
+    margin-bottom: 16px;
+    padding-bottom: 12px;
     border-bottom: 1px solid var(--rule-soft);
     flex-wrap: wrap;
   }
@@ -1254,25 +1254,25 @@
   /* ====== Markdown 预览模式 ====== */
   .preview {
     font-family: 'Fraunces', 'Noto Serif SC', Georgia, serif;
-    font-size: 17px;
-    line-height: 1.85;
+    font-size: 15px;
+    line-height: 1.55;
     color: var(--ink-soft);
   }
   .preview h1, .preview h2, .preview h3 {
     font-family: 'Fraunces', serif;
     color: var(--ink);
-    margin: 1.5em 0 0.5em;
+    margin: 1em 0 0.35em;
     letter-spacing: -0.02em;
     font-weight: 500;
   }
-  .preview h1 { font-size: 32px; }
+  .preview h1 { font-size: 26px; }
   .preview h2 {
-    font-size: 24px;
+    font-size: 20px;
     border-bottom: 1px solid var(--rule);
-    padding-bottom: 8px;
+    padding-bottom: 6px;
   }
-  .preview h3 { font-size: 20px; font-style: italic; color: var(--accent); }
-  .preview p { margin: 1em 0; }
+  .preview h3 { font-size: 17px; font-style: italic; color: var(--accent); }
+  .preview p { margin: 0.55em 0; }
   .preview strong { color: var(--ink); font-weight: 600; }
   .preview em { font-style: italic; color: var(--ink); }
   /* Monospace stack with CJK fallback — keeps ASCII pipes aligned even with 汉字/Emoji.
@@ -1301,12 +1301,12 @@
   .preview pre {
     background: var(--ink);
     color: var(--paper);
-    padding: 16px 20px;
-    border-radius: 8px;
+    padding: 12px 16px;
+    border-radius: 6px;
     overflow-x: auto;
-    margin: 1.5em 0;
-    font-size: 14px;
-    line-height: 1.6;
+    margin: 0.9em 0;
+    font-size: 13px;
+    line-height: 1.5;
     white-space: pre;
   }
   .preview pre code {
@@ -1318,21 +1318,21 @@
   }
   .preview blockquote {
     border-left: 3px solid var(--accent);
-    padding-left: 20px;
-    margin: 1.5em 0;
+    padding-left: 16px;
+    margin: 0.9em 0;
     font-style: italic;
     color: var(--ink-mute);
   }
-  .preview ul, .preview ol { margin: 1em 0; padding-left: 28px; }
-  .preview li { margin: 0.4em 0; }
-  .preview h4 { font-size: 17px; margin: 1.2em 0 0.4em; font-weight: 600; color: var(--ink); }
-  .preview h5 { font-size: 15px; margin: 1em 0 0.3em; font-weight: 600; color: var(--ink-soft); }
-  .preview h6 { font-size: 13px; margin: 1em 0 0.3em; font-weight: 600; color: var(--ink-mute); text-transform: uppercase; letter-spacing: 0.05em; }
+  .preview ul, .preview ol { margin: 0.55em 0; padding-left: 24px; }
+  .preview li { margin: 0.2em 0; }
+  .preview h4 { font-size: 16px; margin: 0.85em 0 0.3em; font-weight: 600; color: var(--ink); }
+  .preview h5 { font-size: 14px; margin: 0.75em 0 0.25em; font-weight: 600; color: var(--ink-soft); }
+  .preview h6 { font-size: 12px; margin: 0.75em 0 0.25em; font-weight: 600; color: var(--ink-mute); text-transform: uppercase; letter-spacing: 0.05em; }
   .preview table {
     border-collapse: collapse;
-    margin: 1.2em 0;
+    margin: 0.8em 0;
     width: 100%;
-    font-size: 14px;
+    font-size: 13px;
     overflow-x: auto;
     display: block;
     font-family: 'JetBrains Mono', ui-monospace, Consolas, 'Liberation Mono',
@@ -1343,7 +1343,7 @@
   .preview thead { background: var(--bg-warm); }
   .preview th, .preview td {
     border: 1px solid var(--rule);
-    padding: 8px 12px;
+    padding: 6px 10px;
     text-align: left;
     vertical-align: top;
   }
@@ -1360,7 +1360,7 @@
   .preview hr {
     border: none;
     text-align: center;
-    margin: 2em 0;
+    margin: 1.2em 0;
     color: var(--rule);
   }
   .preview hr::after {
@@ -1465,12 +1465,12 @@
 
   /* ====== 响应式 ====== */
   @media (max-width: 1280px) {
-    .editor-content { padding: 56px 64px 120px; }
+    .editor-content { padding: 32px 64px 80px; }
   }
   @media (max-width: 1024px) {
     .app { grid-template-columns: 220px 280px 1fr; }
-    .editor-content { padding: 40px 48px 100px; }
-    .title-input { font-size: 38px; }
+    .editor-content { padding: 24px 48px 64px; }
+    .title-input { font-size: 26px; }
   }
   @media (max-width: 768px) {
     .app { grid-template-columns: 1fr; }
