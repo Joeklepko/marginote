@@ -326,15 +326,12 @@
     border-radius: 5px;
     cursor: pointer;
     transition: all 0.12s ease;
-    font-family: var(--font-ui);
+    font-family: 'Fraunces', 'Noto Serif SC', serif;
     font-size: 13px;
-    font-weight: 500;
     width: 100%;
     text-align: left;
     position: relative;
     margin-bottom: 1px;
-    -webkit-font-smoothing: antialiased;
-    text-rendering: optimizeLegibility;
   }
   .rail-item:hover {
     background: var(--rule-soft);
@@ -523,11 +520,13 @@
   }
   .rail-foot .rail-item {
     padding: 6px 10px;
+    font-family: var(--font-ui);
     font-size: 13px;
     font-weight: 500;
     flex: 1;
     justify-content: center;
     color: var(--ink-soft);
+    -webkit-font-smoothing: antialiased;
   }
   .rail-foot .rail-item svg { width: 14px; height: 14px; }
 
