@@ -153,6 +153,52 @@ let pickedColor = NOTEBOOK_COLORS[0];
 
 const THEME_KEY = 'marginote.theme';
 
+// ===================== 本地文件句柄存储（File System Access API）=====================
+// FileSystemFileHandle 不能 JSON 序列化，必须放进 IndexedDB。
+const FH_DB_NAME = 'marginote.fileHandles';
+const FH_STORE = 'handles';
+function fhOpenDb() {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(FH_DB_NAME, 1);
+    req.onupgradeneeded = () => req.result.createObjectStore(FH_STORE);
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+async function fhPut(noteId, handle) {
+  const db = await fhOpenDb();
+  return new Promise((res, rej) => {
+    const tx = db.transaction(FH_STORE, 'readwrite');
+    tx.objectStore(FH_STORE).put(handle, noteId);
+    tx.oncomplete = () => res();
+    tx.onerror = () => rej(tx.error);
+  });
+}
+async function fhGet(noteId) {
+  const db = await fhOpenDb();
+  return new Promise((res, rej) => {
+    const tx = db.transaction(FH_STORE, 'readonly');
+    const r = tx.objectStore(FH_STORE).get(noteId);
+    r.onsuccess = () => res(r.result || null);
+    r.onerror = () => rej(r.error);
+  });
+}
+async function fhDelete(noteId) {
+  const db = await fhOpenDb();
+  return new Promise((res, rej) => {
+    const tx = db.transaction(FH_STORE, 'readwrite');
+    tx.objectStore(FH_STORE).delete(noteId);
+    tx.oncomplete = () => res();
+    tx.onerror = () => rej(tx.error);
+  });
+}
+async function fhVerifyPermission(handle, write) {
+  const opts = { mode: write ? 'readwrite' : 'read' };
+  if ((await handle.queryPermission(opts)) === 'granted') return true;
+  if ((await handle.requestPermission(opts)) === 'granted') return true;
+  return false;
+}
+
 function loadData() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
@@ -1360,6 +1406,115 @@ function createNote() {
   showToast('已创建新笔记');
 }
 
+async function openLocalFile() {
+  if (!('showOpenFilePicker' in window)) {
+    showToast('当前浏览器不支持本地文件读写 API');
+    return;
+  }
+  let handle;
+  try {
+    [handle] = await window.showOpenFilePicker({
+      types: [{
+        description: 'Markdown / 文本文件',
+        accept: {
+          'text/markdown': ['.md', '.markdown'],
+          'text/plain': ['.txt']
+        }
+      }],
+      multiple: false,
+      excludeAcceptAllOption: false
+    });
+  } catch (e) {
+    if (e.name !== 'AbortError') {
+      console.error(e);
+      showToast('打开文件失败');
+    }
+    return;
+  }
+
+  let text;
+  try {
+    const file = await handle.getFile();
+    text = await file.text();
+  } catch (e) {
+    console.error(e);
+    showToast('读取文件失败');
+    return;
+  }
+
+  // 选定归属笔记本（与 createNote 同逻辑）
+  let targetNbId;
+  if (currentView.startsWith('folder:')) {
+    const f = getFolder(currentView.slice(7));
+    targetNbId = f ? f.notebookId : (notebooks[0] ? notebooks[0].id : null);
+  } else if (currentView.startsWith('nb:')) {
+    targetNbId = currentView.slice(3);
+  } else if (notebooks.length > 0) {
+    targetNbId = notebooks[0].id;
+    if (currentView !== 'all') switchView('all');
+  } else {
+    const nb = { id: uid(), name: '默认', color: '#525252', createdAt: Date.now() };
+    notebooks.push(nb);
+    targetNbId = nb.id;
+    saveData();
+    renderNotebooks();
+  }
+
+  const baseName = handle.name.replace(/\.(md|markdown|txt)$/i, '');
+  const note = {
+    id: uid(),
+    notebookId: targetNbId,
+    folderId: currentView.startsWith('folder:') ? currentView.slice(7) : null,
+    title: baseName,
+    content: text,
+    tags: [],
+    starred: false,
+    deleted: false,
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+    linkedFile: { name: handle.name, syncedAt: Date.now() }
+  };
+  notes.unshift(note);
+  try {
+    await fhPut(note.id, handle);
+  } catch (e) {
+    console.error('persist handle failed', e);
+    showToast('文件已读入，但句柄保存失败（重启扩展后将无法写回）');
+  }
+  saveData();
+  selectNote(note);
+  renderNotesList();
+  renderNotebooks();
+  showToast(`已打开 ${handle.name}`);
+}
+
+// 写回磁盘（autoSave 触发后调用）。失败不会阻断本地保存。
+async function syncLinkedFile(note) {
+  if (!note || !note.linkedFile) return;
+  let handle;
+  try {
+    handle = await fhGet(note.id);
+  } catch (e) {
+    console.error('fhGet failed', e);
+    return;
+  }
+  if (!handle) return;
+  try {
+    if (!(await fhVerifyPermission(handle, true))) {
+      showToast('未获得本地文件写入权限');
+      return;
+    }
+    const writable = await handle.createWritable();
+    await writable.write(note.content || '');
+    await writable.close();
+    note.linkedFile.syncedAt = Date.now();
+    saveData();
+  } catch (e) {
+    console.error('sync linked file failed', e);
+    showToast('写回本地文件失败');
+  }
+}
+
 function autoSave() {
   if (!currentNote) return;
   document.getElementById('editorStatus').textContent = '保存中…';
@@ -1372,6 +1527,9 @@ function autoSave() {
     document.getElementById('editorDate').textContent = formatFullDate(currentNote.updatedAt);
     document.getElementById('editorStatus').textContent = '已保存';
     renderNotesList();
+    if (currentNote.linkedFile) {
+      syncLinkedFile(currentNote);
+    }
   }, 400);
 }
 
@@ -1383,6 +1541,9 @@ function deleteCurrent() {
     isPermanent ? '此操作将永久删除这篇笔记，无法恢复。' : '笔记将被移至回收站，可在那里恢复或彻底删除。',
     () => {
       if (isPermanent) {
+        if (currentNote.linkedFile) {
+          fhDelete(currentNote.id).catch(err => console.error('fhDelete failed', err));
+        }
         notes = notes.filter(n => n.id !== currentNote.id);
       } else {
         currentNote.deleted = true;
@@ -2967,6 +3128,7 @@ async function init() {
     else renderNotesList();
   });
   document.getElementById('newNoteBtn').addEventListener('click', createNote);
+document.getElementById('openFileBtn').addEventListener('click', openLocalFile);
 
   // 待办相关
   document.getElementById('newTodoBtn').addEventListener('click', e => {

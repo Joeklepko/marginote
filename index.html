@@ -695,6 +695,30 @@
     box-shadow: var(--shadow-soft);
   }
   .new-note-btn svg { width: 14px; height: 14px; }
+  .new-note-btn.secondary {
+    margin-top: -6px;
+    background: transparent;
+    border: 1px dashed var(--rule);
+    color: var(--ink-soft);
+  }
+  .new-note-btn.secondary:hover {
+    background: var(--bg-warm);
+    border-style: solid;
+  }
+  .linked-file-tag {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    margin-left: 8px;
+    padding: 2px 8px;
+    border-radius: 4px;
+    background: var(--bg-warm);
+    border: 1px solid var(--rule-soft);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    color: var(--ink-mute);
+  }
+  .linked-file-tag svg { width: 11px; height: 11px; }
 
   .filter-tabs {
     display: flex;
@@ -1236,8 +1260,22 @@
   .preview p { margin: 1em 0; }
   .preview strong { color: var(--ink); font-weight: 600; }
   .preview em { font-style: italic; color: var(--ink); }
+  /* Monospace stack with CJK fallback — keeps ASCII pipes aligned even with 汉字/Emoji.
+     Sarasa Mono SC / Noto Sans Mono CJK render CJK at exactly 2× ASCII width. */
+  .preview code,
+  .preview pre,
+  .preview pre code {
+    font-family: 'JetBrains Mono', ui-monospace, 'Cascadia Code', Consolas,
+                 'Liberation Mono', Menlo, Courier,
+                 'Sarasa Mono SC', 'Noto Sans Mono CJK SC', 'Microsoft YaHei Mono',
+                 'Apple Color Emoji', 'Segoe UI Emoji', 'Noto Color Emoji',
+                 monospace;
+    font-variant-ligatures: none;
+    letter-spacing: 0;
+    word-spacing: 0;
+    tab-size: 2;
+  }
   .preview code {
-    font-family: 'JetBrains Mono', monospace;
     background: var(--bg-warm);
     padding: 2px 6px;
     border-radius: 4px;
@@ -1252,15 +1290,16 @@
     border-radius: 8px;
     overflow-x: auto;
     margin: 1.5em 0;
-    font-family: 'JetBrains Mono', monospace;
-    font-size: 13px;
+    font-size: 14px;
     line-height: 1.6;
+    white-space: pre;
   }
   .preview pre code {
     background: transparent;
     color: inherit;
     padding: 0;
     border: none;
+    font-size: inherit;
   }
   .preview blockquote {
     border-left: 3px solid var(--accent);
@@ -1281,6 +1320,10 @@
     font-size: 14px;
     overflow-x: auto;
     display: block;
+    font-family: 'JetBrains Mono', ui-monospace, Consolas, 'Liberation Mono',
+                 Menlo, 'Sarasa Mono SC', 'Noto Sans Mono CJK SC',
+                 'Apple Color Emoji', 'Segoe UI Emoji', monospace;
+    font-variant-ligatures: none;
   }
   .preview thead { background: var(--bg-warm); }
   .preview th, .preview td {
@@ -2846,6 +2889,13 @@
         <path stroke-linecap="round" d="M12 5v14M5 12h14"/>
       </svg>
       新建笔记
+    </button>
+
+    <button class="new-note-btn secondary" id="openFileBtn" title="打开本地 .md / .txt / .markdown 文件，编辑后自动写回磁盘">
+      <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"/>
+      </svg>
+      打开本地文件
     </button>
 
     <div class="filter-tabs" id="filterTabs">
