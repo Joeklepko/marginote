@@ -1720,58 +1720,72 @@
     display: block;
     box-shadow: var(--shadow-soft);
   }
-  .preview .task-item,
+  /* ===== GitHub 风格待办 checkbox（伪元素绘制，原生 input 隐藏）===== */
   .preview li.task-item {
-    list-style: none;
-    margin-left: -20px;
-    padding-left: 0;
+    list-style: none !important;
+    position: relative !important;
+    margin-left: -20px !important;
+    padding-left: 24px !important;
+    min-height: 1.5em;
   }
-  .preview .task-item > p {
-    margin: 0;
-    display: inline;
+  .preview li.task-item > p {
+    margin: 0 !important;
+    display: inline !important;
   }
-  .preview .task-item input[type="checkbox"] {
-    appearance: none !important;
-    -webkit-appearance: none !important;
+  /* 隐藏原生 checkbox（全部尺寸 / flex / display 强制锁死）*/
+  .preview li.task-item input[type="checkbox"],
+  .preview li.task-item input[type="checkbox"].modified-checkbox,
+  .preview li.task-item p input[type="checkbox"] {
+    display: none !important;
+    width: 0 !important;
+    height: 0 !important;
+    min-width: 0 !important;
+    max-width: 0 !important;
+    flex: none !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    visibility: hidden !important;
+    position: absolute !important;
+    left: -9999px !important;
+  }
+  /* ::before 绘制 14x14 方框 */
+  .preview li.task-item::before {
+    content: '' !important;
+    position: absolute !important;
+    left: 0 !important;
+    top: 0.42em !important;
     width: 14px !important;
     height: 14px !important;
-    min-width: 14px;
-    max-width: 14px;
-    flex: none;
-    display: inline-block;
-    vertical-align: -2px;
-    margin: 0 8px 0 0 !important;
-    padding: 0;
-    border: 1.5px solid var(--ink-soft);
-    border-radius: 3px;
-    background: var(--paper);
-    position: relative;
-    box-sizing: border-box;
-    cursor: default;
+    border: 1.5px solid var(--ink-soft) !important;
+    border-radius: 3px !important;
+    background: var(--paper) !important;
+    box-sizing: border-box !important;
     transition: background 0.15s, border-color 0.15s;
   }
-  .preview .task-item input[type="checkbox"]:checked {
-    background: var(--accent);
-    border-color: var(--accent);
+  /* 已完成：实心方框 + ::after 白色对勾 */
+  .preview li.task-item.task-done::before {
+    background: var(--accent) !important;
+    border-color: var(--accent) !important;
   }
-  .preview .task-item input[type="checkbox"]:checked::after {
-    content: '';
-    position: absolute;
-    left: 3px;
-    top: 0;
-    width: 4px;
-    height: 8px;
-    border: solid var(--paper);
-    border-width: 0 1.7px 1.7px 0;
-    transform: rotate(45deg);
+  .preview li.task-item.task-done::after {
+    content: '' !important;
+    position: absolute !important;
+    left: 5px !important;
+    top: 0.55em !important;
+    width: 4px !important;
+    height: 8px !important;
+    border: solid var(--paper) !important;
+    border-width: 0 1.7px 1.7px 0 !important;
+    transform: rotate(45deg) !important;
   }
-  .preview .task-item.task-done {
+  /* 已完成的文字：删除线 + 淡灰 */
+  .preview li.task-item.task-done {
     color: var(--ink-mute);
     text-decoration: line-through;
     text-decoration-thickness: 1px;
-    opacity: 0.7;
+    opacity: 0.75;
   }
-  .preview .task-item.task-done > p {
+  .preview li.task-item.task-done > p {
     color: var(--ink-mute);
   }
 

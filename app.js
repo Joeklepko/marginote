@@ -1597,20 +1597,43 @@ function renderMarkdown(mdText) {
   }
 
   // 4. 任务列表 post-process（同时处理紧凑 <li>[ ] 和松散 <li><p>[ ] 两种渲染）
+  // 注入 modified-checkbox 类，CSS 用 :before/:after 绘制方框 + 对勾
   html = html
-    .replace(/<li>(\s*<p>)?\[ \]\s+/g, (_m, p) => `<li class="task-item">${p || ''}<input type="checkbox" disabled> `)
-    .replace(/<li>(\s*<p>)?\[x\]\s+/gi, (_m, p) => `<li class="task-item task-done">${p || ''}<input type="checkbox" checked disabled> `);
+    .replace(/<li>(\s*<p>)?\[ \]\s+/g,
+      (_m, p) => `<li class="task-item">${p || ''}<input type="checkbox" class="modified-checkbox" disabled> `)
+    .replace(/<li>(\s*<p>)?\[x\]\s+/gi,
+      (_m, p) => `<li class="task-item task-done">${p || ''}<input type="checkbox" class="modified-checkbox" checked disabled> `);
 
   // 5. DOMPurify XSS 清洗
   if (window.DOMPurify) {
     html = window.DOMPurify.sanitize(html, {
-      ADD_ATTR: ['target', 'rel'],
+      ADD_ATTR: ['target', 'rel', 'disabled', 'checked'],
       ALLOWED_URI_REGEXP: SAFE_URI_RE,
       FORBID_TAGS: ['style', 'iframe', 'frame', 'object', 'embed', 'form', 'button', 'script'],
       FORBID_ATTR: ['onerror', 'onload', 'onclick', 'onmouseover', 'onfocus', 'onblur']
     });
   }
-  return html;
+
+  // 6. 动态注入 modified-checkbox 类（防御性，兼容历史数据 / 未匹配的 li 结构）
+  const tmp = document.createElement('div');
+  tmp.innerHTML = html;
+  applyTaskCheckboxClasses(tmp);
+  return tmp.innerHTML;
+}
+
+// 渲染后给 markdown 待办 checkbox 加 modified-checkbox 专用类
+// 同时给父级 <li> 补 task-item / task-done，确保 CSS 伪元素能命中
+function applyTaskCheckboxClasses(rootEl) {
+  if (!rootEl || !rootEl.querySelectorAll) return;
+  rootEl.querySelectorAll('input[type="checkbox"]').forEach((cb) => {
+    cb.classList.add('modified-checkbox');
+    const li = cb.closest('li');
+    if (!li) return;
+    if (!li.classList.contains('task-item')) li.classList.add('task-item');
+    if (cb.hasAttribute('checked') && !li.classList.contains('task-done')) {
+      li.classList.add('task-done');
+    }
+  });
 }
 
 function stripMarkdown(md) {
