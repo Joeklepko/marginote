@@ -3709,17 +3709,31 @@ autoSave = function() {
 
 // ---------- Split View ----------
 let _splitMode = false;
+let _splitScrollLock = 0;
 function _splitSync() {
   const ta = document.getElementById('contentInput');
   const pv = document.getElementById('preview');
   if (pv && ta) pv.innerHTML = renderMarkdown(ta.value);
 }
-function _splitScroll() {
+function _splitScrollFromTa() {
+  if (_splitScrollLock) return;
   const ta = document.getElementById('contentInput');
   const pv = document.getElementById('preview');
   if (!pv || !ta) return;
   const r = ta.scrollTop / Math.max(1, ta.scrollHeight - ta.clientHeight);
+  _splitScrollLock = 1;
   pv.scrollTop = r * Math.max(0, pv.scrollHeight - pv.clientHeight);
+  requestAnimationFrame(() => { _splitScrollLock = 0; });
+}
+function _splitScrollFromPv() {
+  if (_splitScrollLock) return;
+  const ta = document.getElementById('contentInput');
+  const pv = document.getElementById('preview');
+  if (!pv || !ta) return;
+  const r = pv.scrollTop / Math.max(1, pv.scrollHeight - pv.clientHeight);
+  _splitScrollLock = 1;
+  ta.scrollTop = r * Math.max(0, ta.scrollHeight - ta.clientHeight);
+  requestAnimationFrame(() => { _splitScrollLock = 0; });
 }
 
 function toggleSplitView() {
@@ -3736,10 +3750,12 @@ function toggleSplitView() {
     ta.style.display = '';
     pv.style.display = 'block';
     ta.addEventListener('input', _splitSync);
-    ta.addEventListener('scroll', _splitScroll);
+    ta.addEventListener('scroll', _splitScrollFromTa);
+    pv.addEventListener('scroll', _splitScrollFromPv);
   } else {
     ta.removeEventListener('input', _splitSync);
-    ta.removeEventListener('scroll', _splitScroll);
+    ta.removeEventListener('scroll', _splitScrollFromTa);
+    pv.removeEventListener('scroll', _splitScrollFromPv);
     if (isPreviewMode) { ta.style.display = 'none'; pv.style.display = 'block'; }
     else { ta.style.display = ''; pv.style.display = 'none'; }
   }

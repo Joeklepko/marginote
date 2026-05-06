@@ -1736,14 +1736,15 @@
     flex: 0 0 auto;
     appearance: none;
     -webkit-appearance: none;
-    width: 16px;
-    height: 16px;
+    width: 15px;
+    height: 15px;
     margin: 6px 0 0;
-    border: 1.5px solid var(--ink-mute);
-    border-radius: 50%;
+    border: 1.5px solid var(--ink-soft);
+    border-radius: 3px;
     background: var(--paper);
     position: relative;
     cursor: default;
+    box-sizing: border-box;
     transition: background 0.15s, border-color 0.15s;
   }
   .preview .task-item input[type=checkbox]:checked {
@@ -1758,7 +1759,7 @@
     width: 4px;
     height: 8px;
     border: solid var(--paper);
-    border-width: 0 1.5px 1.5px 0;
+    border-width: 0 1.7px 1.7px 0;
     transform: rotate(45deg);
   }
   .preview .task-item.task-done {
@@ -2403,13 +2404,17 @@
     display: block !important;
     border-right: 1px solid var(--rule-soft);
     padding-right: 16px;
-    min-height: 70vh;
+    height: calc(100vh - 220px);
+    min-height: 320px;
+    overflow-y: auto;
+    resize: none;
   }
   .editor-content.split .preview {
     grid-column: 3;
     display: block !important;
     padding-left: 16px;
-    min-height: 70vh;
+    height: calc(100vh - 220px);
+    min-height: 320px;
     overflow-y: auto;
   }
 
