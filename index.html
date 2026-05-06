@@ -1,0 +1,3257 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Marginote · 笔记本</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,300;0,9..144,400;0,9..144,500;0,9..144,600;0,9..144,700;1,9..144,400&family=Noto+Serif+SC:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<script src="vendor/jszip.min.js"></script>
+<script src="vendor/markdown-it.min.js"></script>
+<script src="vendor/purify.min.js"></script>
+<style>
+  :root {
+    --bg: #f4efe6;
+    --bg-warm: #ede5d6;
+    --paper: #faf6ed;
+    --ink: #1a1814;
+    --ink-soft: #4a443b;
+    --ink-mute: #8a8275;
+    --rule: #d9cfb8;
+    --rule-soft: #e8e0cf;
+    --accent: #b8431f;
+    --accent-soft: #c9532a;
+    --highlight: #f5d76e;
+    --shadow-soft: 0 1px 0 rgba(26, 24, 20, 0.04), 0 8px 24px -12px rgba(26, 24, 20, 0.12);
+    --shadow-deep: 0 2px 0 rgba(26, 24, 20, 0.04), 0 24px 48px -16px rgba(26, 24, 20, 0.18);
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  html, body {
+    height: 100%;
+    overflow: hidden;
+  }
+
+  body {
+    font-family: 'Fraunces', 'Noto Serif SC', Georgia, serif;
+    background: var(--bg);
+    color: var(--ink);
+    font-size: 16px;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+    color-scheme: light;
+    background-image:
+      radial-gradient(circle at 20% 10%, rgba(184, 67, 31, 0.04) 0%, transparent 40%),
+      radial-gradient(circle at 80% 80%, rgba(74, 68, 59, 0.03) 0%, transparent 50%);
+  }
+
+  /* 噪点纹理 */
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    z-index: 1;
+    opacity: 0.4;
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 0.1 0 0 0 0 0.1 0 0 0 0 0.1 0 0 0 0.06 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  }
+
+  .app {
+    display: grid;
+    grid-template-columns: 248px 320px 1fr;
+    height: 100vh;
+    position: relative;
+    z-index: 2;
+    transition: grid-template-columns 0.28s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+  .app.rail-collapsed {
+    grid-template-columns: 52px 320px 1fr;
+  }
+
+  /* ====== 左侧笔记本侧栏 ====== */
+  .rail {
+    background: var(--bg-warm);
+    border-right: 1px solid var(--rule);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  .rail-head {
+    padding: 20px 20px 16px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    border-bottom: 1px solid var(--rule-soft);
+  }
+
+  .rail-collapse-btn { display: none; }
+
+  /* ====== 全局折叠侧栏 ====== */
+  .app.rail-collapsed .rail-head {
+    padding: 12px 8px;
+    justify-content: center;
+    gap: 0;
+  }
+  .app.rail-collapsed .rail-brand { display: none; }
+  .app.rail-collapsed .rail-logo {
+    width: 28px;
+    height: 28px;
+    font-size: 14px;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+  }
+  .app.rail-collapsed .rail-logo:hover {
+    transform: scale(1.1);
+  }
+  .rail-logo {
+    cursor: pointer;
+    transition: all 0.2s ease;
+  }
+  .rail-logo:hover {
+    transform: scale(1.05);
+  }
+  .app.rail-collapsed .rail-section-title {
+    justify-content: center;
+    padding: 8px 4px;
+    color: transparent;
+  }
+  .app.rail-collapsed .rail-section-title .section-left {
+    justify-content: center;
+    color: transparent;
+    gap: 0;
+    font-size: 0;
+  }
+  .app.rail-collapsed .rail-section-title .section-left svg {
+    width: 18px;
+    height: 18px;
+    color: var(--ink-soft);
+  }
+  .app.rail-collapsed .rail-section-title .section-right {
+    display: none;
+  }
+  .app.rail-collapsed .rail-item {
+    justify-content: center;
+    padding: 8px 4px;
+  }
+  .app.rail-collapsed .rail-item svg {
+    width: 18px;
+    height: 18px;
+  }
+  .app.rail-collapsed .rail-item-label { display: none; }
+  .app.rail-collapsed .rail-item-count { display: none; }
+  .app.rail-collapsed .nb-actions { display: none !important; }
+  .app.rail-collapsed .nb-dot {
+    width: 10px;
+    height: 10px;
+  }
+  .app.rail-collapsed .rail-foot { display: none; }
+  .app.rail-collapsed .rail-section { 
+    padding: 0; 
+  }
+  .app.rail-collapsed .rail-section + .rail-section {
+    border-top: none;
+    margin-top: 0;
+    padding-top: 2px;
+  }
+  .app.rail-collapsed .rail-section .section-body {
+    display: none;
+  }
+  .app.rail-collapsed .rail-notebooks {
+    flex: none;
+    overflow-y: visible;
+  }
+  .app.rail-collapsed #sectionNotebooks {
+    flex: none !important;
+    min-height: auto !important;
+  }
+  .app.rail-collapsed .rail-section-title .chevron { display: none; }
+  .app.rail-collapsed .rail-system-items {
+    padding: 0;
+    border-bottom: 1px solid var(--rule-soft);
+  }
+
+  .rail-logo {
+    width: 36px;
+    height: 36px;
+    border-radius: 8px;
+    background: var(--ink);
+    color: var(--paper);
+    display: grid;
+    place-items: center;
+    font-family: 'Fraunces', serif;
+    font-weight: 600;
+    font-style: italic;
+    font-size: 18px;
+    box-shadow: var(--shadow-soft);
+    flex-shrink: 0;
+  }
+
+  .rail-brand {
+    font-family: 'Fraunces', serif;
+    font-size: 17px;
+    font-weight: 500;
+    letter-spacing: -0.01em;
+    color: var(--ink);
+    line-height: 1;
+  }
+  .rail-brand em {
+    font-style: italic;
+    color: var(--accent);
+    font-weight: 400;
+  }
+  .rail-brand small {
+    display: block;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 9px;
+    color: var(--ink-mute);
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    margin-top: 4px;
+    font-weight: 400;
+  }
+
+  .rail-section {
+    padding: 8px 12px 4px;
+  }
+  .rail-section + .rail-section {
+    border-top: 1px solid var(--rule-soft);
+  }
+
+  .rail-system-items {
+    padding: 8px 12px 4px;
+    border-bottom: 1px solid var(--rule-soft);
+  }
+
+  .rail-section-title {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 6px 8px;
+    font-family: 'Fraunces', 'Noto Serif SC', serif;
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--ink-soft);
+    letter-spacing: 0.01em;
+    cursor: pointer;
+    border-radius: 4px;
+    transition: background 0.15s;
+    user-select: none;
+  }
+  .rail-section-title:hover {
+    background: var(--rule-soft);
+  }
+
+  .rail-section-title .section-left {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .rail-section-title .section-left svg {
+    width: 14px;
+    height: 14px;
+    color: var(--ink-mute);
+    flex-shrink: 0;
+  }
+  .rail-section-title .section-right {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+
+  .rail-section-title .chevron {
+    width: 14px;
+    height: 14px;
+    color: var(--ink-mute);
+    transition: transform 0.2s ease;
+    flex-shrink: 0;
+  }
+  .rail-section.collapsed .chevron {
+    transform: rotate(-90deg);
+  }
+
+  .rail-section-title .add-btn {
+    width: 20px;
+    height: 20px;
+    border: none;
+    background: transparent;
+    color: var(--ink-mute);
+    border-radius: 4px;
+    cursor: pointer;
+    display: grid;
+    place-items: center;
+    transition: all 0.15s;
+    opacity: 0;
+  }
+  .rail-section-title:hover .add-btn { opacity: 1; }
+  .rail-section-title .add-btn:hover {
+    background: var(--rule);
+    color: var(--ink);
+  }
+  .rail-section-title .add-btn svg { width: 12px; height: 12px; }
+
+  /* 折叠动画 */
+  .rail-section .section-body {
+    overflow: hidden;
+    transition: max-height 0.25s ease, opacity 0.2s ease;
+    max-height: 800px;
+    opacity: 1;
+  }
+  .rail-section.collapsed .section-body {
+    max-height: 0;
+    opacity: 0;
+    pointer-events: none;
+  }
+
+  .rail-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 5px 10px;
+    border: none;
+    background: transparent;
+    color: var(--ink-soft);
+    border-radius: 5px;
+    cursor: pointer;
+    transition: all 0.12s ease;
+    font-family: 'Fraunces', 'Noto Serif SC', serif;
+    font-size: 13px;
+    width: 100%;
+    text-align: left;
+    position: relative;
+    margin-bottom: 1px;
+  }
+  .rail-item:hover {
+    background: var(--rule-soft);
+    color: var(--ink);
+  }
+  .rail-item.active {
+    background: var(--paper);
+    color: var(--ink);
+    box-shadow: inset 3px 0 0 var(--accent);
+  }
+  .rail-item.active .rail-item-count {
+    color: var(--ink-mute);
+  }
+  .rail-item.active .nb-dot {
+    box-shadow: 0 0 0 2px var(--bg-warm);
+  }
+
+  .rail-item svg {
+    width: 15px;
+    height: 15px;
+    flex-shrink: 0;
+  }
+
+  .rail-item-label {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    letter-spacing: -0.005em;
+  }
+
+  .rail-item-count {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    color: var(--ink-mute);
+    letter-spacing: 0.05em;
+  }
+
+  .nb-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
+    transition: box-shadow 0.15s;
+  }
+
+  .rail-item .nb-actions {
+    display: none;
+    position: absolute;
+    right: 4px;
+    top: 50%;
+    transform: translateY(-50%);
+    background: inherit;
+    padding-left: 4px;
+    gap: 1px;
+  }
+  .rail-item:hover .nb-actions { display: flex; }
+  .rail-item:hover .rail-item-count { display: none; }
+
+  .nb-actions button {
+    width: 24px;
+    height: 24px;
+    border: none;
+    background: transparent;
+    color: inherit;
+    opacity: 0.6;
+    border-radius: 4px;
+    cursor: pointer;
+    display: grid;
+    place-items: center;
+    transition: all 0.15s;
+  }
+  .nb-actions button:hover {
+    background: rgba(255,255,255,0.15);
+    opacity: 1;
+  }
+  .rail-item:not(.active) .nb-actions button:hover {
+    background: var(--rule);
+  }
+  .nb-actions button svg { width: 13px; height: 13px; }
+
+  /* 笔记本项缩进（让其看起来像「笔记本」段的子项） */
+  .rail-notebooks > .rail-item { padding-left: 28px; }
+
+  /* 文件夹项 — 比笔记本再深一级 */
+  .rail-folder-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 4px 10px 4px 44px;
+    border: none;
+    background: transparent;
+    color: var(--ink-soft);
+    border-radius: 5px;
+    cursor: pointer;
+    transition: all 0.12s ease;
+    font-family: 'Fraunces', 'Noto Serif SC', serif;
+    font-size: 12px;
+    width: 100%;
+    text-align: left;
+    margin-bottom: 1px;
+    position: relative;
+  }
+  .rail-folder-item:hover {
+    background: var(--rule-soft);
+    color: var(--ink);
+  }
+  .rail-folder-item.active {
+    background: var(--paper);
+    color: var(--ink);
+    box-shadow: inset 3px 0 0 var(--accent);
+  }
+  .rail-folder-item.active .rail-item-count {
+    color: var(--ink-mute);
+    opacity: 1;
+  }
+  .rail-folder-item svg {
+    width: 14px;
+    height: 14px;
+    flex-shrink: 0;
+  }
+  .rail-folder-item .rail-item-label {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .rail-folder-item .rail-item-count {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    color: var(--ink-mute);
+    letter-spacing: 0.05em;
+  }
+  .rail-folder-item .nb-actions {
+    display: none;
+    position: absolute;
+    right: 4px;
+    top: 50%;
+    transform: translateY(-50%);
+    background: inherit;
+    padding-left: 4px;
+  }
+  .rail-folder-item:hover .nb-actions { display: flex; }
+  .rail-folder-item:hover .rail-item-count { display: none; }
+  .rail-folder-item .nb-actions button {
+    width: 24px;
+    height: 24px;
+    border: none;
+    background: transparent;
+    color: inherit;
+    opacity: 0.6;
+    border-radius: 4px;
+    cursor: pointer;
+    display: grid;
+    place-items: center;
+    transition: all 0.15s;
+  }
+  .rail-folder-item .nb-actions button:hover {
+    background: rgba(255,255,255,0.15);
+    opacity: 1;
+  }
+  .rail-folder-item:not(.active) .nb-actions button:hover {
+    background: var(--rule);
+  }
+
+  /* 折叠状态下隐藏文件夹 */
+  .app.rail-collapsed .rail-folder-item { display: none; }
+
+  .rail-notebooks {
+    flex: 1;
+    overflow-y: auto;
+    padding: 2px 0 8px;
+  }
+  .rail-notebooks::-webkit-scrollbar { width: 4px; }
+  .rail-notebooks::-webkit-scrollbar-track { background: transparent; }
+  .rail-notebooks::-webkit-scrollbar-thumb {
+    background: var(--rule);
+    border-radius: 2px;
+  }
+
+  .rail-foot {
+    padding: 12px;
+    border-top: 1px solid var(--rule-soft);
+    display: flex;
+    gap: 4px;
+  }
+  .rail-foot .rail-item {
+    padding: 6px 10px;
+    font-size: 12px;
+    flex: 1;
+    justify-content: center;
+  }
+  .rail-foot .rail-item svg { width: 14px; height: 14px; }
+
+  /* 颜色选择器 */
+  .color-picker {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+    margin-bottom: 16px;
+  }
+  .color-swatch {
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    border: 2px solid transparent;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  .color-swatch:hover { transform: scale(1.1); }
+  .color-swatch.selected {
+    border-color: var(--ink);
+    transform: scale(1.1);
+  }
+
+  .modal input[type="text"] {
+    width: 100%;
+    padding: 10px 12px;
+    border: 1px solid var(--rule);
+    border-radius: 6px;
+    font-family: 'Fraunces', 'Noto Serif SC', serif;
+    font-size: 14px;
+    color: var(--ink);
+    background: var(--bg);
+    outline: none;
+    margin-bottom: 16px;
+  }
+  .modal input[type="text"]:focus { border-color: var(--ink-soft); }
+  .modal label {
+    display: block;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    color: var(--ink-mute);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    margin-bottom: 8px;
+  }
+
+  /* ====== 笔记列表 ====== */
+  .sidebar {
+    background: var(--bg);
+    border-right: 1px solid var(--rule);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  .sidebar-head {
+    padding: 24px 24px 16px;
+    border-bottom: 1px solid var(--rule-soft);
+  }
+
+  .masthead {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 4px;
+    gap: 10px;
+  }
+
+  .masthead-title {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex: 1;
+    min-width: 0;
+  }
+
+  .masthead h1 {
+    font-family: 'Fraunces', serif;
+    font-weight: 500;
+    font-size: 24px;
+    letter-spacing: -0.02em;
+    font-feature-settings: "ss01";
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .masthead h1 em {
+    font-style: italic;
+    font-weight: 400;
+    color: var(--accent);
+  }
+
+  .masthead .nb-dot {
+    width: 12px;
+    height: 12px;
+    flex-shrink: 0;
+  }
+
+  .issue-no {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    color: var(--ink-mute);
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+  }
+
+  .meta-line {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    color: var(--ink-mute);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    margin-top: 8px;
+  }
+  .meta-line .dot {
+    width: 4px;
+    height: 4px;
+    border-radius: 50%;
+    background: var(--accent);
+  }
+
+  .search-row {
+    padding: 12px 24px;
+    border-bottom: 1px solid var(--rule-soft);
+    position: relative;
+  }
+  .search-row svg {
+    position: absolute;
+    left: 32px;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 14px;
+    height: 14px;
+    color: var(--ink-mute);
+  }
+  .search-row input {
+    width: 100%;
+    padding: 8px 12px 8px 32px;
+    background: var(--paper);
+    border: 1px solid var(--rule);
+    border-radius: 6px;
+    font-family: 'Fraunces', 'Noto Serif SC', serif;
+    font-size: 14px;
+    color: var(--ink);
+    outline: none;
+    transition: border-color 0.2s;
+  }
+  .search-row input:focus { border-color: var(--ink-soft); }
+  .search-row input::placeholder {
+    color: var(--ink-mute);
+    font-style: italic;
+  }
+
+  .new-note-btn {
+    margin: 16px 24px 12px;
+    padding: 10px 14px;
+    background: var(--bg-warm);
+    color: var(--ink);
+    border: none;
+    border-radius: 8px;
+    font-family: 'Fraunces', 'Noto Serif SC', serif;
+    font-size: 13px;
+    font-weight: 500;
+    letter-spacing: 0.02em;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    transition: all 0.2s ease;
+  }
+  .new-note-btn:hover {
+    background: var(--rule-soft);
+    transform: translateY(-1px);
+    box-shadow: var(--shadow-soft);
+  }
+  .new-note-btn svg { width: 14px; height: 14px; }
+
+  .filter-tabs {
+    display: flex;
+    gap: 4px;
+    padding: 0 24px 12px;
+    border-bottom: 1px solid var(--rule-soft);
+    flex-wrap: wrap;
+  }
+  .filter-tab {
+    padding: 4px 12px;
+    background: transparent;
+    border: none;
+    border-radius: 100px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    color: var(--ink-mute);
+    letter-spacing: 0.05em;
+    cursor: pointer;
+    transition: all 0.2s ease;
+  }
+  .filter-tab:hover {
+    background: var(--bg-warm);
+    color: var(--ink-soft);
+  }
+  .filter-tab.active {
+    background: var(--bg-warm);
+    color: var(--ink);
+    font-weight: 500;
+  }
+
+  .notes-list {
+    flex: 1;
+    overflow-y: auto;
+    padding: 8px 0;
+  }
+
+  .notes-list::-webkit-scrollbar { width: 6px; }
+  .notes-list::-webkit-scrollbar-track { background: transparent; }
+  .notes-list::-webkit-scrollbar-thumb {
+    background: var(--rule);
+    border-radius: 3px;
+  }
+
+  .note-item {
+    padding: 10px 24px;
+    border-bottom: 1px solid var(--rule-soft);
+    cursor: pointer;
+    transition: background 0.15s ease;
+    position: relative;
+  }
+  .note-item:hover { background: var(--bg-warm); }
+  .note-item.active {
+    background: var(--paper);
+  }
+  .note-item.active::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: 3px;
+    background: var(--accent);
+  }
+
+  .note-item-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    margin-bottom: 3px;
+    gap: 8px;
+  }
+
+  .note-title {
+    font-family: 'Fraunces', 'Noto Serif SC', serif;
+    font-size: 15px;
+    font-weight: 500;
+    color: var(--ink);
+    line-height: 1.3;
+    letter-spacing: -0.01em;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    flex: 1;
+  }
+
+  .note-date {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 9px;
+    color: var(--ink-mute);
+    letter-spacing: 0.05em;
+    white-space: nowrap;
+  }
+
+  .note-preview {
+    font-size: 12px;
+    color: var(--ink-soft);
+    line-height: 1.4;
+    overflow: hidden;
+    display: -webkit-box;
+    -webkit-line-clamp: 1;
+    -webkit-box-orient: vertical;
+    margin-bottom: 4px;
+  }
+
+  .note-tags {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+  }
+  .note-tag {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 9px;
+    color: var(--ink-mute);
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+  }
+  .note-tag::before { content: '#'; opacity: 0.5; }
+  .note-pin {
+    color: var(--accent);
+    font-size: 11px;
+    margin-right: 4px;
+  }
+
+  .note-foot {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+
+  .note-nb-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 9px;
+    color: var(--ink-mute);
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+  }
+  .note-nb-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+
+  .empty-list {
+    padding: 60px 24px;
+    text-align: center;
+    color: var(--ink-mute);
+    font-style: italic;
+    font-size: 14px;
+  }
+
+  /* ====== 编辑器 ====== */
+  .editor {
+    background: var(--paper);
+    overflow-y: auto;
+    position: relative;
+    color-scheme: light;
+  }
+
+  .editor::-webkit-scrollbar { width: 8px; }
+  .editor::-webkit-scrollbar-track { background: transparent; }
+  .editor::-webkit-scrollbar-thumb {
+    background: var(--rule);
+    border-radius: 4px;
+  }
+
+  .editor-toolbar {
+    position: sticky;
+    top: 0;
+    background: color-mix(in srgb, var(--paper) 92%, transparent);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    border-bottom: 1px solid var(--rule-soft);
+    padding: 12px 48px;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    z-index: 10;
+  }
+  /* 老浏览器不支持 color-mix 时退回纯色 */
+  @supports not (background: color-mix(in srgb, red, blue)) {
+    .editor-toolbar { background: var(--paper); }
+  }
+
+  .tool-btn {
+    width: 32px;
+    height: 32px;
+    border: none;
+    background: transparent;
+    color: var(--ink-soft);
+    border-radius: 6px;
+    cursor: pointer;
+    display: grid;
+    place-items: center;
+    transition: all 0.15s ease;
+    font-family: 'Fraunces', serif;
+    font-size: 14px;
+    font-weight: 600;
+  }
+  .tool-btn:hover { background: var(--bg-warm); color: var(--ink); }
+  .tool-btn.active {
+    background: var(--bg-warm);
+    color: var(--accent);
+    box-shadow: inset 0 0 0 1px var(--rule);
+  }
+  .tool-btn svg { width: 14px; height: 14px; }
+
+  .tool-divider {
+    width: 1px;
+    height: 18px;
+    background: var(--rule);
+    margin: 0 6px;
+  }
+
+  .word-count {
+    margin-left: auto;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    color: var(--ink-mute);
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    display: flex;
+    gap: 16px;
+  }
+  .word-count span strong {
+    color: var(--ink);
+    font-weight: 500;
+    margin-right: 4px;
+  }
+
+  /* 右上角图标操作按钮组 */
+  .editor-actions {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    margin-left: 16px;
+    padding-left: 16px;
+    border-left: 1px solid var(--rule);
+  }
+
+  .icon-btn {
+    width: 34px;
+    height: 34px;
+    border: none;
+    background: transparent;
+    color: var(--ink-soft);
+    border-radius: 8px;
+    cursor: pointer;
+    display: grid;
+    place-items: center;
+    transition: all 0.18s ease;
+    position: relative;
+  }
+  .icon-btn svg {
+    width: 16px;
+    height: 16px;
+    transition: transform 0.18s ease;
+  }
+  .icon-btn:hover {
+    background: var(--bg-warm);
+    color: var(--ink);
+  }
+  .icon-btn:hover svg { transform: scale(1.1); }
+
+  .icon-btn.starred {
+    color: var(--accent);
+  }
+  .icon-btn.starred svg {
+    fill: var(--accent);
+  }
+
+  .icon-btn.danger:hover {
+    background: rgba(184, 67, 31, 0.1);
+    color: var(--accent);
+  }
+
+  .icon-btn.active {
+    background: var(--bg-warm);
+    color: var(--accent);
+    box-shadow: inset 0 0 0 1px var(--rule);
+  }
+
+  /* 图标按钮 tooltip */
+  .icon-btn::after {
+    content: attr(data-tip);
+    position: absolute;
+    top: calc(100% + 6px);
+    left: 50%;
+    transform: translateX(-50%) translateY(-4px);
+    background: var(--ink);
+    color: var(--paper);
+    padding: 4px 10px;
+    border-radius: 4px;
+    font-family: 'Fraunces', 'Noto Serif SC', serif;
+    font-size: 11px;
+    white-space: nowrap;
+    opacity: 0;
+    pointer-events: none;
+    transition: all 0.2s ease;
+    z-index: 100;
+  }
+  .icon-btn:hover::after {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+  }
+
+  .editor-content {
+    max-width: 1080px;
+    margin: 0 auto;
+    padding: 56px 80px 120px;
+  }
+
+  .editor-meta {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    color: var(--ink-mute);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    margin-top: 12px;
+    margin-bottom: 28px;
+  }
+  .editor-meta .dot {
+    width: 4px;
+    height: 4px;
+    border-radius: 50%;
+    background: var(--accent);
+  }
+
+  .editor-nb-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 3px 10px;
+    background: var(--bg-warm);
+    border: 1px solid var(--rule);
+    border-radius: 100px;
+    text-transform: none;
+    letter-spacing: 0;
+    font-family: 'Fraunces', 'Noto Serif SC', serif;
+    font-size: 11px;
+    color: var(--ink-soft);
+    margin-right: 4px;
+  }
+  .editor-nb-badge .nb-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+  }
+  .editor-nb-badge:empty { display: none; }
+
+  .title-input {
+    width: 100%;
+    border: none;
+    background: transparent;
+    font-family: 'Fraunces', 'Noto Serif SC', serif;
+    font-size: 48px;
+    font-weight: 500;
+    line-height: 1.1;
+    color: var(--ink);
+    letter-spacing: -0.03em;
+    outline: none;
+    margin-bottom: 8px;
+    font-feature-settings: "ss01";
+    caret-color: #c9532a;
+  }
+  .title-input::placeholder {
+    color: var(--ink-mute);
+    font-style: italic;
+    font-weight: 300;
+  }
+
+  .subtitle-row {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    margin-bottom: 32px;
+    padding-bottom: 24px;
+    border-bottom: 1px solid var(--rule-soft);
+    flex-wrap: wrap;
+  }
+
+  .tag-input-wrap {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+    align-items: center;
+  }
+  .tag-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 3px 10px;
+    background: var(--bg-warm);
+    border: 1px solid var(--rule);
+    border-radius: 100px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    color: var(--ink-soft);
+    letter-spacing: 0.04em;
+  }
+  .tag-pill::before { content: '#'; color: var(--accent); }
+  .tag-pill .remove {
+    cursor: pointer;
+    color: var(--ink-mute);
+    font-size: 12px;
+    line-height: 1;
+    margin-left: 2px;
+  }
+  .tag-pill .remove:hover { color: var(--accent); }
+
+  .tag-input {
+    border: none;
+    background: transparent;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    color: var(--ink);
+    outline: none;
+    width: 120px;
+    padding: 4px;
+    letter-spacing: 0.02em;
+  }
+  .tag-input::placeholder {
+    color: var(--ink-mute);
+    font-style: italic;
+  }
+
+  .content-input {
+    width: 100%;
+    min-height: 60vh;
+    border: none;
+    background: transparent;
+    font-family: 'Fraunces', 'Noto Serif SC', Georgia, serif;
+    font-size: 17px;
+    line-height: 1.85;
+    color: var(--ink-soft);
+    outline: none;
+    resize: none;
+    letter-spacing: 0.005em;
+    font-feature-settings: "ss01", "kern";
+    caret-color: #c9532a;
+    -webkit-caret-color: #c9532a;
+  }
+  .content-input::placeholder {
+    color: var(--ink-mute);
+    font-style: italic;
+  }
+
+  /* 大写首字母装饰 */
+  .editor-content[data-has-content="true"] .first-letter {
+    font-size: 5em;
+    float: left;
+    line-height: 0.85;
+    margin: 0.05em 0.08em -0.05em 0;
+    color: var(--accent);
+    font-weight: 500;
+    font-style: italic;
+  }
+
+  /* ====== 空状态 ====== */
+  .empty-state {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    text-align: center;
+    color: var(--ink-mute);
+    padding: 40px;
+  }
+  .empty-state .ornament {
+    font-family: 'Fraunces', serif;
+    font-size: 80px;
+    font-style: italic;
+    color: var(--rule);
+    line-height: 1;
+    margin-bottom: 16px;
+  }
+  .empty-state h2 {
+    font-family: 'Fraunces', serif;
+    font-size: 28px;
+    font-weight: 400;
+    color: var(--ink-soft);
+    margin-bottom: 8px;
+    font-style: italic;
+  }
+  .empty-state p {
+    font-size: 14px;
+    max-width: 340px;
+    line-height: 1.6;
+  }
+  .empty-state .kbd {
+    margin-top: 24px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    color: var(--ink-mute);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+  .empty-state .kbd kbd {
+    background: var(--bg-warm);
+    border: 1px solid var(--rule);
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-family: inherit;
+    font-size: 10px;
+    margin: 0 2px;
+    color: var(--ink);
+  }
+
+  /* ====== Markdown 预览模式 ====== */
+  .preview {
+    font-family: 'Fraunces', 'Noto Serif SC', Georgia, serif;
+    font-size: 17px;
+    line-height: 1.85;
+    color: var(--ink-soft);
+  }
+  .preview h1, .preview h2, .preview h3 {
+    font-family: 'Fraunces', serif;
+    color: var(--ink);
+    margin: 1.5em 0 0.5em;
+    letter-spacing: -0.02em;
+    font-weight: 500;
+  }
+  .preview h1 { font-size: 32px; }
+  .preview h2 {
+    font-size: 24px;
+    border-bottom: 1px solid var(--rule);
+    padding-bottom: 8px;
+  }
+  .preview h3 { font-size: 20px; font-style: italic; color: var(--accent); }
+  .preview p { margin: 1em 0; }
+  .preview strong { color: var(--ink); font-weight: 600; }
+  .preview em { font-style: italic; color: var(--ink); }
+  .preview code {
+    font-family: 'JetBrains Mono', monospace;
+    background: var(--bg-warm);
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-size: 14px;
+    color: var(--accent);
+    border: 1px solid var(--rule-soft);
+  }
+  .preview pre {
+    background: var(--ink);
+    color: var(--paper);
+    padding: 16px 20px;
+    border-radius: 8px;
+    overflow-x: auto;
+    margin: 1.5em 0;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 13px;
+    line-height: 1.6;
+  }
+  .preview pre code {
+    background: transparent;
+    color: inherit;
+    padding: 0;
+    border: none;
+  }
+  .preview blockquote {
+    border-left: 3px solid var(--accent);
+    padding-left: 20px;
+    margin: 1.5em 0;
+    font-style: italic;
+    color: var(--ink-mute);
+  }
+  .preview ul, .preview ol { margin: 1em 0; padding-left: 28px; }
+  .preview li { margin: 0.4em 0; }
+  .preview a {
+    color: var(--accent);
+    text-decoration: none;
+    border-bottom: 1px solid var(--accent-soft);
+  }
+  .preview a:hover { background: rgba(184, 67, 31, 0.08); }
+  .preview hr {
+    border: none;
+    text-align: center;
+    margin: 2em 0;
+    color: var(--rule);
+  }
+  .preview hr::after {
+    content: '· · ·';
+    font-family: 'Fraunces', serif;
+    font-size: 18px;
+    letter-spacing: 0.5em;
+    color: var(--ink-mute);
+  }
+  .preview mark {
+    background: var(--highlight);
+    padding: 0 4px;
+    color: var(--ink);
+  }
+
+  /* ====== 提示信息 ====== */
+  .toast {
+    position: fixed;
+    bottom: 32px;
+    left: 50%;
+    transform: translateX(-50%) translateY(20px);
+    background: var(--ink);
+    color: var(--paper);
+    padding: 10px 20px;
+    border-radius: 8px;
+    font-family: 'Fraunces', 'Noto Serif SC', serif;
+    font-size: 13px;
+    box-shadow: var(--shadow-deep);
+    opacity: 0;
+    pointer-events: none;
+    transition: all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+    z-index: 1000;
+  }
+  .toast.show {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+  }
+
+  /* ====== 模态框 ====== */
+  .modal-bg {
+    position: fixed;
+    inset: 0;
+    background: rgba(26, 24, 20, 0.5);
+    backdrop-filter: blur(4px);
+    display: none;
+    align-items: center;
+    justify-content: center;
+    z-index: 999;
+  }
+  .modal-bg.show { display: flex; }
+  .modal {
+    background: var(--paper);
+    padding: 32px;
+    border-radius: 12px;
+    max-width: 400px;
+    width: 90%;
+    box-shadow: var(--shadow-deep);
+    border: 1px solid var(--rule);
+  }
+  .modal h3 {
+    font-family: 'Fraunces', serif;
+    font-size: 22px;
+    font-weight: 500;
+    margin-bottom: 8px;
+    letter-spacing: -0.02em;
+  }
+  .modal p {
+    color: var(--ink-soft);
+    font-size: 14px;
+    line-height: 1.6;
+    margin-bottom: 24px;
+  }
+  .modal-actions {
+    display: flex;
+    gap: 8px;
+    justify-content: flex-end;
+  }
+  .modal-btn {
+    padding: 8px 16px;
+    border: 1px solid var(--rule);
+    background: transparent;
+    border-radius: 6px;
+    font-family: 'Fraunces', 'Noto Serif SC', serif;
+    font-size: 13px;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+  .modal-btn:hover { background: var(--bg-warm); }
+  .modal-btn.primary {
+    background: var(--accent);
+    color: var(--paper);
+    border-color: var(--accent);
+  }
+  .modal-btn.primary:hover { background: var(--accent-soft); }
+
+  /* ====== 动画 ====== */
+  @keyframes fadeIn {
+    from { opacity: 0; transform: translateY(8px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+  .note-item, .editor-content { animation: fadeIn 0.4s ease backwards; }
+
+  /* ====== 响应式 ====== */
+  @media (max-width: 1280px) {
+    .editor-content { padding: 56px 64px 120px; }
+  }
+  @media (max-width: 1024px) {
+    .app { grid-template-columns: 220px 280px 1fr; }
+    .editor-content { padding: 40px 48px 100px; }
+    .title-input { font-size: 38px; }
+  }
+  @media (max-width: 768px) {
+    .app { grid-template-columns: 1fr; }
+    .app.rail-collapsed { grid-template-columns: 1fr; }
+    .rail { display: none; }
+    .editor { display: none; }
+    .app.show-editor .sidebar { display: none; }
+    .app.show-editor .editor { display: block; }
+    .app.show-editor { grid-template-columns: 1fr; }
+    .editor-content { padding: 32px 24px 80px; }
+    .editor-toolbar { padding: 10px 24px; flex-wrap: wrap; }
+    .editor-actions { margin-left: 8px; padding-left: 8px; }
+    .word-count { display: none; }
+  }
+
+  /* ====== 暗色主题 ====== */
+  body[data-theme="dark"] {
+    --bg: #1a1814;
+    --bg-warm: #221f1a;
+    --paper: #2a2620;
+    --ink: #f4efe6;
+    --ink-soft: #c9c1b0;
+    --ink-mute: #8a8275;
+    --rule: #3a342c;
+    --rule-soft: #2f2a23;
+    --accent: #e07a3d;
+    --accent-soft: #ec9054;
+    --highlight: #d4a843;
+    color-scheme: dark;
+    background-image:
+      radial-gradient(circle at 20% 10%, rgba(224, 122, 61, 0.06) 0%, transparent 40%),
+      radial-gradient(circle at 80% 80%, rgba(244, 239, 230, 0.02) 0%, transparent 50%);
+  }
+  body[data-theme="dark"]::before { opacity: 0.15; }
+  body[data-theme="dark"] .editor { color-scheme: dark; }
+  /* editor-toolbar 已用 color-mix 跟随 --paper，不需暗色覆盖 */
+  body[data-theme="dark"] .preview pre { background: #0e0c0a; color: #f4efe6; }
+  body[data-theme="dark"] .toast { background: var(--paper); color: var(--ink); border: 1px solid var(--rule); }
+  body[data-theme="dark"] .nb-actions button:hover { background: rgba(255,255,255,0.08); }
+  body[data-theme="dark"] .rail-item.active { background: var(--paper); }
+  body[data-theme="dark"] .note-item.active { background: var(--paper); }
+
+  /* ====== 主题切换 ====== */
+  .rail-theme-row {
+    padding: 10px 12px 6px;
+    border-top: 1px solid var(--rule-soft);
+    display: flex;
+    justify-content: center;
+  }
+  .theme-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 12px;
+    background: transparent;
+    border: 1px solid var(--rule);
+    color: var(--ink-soft);
+    border-radius: 100px;
+    cursor: pointer;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    transition: all 0.18s ease;
+    width: 100%;
+    justify-content: center;
+  }
+  .theme-toggle:hover {
+    background: var(--bg-warm);
+    color: var(--ink);
+    border-color: var(--ink-mute);
+  }
+  .theme-toggle svg { width: 14px; height: 14px; flex-shrink: 0; }
+  .theme-toggle .icon-sun { display: none; }
+  body[data-theme="dark"] .theme-toggle .icon-sun { display: block; }
+  body[data-theme="dark"] .theme-toggle .icon-moon { display: none; }
+  .app.rail-collapsed .rail-theme-row { display: none; }
+
+  /* ====== 待办 section ====== */
+  .rail-section .rail-item.todo-item-rail {
+    padding-left: 28px;
+  }
+  .rail-section .rail-item.todo-item-rail .todo-status-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    flex-shrink: 0;
+    margin-right: 2px;
+  }
+
+  /* ====== 待办面板 ====== */
+  .todo-panel {
+    flex: 1;
+    overflow-y: auto;
+    padding: 0 0 16px;
+    display: none;
+    flex-direction: column;
+  }
+  .todo-panel.show { display: flex; }
+  .todo-panel::-webkit-scrollbar { width: 6px; }
+  .todo-panel::-webkit-scrollbar-track { background: transparent; }
+  .todo-panel::-webkit-scrollbar-thumb { background: var(--rule); border-radius: 3px; }
+
+  .todo-add {
+    margin: 16px 24px 12px;
+    padding: 12px;
+    background: var(--bg-warm);
+    border: 1px solid var(--rule);
+    border-radius: 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .todo-add input[type="text"] {
+    width: 100%;
+    padding: 8px 10px;
+    background: var(--paper);
+    border: 1px solid var(--rule);
+    border-radius: 6px;
+    font-family: 'Fraunces', 'Noto Serif SC', serif;
+    font-size: 13px;
+    color: var(--ink);
+    outline: none;
+  }
+  .todo-add input[type="text"]:focus { border-color: var(--ink-soft); }
+  .todo-add-row { display: flex; gap: 6px; }
+  .todo-add-row input[type="date"],
+  .todo-add-row input[type="datetime-local"] {
+    flex: 1;
+    padding: 7px 10px;
+    background: var(--paper);
+    border: 1px solid var(--rule);
+    border-radius: 6px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    color: var(--ink);
+    outline: none;
+    color-scheme: light;
+    min-width: 0;
+  }
+  body[data-theme="dark"] .todo-add-row input[type="date"],
+  body[data-theme="dark"] .todo-add-row input[type="datetime-local"] { color-scheme: dark; }
+  .todo-add-row button {
+    padding: 8px 14px;
+    background: var(--accent);
+    color: #fff;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+    font-family: 'Fraunces', 'Noto Serif SC', serif;
+    font-size: 12px;
+    font-weight: 500;
+    transition: background 0.18s;
+  }
+  .todo-add-row button:hover { background: var(--accent-soft); }
+
+  .todo-list { flex: 1; overflow-y: auto; }
+  .todo-list::-webkit-scrollbar { width: 6px; }
+  .todo-list::-webkit-scrollbar-thumb { background: var(--rule); border-radius: 3px; }
+
+  .todo-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    padding: 12px 24px;
+    border-bottom: 1px solid var(--rule-soft);
+    transition: background 0.15s;
+    position: relative;
+  }
+  .todo-row:hover { background: var(--bg-warm); }
+  .todo-row input[type="checkbox"] {
+    margin-top: 3px;
+    width: 16px;
+    height: 16px;
+    cursor: pointer;
+    accent-color: var(--accent);
+    flex-shrink: 0;
+  }
+  .todo-body { flex: 1; min-width: 0; }
+  .todo-text {
+    font-family: 'Fraunces', 'Noto Serif SC', serif;
+    font-size: 14px;
+    color: var(--ink);
+    line-height: 1.4;
+    word-break: break-word;
+  }
+  .todo-row.done .todo-text {
+    color: var(--ink-mute);
+    text-decoration: line-through;
+  }
+  .todo-meta {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+    margin-top: 4px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 9px;
+    color: var(--ink-mute);
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+  }
+  .todo-due {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+  }
+  .todo-due.overdue { color: var(--accent); font-weight: 500; }
+  .todo-del {
+    width: 26px;
+    height: 26px;
+    border: none;
+    background: transparent;
+    color: var(--ink-mute);
+    border-radius: 4px;
+    cursor: pointer;
+    display: none;
+    place-items: center;
+    flex-shrink: 0;
+    transition: all 0.15s;
+  }
+  .todo-row:hover .todo-del { display: grid; }
+  .todo-del:hover { color: var(--accent); background: var(--rule-soft); }
+  .todo-del svg { width: 13px; height: 13px; }
+
+  .todo-empty {
+    padding: 60px 24px;
+    text-align: center;
+    color: var(--ink-mute);
+    font-style: italic;
+    font-size: 14px;
+  }
+
+  /* 待办视图下隐藏笔记相关元素 */
+  .sidebar.todo-mode .new-note-btn,
+  .sidebar.todo-mode .filter-tabs,
+  .sidebar.todo-mode .notes-list { display: none; }
+
+  /* 待办列表行可点 + 激活态 */
+  .todo-row { cursor: pointer; }
+  .todo-row.active {
+    background: var(--paper);
+    box-shadow: inset 3px 0 0 var(--accent);
+  }
+
+  /* 待办详情编辑器 */
+  #todoEditorWrap { animation: fadeIn 0.4s ease backwards; }
+  #todoEditorWrap .editor-toolbar { gap: 8px; flex-wrap: wrap; }
+  .todo-state-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 12px;
+    background: var(--bg-warm);
+    border: 1px solid var(--rule);
+    border-radius: 100px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: var(--ink-soft);
+  }
+  .todo-state-pill.done {
+    color: var(--ink-mute);
+    background: var(--rule-soft);
+  }
+  .todo-state-pill.overdue {
+    color: var(--accent);
+    border-color: var(--accent);
+  }
+  .todo-due-edit {
+    padding: 6px 10px;
+    background: var(--bg-warm);
+    border: 1px solid var(--rule);
+    border-radius: 6px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    color: var(--ink);
+    outline: none;
+    color-scheme: light;
+  }
+  body[data-theme="dark"] .todo-due-edit { color-scheme: dark; }
+  .todo-toggle-btn {
+    padding: 6px 14px;
+    background: transparent;
+    border: 1px solid var(--rule);
+    border-radius: 6px;
+    cursor: pointer;
+    font-family: 'Fraunces', 'Noto Serif SC', serif;
+    font-size: 12px;
+    color: var(--ink-soft);
+    transition: all 0.18s;
+  }
+  .todo-toggle-btn:hover { background: var(--bg-warm); color: var(--ink); }
+  .todo-toggle-btn.done {
+    background: var(--accent);
+    color: #fff;
+    border-color: var(--accent);
+  }
+
+  /* 图片预览 */
+  .preview img {
+    max-width: 100%;
+    border-radius: 6px;
+    margin: 1em 0;
+    display: block;
+    box-shadow: var(--shadow-soft);
+  }
+  .preview .task-item {
+    list-style: none;
+    margin-left: -20px;
+  }
+  .preview .task-item input[type=checkbox] {
+    margin-right: 8px;
+    accent-color: var(--accent);
+    vertical-align: -1px;
+  }
+
+  /* 错误日志查看器 */
+  .error-log-list {
+    max-height: 300px;
+    overflow-y: auto;
+    background: var(--bg-warm);
+    border: 1px solid var(--rule);
+    border-radius: 8px;
+    padding: 10px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    line-height: 1.5;
+    color: var(--ink-soft);
+    margin-bottom: 12px;
+  }
+  .error-log-list .entry {
+    padding: 6px 0;
+    border-bottom: 1px solid var(--rule-soft);
+    word-break: break-all;
+  }
+  .error-log-list .entry:last-child { border-bottom: none; }
+  .error-log-list .ctx { color: var(--accent); margin-right: 6px; }
+  .error-log-list .ts { color: var(--ink-mute); }
+  .error-log-list .stack {
+    font-size: 10px;
+    color: var(--ink-mute);
+    margin-top: 2px;
+    white-space: pre-wrap;
+    max-height: 60px;
+    overflow-y: auto;
+  }
+  .error-log-empty {
+    padding: 32px;
+    color: var(--ink-mute);
+    font-style: italic;
+    text-align: center;
+  }
+
+  /* ====== 待办提醒 ====== */
+  .todo-remind-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    color: var(--ink-mute);
+    letter-spacing: 0.04em;
+    margin-top: 2px;
+  }
+  .todo-remind-row .bell {
+    flex-shrink: 0;
+    color: var(--accent);
+  }
+  .todo-remind-row input[type="number"] {
+    width: 48px;
+    padding: 4px 6px;
+    background: var(--paper);
+    border: 1px solid var(--rule);
+    border-radius: 4px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    color: var(--ink);
+    outline: none;
+    text-align: center;
+  }
+  .todo-remind-row input[type="number"]:focus { border-color: var(--ink-soft); }
+  .todo-remind-row input[type="number"]::-webkit-inner-spin-button { opacity: 0.4; }
+
+  .ext-only-tip {
+    display: none;
+    font-style: italic;
+    color: var(--ink-mute);
+    font-size: 10px;
+    margin-top: 4px;
+  }
+  body:not(.is-ext) .ext-only-tip { display: block; }
+  body:not(.is-ext) .todo-remind-row { opacity: 0.55; }
+
+  /* ====== 存储 / 备份 模态框 ====== */
+  .storage-info {
+    background: var(--bg-warm);
+    border: 1px solid var(--rule);
+    border-radius: 8px;
+    padding: 14px 16px;
+    margin-bottom: 16px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    color: var(--ink-soft);
+    line-height: 1.7;
+    word-break: break-all;
+  }
+  .storage-info .key { color: var(--ink-mute); display: inline-block; min-width: 90px; }
+  .storage-info .val { color: var(--ink); }
+
+  .storage-actions {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+    margin-bottom: 16px;
+  }
+  .storage-actions button {
+    padding: 10px 14px;
+    background: var(--bg-warm);
+    border: 1px solid var(--rule);
+    border-radius: 6px;
+    cursor: pointer;
+    font-family: 'Fraunces', 'Noto Serif SC', serif;
+    font-size: 13px;
+    color: var(--ink);
+    transition: all 0.18s;
+  }
+  .storage-actions button:hover {
+    background: var(--paper);
+    border-color: var(--ink-soft);
+  }
+
+  .storage-auto-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 12px;
+    background: var(--bg-warm);
+    border: 1px solid var(--rule);
+    border-radius: 6px;
+    margin-bottom: 8px;
+  }
+  .storage-auto-row label {
+    font-family: 'Fraunces', 'Noto Serif SC', serif;
+    font-size: 13px;
+    color: var(--ink);
+    flex: 1;
+  }
+  .storage-auto-row input[type="number"] {
+    width: 60px;
+    padding: 6px 8px;
+    background: var(--paper);
+    border: 1px solid var(--rule);
+    border-radius: 4px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    color: var(--ink);
+    text-align: center;
+  }
+
+  /* ====== AI 优化 ====== */
+  .ai-menu {
+    position: fixed;
+    background: var(--paper);
+    border: 1px solid var(--rule);
+    border-radius: 8px;
+    box-shadow: var(--shadow-deep);
+    padding: 6px;
+    z-index: 1100;
+    min-width: 220px;
+    display: none;
+  }
+  .ai-menu.show { display: block; }
+  .ai-menu .ai-menu-title {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 9px;
+    color: var(--ink-mute);
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    padding: 8px 12px 6px;
+  }
+  .ai-menu button {
+    width: 100%;
+    padding: 8px 12px;
+    background: transparent;
+    border: none;
+    text-align: left;
+    cursor: pointer;
+    font-family: 'Fraunces', 'Noto Serif SC', serif;
+    font-size: 13px;
+    color: var(--ink);
+    border-radius: 4px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .ai-menu button:hover:not(:disabled) { background: var(--bg-warm); }
+  .ai-menu button:disabled { color: var(--ink-mute); cursor: not-allowed; }
+  .ai-menu .ai-menu-divider { height: 1px; background: var(--rule-soft); margin: 4px 4px; }
+  .ai-menu .ai-undo { color: var(--accent); }
+
+  .ai-spinner {
+    display: inline-block;
+    width: 12px;
+    height: 12px;
+    border: 2px solid var(--ink-mute);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: aiSpin 0.7s linear infinite;
+    vertical-align: -2px;
+  }
+  @keyframes aiSpin { to { transform: rotate(360deg); } }
+
+  /* AI 设置 */
+  .ai-provider-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-bottom: 12px;
+    max-height: 280px;
+    overflow-y: auto;
+  }
+  .ai-provider {
+    display: grid;
+    grid-template-columns: 22px 1fr auto;
+    gap: 10px;
+    padding: 10px 12px;
+    background: var(--bg-warm);
+    border: 1px solid var(--rule);
+    border-radius: 8px;
+    align-items: center;
+  }
+  .ai-provider.active {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px rgba(184,67,31,0.10);
+  }
+  .ai-provider input[type="radio"] { margin: 0; cursor: pointer; accent-color: var(--accent); }
+  .ai-provider .name {
+    font-family: 'Fraunces', 'Noto Serif SC', serif;
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--ink);
+  }
+  .ai-provider .meta {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    color: var(--ink-mute);
+    margin-top: 2px;
+    word-break: break-all;
+  }
+  .ai-provider-actions { display: flex; gap: 4px; }
+  .ai-provider-actions button {
+    padding: 4px 10px;
+    background: transparent;
+    border: 1px solid var(--rule);
+    border-radius: 4px;
+    cursor: pointer;
+    font-family: 'Fraunces', serif;
+    font-size: 11px;
+    color: var(--ink-soft);
+    transition: all 0.18s;
+  }
+  .ai-provider-actions button:hover { color: var(--ink); border-color: var(--ink-soft); background: var(--paper); }
+
+  .ai-provider-form {
+    background: var(--bg-warm);
+    border: 1px solid var(--rule);
+    border-radius: 8px;
+    padding: 16px;
+    display: none;
+    margin-bottom: 12px;
+  }
+  .ai-provider-form.show { display: block; }
+  .ai-provider-form .row { margin-bottom: 10px; }
+  .ai-provider-form .row.split { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .ai-provider-form label {
+    display: block;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    color: var(--ink-mute);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    margin-bottom: 4px;
+  }
+  .ai-provider-form input, .ai-provider-form textarea, .ai-provider-form select {
+    width: 100%;
+    padding: 8px 10px;
+    background: var(--paper);
+    border: 1px solid var(--rule);
+    border-radius: 6px;
+    font-family: 'Fraunces', 'Noto Serif SC', serif;
+    font-size: 13px;
+    color: var(--ink);
+    outline: none;
+    box-sizing: border-box;
+  }
+  .ai-provider-form input:focus, .ai-provider-form textarea:focus { border-color: var(--ink-soft); }
+  .ai-provider-form textarea { min-height: 60px; resize: vertical; }
+  .ai-provider-form .form-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 12px; }
+  .ai-add-row { display: flex; gap: 8px; align-items: center; margin-bottom: 12px; }
+  .ai-add-row select {
+    flex: 1;
+    padding: 8px 10px;
+    background: var(--paper);
+    border: 1px solid var(--rule);
+    border-radius: 6px;
+    font-family: 'Fraunces', serif;
+    font-size: 13px;
+    color: var(--ink);
+    outline: none;
+  }
+
+  /* AI 工具栏按钮带渐变图标 */
+  .tool-btn.ai-btn {
+    color: var(--accent);
+    position: relative;
+  }
+  .tool-btn.ai-btn:hover { color: var(--accent-soft); }
+  .tool-btn.ai-btn.busy svg { display: none; }
+  .tool-btn.ai-btn.busy::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    margin: auto;
+    width: 14px;
+    height: 14px;
+    border: 2px solid var(--ink-mute);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: aiSpin 0.7s linear infinite;
+  }
+  .icon-btn.ai-btn { color: var(--accent); }
+  .icon-btn.ai-btn.busy svg { display: none; }
+  .icon-btn.ai-btn.busy::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    margin: auto;
+    width: 14px;
+    height: 14px;
+    border: 2px solid var(--ink-mute);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: aiSpin 0.7s linear infinite;
+  }
+
+  /* 主题选择器 */
+  .theme-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 10px;
+  }
+  .theme-card {
+    border: 2px solid var(--rule);
+    border-radius: 8px;
+    padding: 10px 12px;
+    cursor: pointer;
+    background: var(--bg-warm);
+    transition: all 0.18s;
+    user-select: none;
+  }
+  .theme-card.active {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px rgba(184,67,31,0.12);
+  }
+  .theme-card:hover {
+    transform: translateY(-2px);
+    box-shadow: var(--shadow-soft);
+  }
+  .theme-card-name {
+    font-family: 'Fraunces', 'Noto Serif SC', serif;
+    font-size: 13px;
+    font-weight: 500;
+    margin-bottom: 8px;
+    color: var(--ink);
+  }
+  .theme-card-swatches {
+    display: flex;
+    gap: 3px;
+    height: 18px;
+  }
+  .theme-card-swatch {
+    flex: 1;
+    border-radius: 3px;
+    border: 1px solid rgba(0,0,0,0.08);
+  }
+  .theme-custom-row {
+    display: grid;
+    grid-template-columns: 110px 28px 40px 28px 40px;
+    gap: 8px;
+    align-items: center;
+    margin-bottom: 8px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    color: var(--ink-mute);
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+  }
+  .theme-custom-row .label {
+    font-family: 'Fraunces', 'Noto Serif SC', serif;
+    text-transform: none;
+    letter-spacing: 0;
+    font-size: 12px;
+    color: var(--ink-soft);
+  }
+  .theme-custom-row input[type="color"] {
+    width: 40px;
+    height: 28px;
+    border: 1px solid var(--rule);
+    border-radius: 4px;
+    background: transparent;
+    cursor: pointer;
+    padding: 1px;
+  }
+  @media (max-width: 600px) {
+    .theme-grid { grid-template-columns: repeat(2, 1fr); }
+  }
+
+  /* 导入下拉 */
+  .import-menu {
+    position: fixed;
+    background: var(--paper);
+    border: 1px solid var(--rule);
+    border-radius: 8px;
+    box-shadow: var(--shadow-deep);
+    padding: 6px;
+    z-index: 1000;
+    min-width: 180px;
+    display: none;
+  }
+  .import-menu.show { display: block; }
+  .import-menu button {
+    width: 100%;
+    padding: 8px 12px;
+    background: transparent;
+    border: none;
+    text-align: left;
+    cursor: pointer;
+    font-family: 'Fraunces', 'Noto Serif SC', serif;
+    font-size: 13px;
+    color: var(--ink);
+    border-radius: 4px;
+  }
+  .import-menu button:hover { background: var(--bg-warm); }
+
+  /* ====== a11y focus-visible ====== */
+  *:focus { outline: none; }
+  button:focus-visible,
+  [role="button"]:focus-visible,
+  a:focus-visible,
+  [tabindex]:not(input):not(textarea):focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+    border-radius: 4px;
+  }
+  input:focus,
+  input:focus-visible,
+  textarea:focus,
+  textarea:focus-visible,
+  [contenteditable]:focus,
+  [contenteditable]:focus-visible {
+    outline: none;
+    box-shadow: none;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    * { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
+  }
+
+  /* ====== 排序 / 紧凑控件 ====== */
+  .list-controls {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 24px 8px;
+    border-bottom: 1px solid var(--rule-soft);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    color: var(--ink-mute);
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+  }
+  .list-controls select {
+    padding: 4px 8px;
+    background: var(--bg-warm);
+    border: 1px solid var(--rule);
+    border-radius: 4px;
+    font-family: inherit;
+    font-size: 10px;
+    color: var(--ink);
+    cursor: pointer;
+    outline: none;
+  }
+  .list-controls .compact-toggle {
+    margin-left: auto;
+    padding: 4px 10px;
+    background: transparent;
+    border: 1px solid var(--rule);
+    border-radius: 100px;
+    font-family: inherit;
+    font-size: 10px;
+    color: var(--ink-mute);
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  .list-controls .compact-toggle.active {
+    background: var(--bg-warm);
+    color: var(--ink);
+    border-color: var(--ink-soft);
+  }
+  .sidebar.todo-mode .list-controls { display: none; }
+
+  .note-item.compact { padding: 8px 24px; }
+  .note-item.compact .note-preview,
+  .note-item.compact .note-foot { display: none; }
+  .note-item.compact .note-item-head { margin-bottom: 0; }
+  .note-item.compact .note-title { font-size: 13px; }
+
+  .note-item mark, .todo-row mark {
+    background: var(--highlight);
+    color: var(--ink);
+    padding: 0 2px;
+    border-radius: 2px;
+  }
+
+  /* ====== 提醒预设 ====== */
+  .remind-preset-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+    margin-top: 2px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    color: var(--ink-mute);
+  }
+  .remind-preset-row select {
+    padding: 4px 8px;
+    background: var(--paper);
+    border: 1px solid var(--rule);
+    border-radius: 4px;
+    font-family: inherit;
+    font-size: 11px;
+    color: var(--ink);
+    outline: none;
+    cursor: pointer;
+  }
+  .remind-advanced {
+    display: none;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+  }
+  .remind-advanced.show { display: flex; }
+  .remind-advanced input[type="number"] {
+    width: 48px;
+    padding: 4px 6px;
+    background: var(--paper);
+    border: 1px solid var(--rule);
+    border-radius: 4px;
+    font-family: inherit;
+    font-size: 11px;
+    color: var(--ink);
+    outline: none;
+    text-align: center;
+  }
+
+  /* ====== Outline 大纲面板 ====== */
+  .outline-panel {
+    position: fixed;
+    right: 0;
+    top: 0;
+    bottom: 0;
+    width: 240px;
+    background: var(--bg-warm);
+    border-left: 1px solid var(--rule);
+    padding: 60px 16px 24px;
+    transform: translateX(100%);
+    transition: transform 0.25s ease;
+    z-index: 50;
+    overflow-y: auto;
+  }
+  .outline-panel.show {
+    transform: translateX(0);
+    box-shadow: -8px 0 24px rgba(0,0,0,0.15);
+  }
+  .outline-panel h4 {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    color: var(--ink-mute);
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    margin-bottom: 12px;
+  }
+  .outline-item {
+    display: block;
+    padding: 4px 8px;
+    cursor: pointer;
+    border-radius: 4px;
+    color: var(--ink-soft);
+    font-family: 'Fraunces', 'Noto Serif SC', serif;
+    font-size: 13px;
+    line-height: 1.5;
+    border: none;
+    background: transparent;
+    width: 100%;
+    text-align: left;
+    transition: all 0.15s;
+  }
+  .outline-item:hover { background: var(--rule-soft); color: var(--ink); }
+  .outline-item.h2 { padding-left: 18px; font-size: 12px; }
+  .outline-item.h3 { padding-left: 30px; font-size: 11px; color: var(--ink-mute); }
+  .outline-empty { color: var(--ink-mute); font-style: italic; font-size: 12px; padding: 16px 8px; }
+
+  /* ====== Split View ====== */
+  .editor-content.split {
+    display: grid;
+    grid-template-columns: 1fr 1px 1fr;
+    gap: 0;
+    max-width: none;
+    padding: 32px 24px 80px;
+    align-items: start;
+  }
+  .editor-content.split .title-input,
+  .editor-content.split .editor-meta,
+  .editor-content.split .subtitle-row,
+  .editor-content.split .editor-nb-badge {
+    grid-column: 1 / -1;
+  }
+  .editor-content.split .content-input {
+    grid-column: 1;
+    display: block !important;
+    border-right: 1px solid var(--rule-soft);
+    padding-right: 16px;
+    min-height: 70vh;
+  }
+  .editor-content.split .preview {
+    grid-column: 3;
+    display: block !important;
+    padding-left: 16px;
+    min-height: 70vh;
+    overflow-y: auto;
+  }
+
+  /* ====== AI 自定义指令 modal ====== */
+  .ai-custom-modal textarea {
+    width: 100%;
+    min-height: 100px;
+    padding: 10px 12px;
+    background: var(--bg);
+    border: 1px solid var(--rule);
+    border-radius: 6px;
+    font-family: 'Fraunces', 'Noto Serif SC', serif;
+    font-size: 13px;
+    color: var(--ink);
+    outline: none;
+    resize: vertical;
+    margin-bottom: 12px;
+    box-sizing: border-box;
+  }
+  .ai-history-list {
+    max-height: 140px;
+    overflow-y: auto;
+    margin-bottom: 12px;
+  }
+  .ai-history-list .history-item {
+    padding: 6px 10px;
+    background: var(--bg-warm);
+    border: 1px solid var(--rule);
+    border-radius: 4px;
+    margin-bottom: 4px;
+    cursor: pointer;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    color: var(--ink-soft);
+    transition: all 0.15s;
+  }
+  .ai-history-list .history-item:hover { background: var(--paper); color: var(--ink); }
+
+  .ai-cancel-btn {
+    position: fixed;
+    bottom: 60px;
+    left: 50%;
+    transform: translateX(-50%);
+    padding: 10px 20px;
+    background: var(--accent);
+    color: #fff;
+    border: none;
+    border-radius: 100px;
+    font-family: 'Fraunces', 'Noto Serif SC', serif;
+    font-size: 13px;
+    cursor: pointer;
+    box-shadow: var(--shadow-deep);
+    z-index: 1000;
+    display: none;
+    gap: 8px;
+    align-items: center;
+  }
+  .ai-cancel-btn.show { display: inline-flex; }
+
+  /* ====== 移动端抽屉 + 底部 tab ====== */
+  .mobile-fab, .mobile-tabs { display: none; }
+  @media (max-width: 768px) {
+    .app { display: block; height: 100vh; }
+    .rail {
+      position: fixed;
+      top: 0;
+      left: 0;
+      bottom: 56px;
+      width: 280px;
+      transform: translateX(-100%);
+      transition: transform 0.25s ease;
+      z-index: 200;
+      display: flex !important;
+      box-shadow: 8px 0 24px rgba(0,0,0,0.2);
+    }
+    .app.show-rail .rail { transform: translateX(0); }
+    .app.show-rail::before {
+      content: '';
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 56px;
+      background: rgba(26,24,20,0.5);
+      z-index: 150;
+    }
+    .sidebar { display: flex !important; height: calc(100vh - 56px); width: 100%; }
+    .editor { display: none !important; height: calc(100vh - 56px); }
+    .app.show-editor .sidebar { display: none !important; }
+    .app.show-editor .editor { display: block !important; width: 100%; }
+    .mobile-fab {
+      display: grid;
+      place-items: center;
+      position: fixed;
+      top: 12px;
+      left: 12px;
+      width: 40px;
+      height: 40px;
+      background: var(--paper);
+      border: 1px solid var(--rule);
+      border-radius: 8px;
+      box-shadow: var(--shadow-soft);
+      z-index: 100;
+      cursor: pointer;
+    }
+    .mobile-fab svg { width: 20px; height: 20px; color: var(--ink); }
+    .mobile-tabs {
+      display: flex;
+      position: fixed;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      height: 56px;
+      background: var(--bg-warm);
+      border-top: 1px solid var(--rule);
+      z-index: 100;
+    }
+    .mobile-tabs button {
+      flex: 1;
+      background: transparent;
+      border: none;
+      color: var(--ink-mute);
+      font-family: 'Fraunces', 'Noto Serif SC', serif;
+      font-size: 11px;
+      cursor: pointer;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 2px;
+      padding: 6px;
+    }
+    .mobile-tabs button svg { width: 18px; height: 18px; }
+    .mobile-tabs button.active { color: var(--accent); }
+    .sidebar-head { padding-left: 60px; }
+    .editor-toolbar { flex-wrap: wrap; padding: 10px 16px; gap: 6px; }
+    .word-count { display: none; }
+    .outline-panel { display: none; }
+  }
+
+  /* ====== Toast 详情链接 ====== */
+  .toast .detail-link {
+    color: var(--accent);
+    margin-left: 12px;
+    text-decoration: underline;
+    cursor: pointer;
+  }
+
+  /* ====== 阅读模式（只显示笔记内容）====== */
+  .app.reading-mode { grid-template-columns: 1fr !important; }
+  .app.reading-mode .rail,
+  .app.reading-mode .sidebar,
+  .app.reading-mode .editor-toolbar,
+  .app.reading-mode .editor-meta,
+  .app.reading-mode .subtitle-row,
+  .app.reading-mode .editor-nb-badge,
+  .app.reading-mode .content-input,
+  .app.reading-mode .mobile-fab,
+  .app.reading-mode .mobile-tabs,
+  .app.reading-mode .outline-panel,
+  .app.reading-mode .ai-cancel-btn,
+  .app.reading-mode #emptyState { display: none !important; }
+  .app.reading-mode .editor {
+    width: 100%;
+    height: 100vh;
+    overflow-y: auto;
+  }
+  .app.reading-mode .editor-content {
+    max-width: 760px;
+    margin: 0 auto;
+    padding: 80px 32px 160px;
+  }
+  .app.reading-mode .editor-content.split { display: block; }
+  .app.reading-mode .editor-content.split .preview {
+    display: block !important;
+    border: none;
+    padding: 0;
+  }
+  .app.reading-mode .editor-content.split .content-input { display: none !important; }
+  .app.reading-mode .preview { display: block !important; }
+  .app.reading-mode .title-input {
+    pointer-events: none;
+    user-select: text;
+    background: transparent;
+    margin-bottom: 24px;
+  }
+  .app.reading-mode .preview { font-size: 18px; line-height: 1.9; }
+
+  .reading-exit-btn {
+    position: fixed;
+    top: 16px;
+    right: 16px;
+    z-index: 200;
+    width: 38px;
+    height: 38px;
+    border-radius: 50%;
+    background: var(--bg-warm);
+    border: 1px solid var(--rule);
+    cursor: pointer;
+    display: none;
+    place-items: center;
+    color: var(--ink-soft);
+    box-shadow: var(--shadow-soft);
+    transition: all 0.18s;
+  }
+  .reading-exit-btn:hover { color: var(--ink); border-color: var(--ink-soft); }
+  .reading-exit-btn svg { width: 16px; height: 16px; }
+  .app.reading-mode .reading-exit-btn { display: grid; }
+
+  .reading-progress {
+    position: fixed;
+    top: 0;
+    left: 0;
+    height: 3px;
+    background: var(--accent);
+    z-index: 201;
+    width: 0%;
+    transition: width 0.1s;
+    display: none;
+  }
+  .app.reading-mode .reading-progress { display: block; }
+</style>
+</head>
+<body>
+
+<div class="app" id="app">
+  <!-- 左侧笔记本侧栏 -->
+  <aside class="rail">
+    <div class="rail-head">
+      <div class="rail-logo" id="railLogo" title="折叠/展开侧栏">M</div>
+      <div class="rail-brand">
+        Margin<em>alia</em>
+        <small>Notebooks</small>
+      </div>
+    </div>
+
+    <div class="rail-system-items">
+        <button class="rail-item active" data-view="all">
+          <svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 12h16M4 18h12"/>
+          </svg>
+          <span class="rail-item-label">全部笔记</span>
+          <span class="rail-item-count" id="countAll">0</span>
+        </button>
+        <button class="rail-item" data-view="starred">
+          <svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M11.48 3.499l2.12 4.296 4.74.69-3.43 3.343.81 4.72-4.24-2.23-4.24 2.23.81-4.72L4.62 8.485l4.74-.69L11.48 3.5z"/>
+          </svg>
+          <span class="rail-item-label">收藏</span>
+          <span class="rail-item-count" id="countStarred">0</span>
+        </button>
+        <button class="rail-item" data-view="trash">
+          <svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.87 12.14A2 2 0 0116.14 21H7.86a2 2 0 01-1.99-1.86L5 7m5 4v6m4-6v6M3 7h18M9 7V4a1 1 0 011-1h4a1 1 0 011 1v3"/>
+          </svg>
+          <span class="rail-item-label">回收站</span>
+          <span class="rail-item-count" id="countTrash">0</span>
+        </button>
+      </div>
+
+    <div class="rail-section" id="sectionTodos">
+      <div class="rail-section-title" data-toggle="sectionTodos">
+        <span class="section-left">
+          <svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M9 11l3 3L22 4M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/>
+          </svg>
+          待办事项
+        </span>
+        <span class="section-right">
+          <button class="add-btn" id="newTodoBtn" title="新建待办">
+            <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+              <path stroke-linecap="round" d="M12 5v14M5 12h14"/>
+            </svg>
+          </button>
+          <svg class="chevron" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7"/></svg>
+        </span>
+      </div>
+      <div class="section-body">
+        <button class="rail-item todo-item-rail" data-view="todo:active">
+          <span class="todo-status-dot" style="background:#0d9488"></span>
+          <span class="rail-item-label">进行中</span>
+          <span class="rail-item-count" id="countTodoActive">0</span>
+        </button>
+        <button class="rail-item todo-item-rail" data-view="todo:done">
+          <span class="todo-status-dot" style="background:#8a8275"></span>
+          <span class="rail-item-label">已完成</span>
+          <span class="rail-item-count" id="countTodoDone">0</span>
+        </button>
+        <button class="rail-item todo-item-rail" data-view="todo:overdue">
+          <span class="todo-status-dot" style="background:#b8431f"></span>
+          <span class="rail-item-label">已超期</span>
+          <span class="rail-item-count" id="countTodoOverdue">0</span>
+        </button>
+        <button class="rail-item todo-item-rail" data-view="todo:all">
+          <span class="todo-status-dot" style="background:#525252"></span>
+          <span class="rail-item-label">全部</span>
+          <span class="rail-item-count" id="countTodoAll">0</span>
+        </button>
+      </div>
+    </div>
+
+    <div class="rail-section" id="sectionNotebooks" style="flex:1; display:flex; flex-direction:column; min-height:0; padding-bottom:0">
+      <div class="rail-section-title" data-toggle="sectionNotebooks">
+        <span class="section-left">
+          <svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 6.25a3.5 3.5 0 013.5 3.5c0 2.72-3.5 6-3.5 6s-3.5-3.28-3.5-6a3.5 3.5 0 013.5-3.5zM4 19.5v-15A2.5 2.5 0 016.5 2H20v20H6.5A2.5 2.5 0 014 19.5z"/></svg>
+          笔记本
+        </span>
+        <span class="section-right">
+          <button class="add-btn" id="newNotebookBtn" title="新建笔记本">
+            <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+              <path stroke-linecap="round" d="M12 5v14M5 12h14"/>
+            </svg>
+          </button>
+          <svg class="chevron" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7"/></svg>
+        </span>
+      </div>
+      <div class="section-body rail-notebooks" id="notebooksList"></div>
+    </div>
+
+    <div class="rail-foot">
+      <button class="rail-item" id="exportBtn" title="导出全部">
+        <svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2M7 10l5 5 5-5M12 15V3"/>
+        </svg>
+        <span class="rail-item-label">导出</span>
+      </button>
+      <button class="rail-item" id="importBtn" title="导入">
+        <svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2M17 8l-5-5-5 5M12 3v12"/>
+        </svg>
+        <span class="rail-item-label">导入</span>
+      </button>
+    </div>
+
+    <div class="rail-theme-row">
+      <button class="theme-toggle" id="themeToggle" title="切换主题">
+        <svg class="icon-moon" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z"/>
+        </svg>
+        <svg class="icon-sun" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+          <circle cx="12" cy="12" r="4" stroke-linecap="round" stroke-linejoin="round"/>
+          <path stroke-linecap="round" stroke-linejoin="round" d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/>
+        </svg>
+        <span class="label" id="themeLabel">暗色模式</span>
+      </button>
+    </div>
+
+    <div class="rail-theme-row">
+      <button class="theme-toggle" id="storageBtn" title="数据 / 备份">
+        <svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+          <ellipse cx="12" cy="5" rx="9" ry="3"/>
+          <path stroke-linecap="round" d="M3 5v6c0 1.66 4.03 3 9 3s9-1.34 9-3V5M3 11v6c0 1.66 4.03 3 9 3s9-1.34 9-3v-6"/>
+        </svg>
+        <span class="label">数据 · 备份</span>
+      </button>
+    </div>
+
+    <div class="rail-theme-row">
+      <button class="theme-toggle" id="aiSettingsBtn" title="AI 设置">
+        <svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M12 2l1.8 4.5L18 8l-3.5 3 1 4.5L12 13l-3.5 2.5 1-4.5L6 8l4.2-1.5L12 2zM5 18l1 2.5L8.5 22l-2.5 1L5 25.5 4.5 23 2 22l2.5-1.5L5 18z" transform="scale(0.9) translate(1.5,1)"/>
+          <path stroke-linecap="round" stroke-linejoin="round" d="M12 2l1.5 4 4 1.5-4 1.5L12 13l-1.5-4-4-1.5 4-1.5L12 2zM18 14l1 2.5 2.5 1-2.5 1L18 21l-1-2.5-2.5-1 2.5-1L18 14z"/>
+        </svg>
+        <span class="label">AI 设置</span>
+      </button>
+    </div>
+  </aside>
+
+  <!-- 笔记列表 -->
+  <aside class="sidebar">
+    <div class="sidebar-head">
+      <div class="masthead">
+        <div class="masthead-title">
+          <span class="nb-dot" id="currentNbDot" style="background: var(--ink)"></span>
+          <h1 id="currentCollectionName">全部笔记</h1>
+        </div>
+        <span class="issue-no" id="issueNo">№ 001</span>
+      </div>
+      <div class="meta-line">
+        <span id="todayDate"></span>
+        <span class="dot"></span>
+        <span id="noteCount">0 篇</span>
+      </div>
+    </div>
+
+    <div class="search-row">
+      <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+        <circle cx="11" cy="11" r="7"/>
+        <path stroke-linecap="round" d="M21 21l-4.35-4.35"/>
+      </svg>
+      <input type="text" id="searchInput" placeholder="搜索笔记标题或内容...">
+    </div>
+
+    <button class="new-note-btn" id="newNoteBtn">
+      <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+        <path stroke-linecap="round" d="M12 5v14M5 12h14"/>
+      </svg>
+      新建笔记
+    </button>
+
+    <div class="filter-tabs" id="filterTabs">
+      <button class="filter-tab active" data-tag="all">全部</button>
+    </div>
+
+    <div class="list-controls" id="listControls">
+      <span>排序</span>
+      <select id="sortSelect" aria-label="排序方式">
+        <option value="updated">更新时间</option>
+        <option value="created">创建时间</option>
+        <option value="title">标题</option>
+        <option value="words">字数</option>
+      </select>
+      <button class="compact-toggle" id="compactToggle" aria-label="紧凑模式">紧凑</button>
+    </div>
+
+    <div class="notes-list" id="notesList"></div>
+
+    <div class="todo-panel" id="todoPanel">
+      <div class="todo-add">
+        <input type="text" id="todoTextInput" placeholder="新建待办事项..." maxlength="200">
+        <div class="todo-add-row">
+          <input type="datetime-local" id="todoDueInput" title="截止时间">
+          <button id="todoAddBtn">添加</button>
+        </div>
+        <div class="remind-preset-row" title="提醒（仅扩展模式有效）">
+          <svg width="14" height="14" fill="none" stroke="var(--accent)" stroke-width="1.8" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M18 8a6 6 0 10-12 0c0 7-3 9-3 9h18s-3-2-3-9M13.7 21a2 2 0 01-3.4 0"/>
+          </svg>
+          <select id="todoRemindPreset" aria-label="提醒预设">
+            <option value="0">不提醒</option>
+            <option value="0-now">准时提醒</option>
+            <option value="5">5 分钟前</option>
+            <option value="15">15 分钟前</option>
+            <option value="30">30 分钟前</option>
+            <option value="60">1 小时前</option>
+            <option value="180">3 小时前</option>
+            <option value="1440">1 天前</option>
+            <option value="custom">自定义…</option>
+          </select>
+          <div class="remind-advanced" id="todoRemindAdv">
+            提前 <input type="number" id="todoRemindBefore" min="0" max="10080" step="1" placeholder="0"> 分
+            × <input type="number" id="todoRemindCount" min="1" max="20" step="1" value="1"> 次
+            / <input type="number" id="todoRemindInterval" min="1" max="1440" step="1" value="5"> 分
+          </div>
+        </div>
+        <div class="ext-only-tip">提醒功能仅在浏览器扩展中可用</div>
+      </div>
+      <div class="todo-list" id="todoList"></div>
+    </div>
+  </aside>
+
+  <!-- 编辑器 -->
+  <main class="editor" id="editor">
+    <div class="empty-state" id="emptyState">
+      <div class="ornament">¶</div>
+      <h2>open a leaf, or write a new one</h2>
+      <p>左侧选择一篇笔记开始阅读，或创建一篇新的笔记。所有文字都会自动保存到本地。</p>
+      <div class="kbd"><kbd>⌘</kbd> + <kbd>N</kbd> 新建 · <kbd>⌘</kbd> + <kbd>S</kbd> 保存 · <kbd>⌘</kbd> + <kbd>K</kbd> 搜索</div>
+    </div>
+
+    <div id="editorWrap" style="display:none">
+      <div class="editor-toolbar">
+        <button class="tool-btn" data-format="h1" title="标题 1"><strong>H1</strong></button>
+        <button class="tool-btn" data-format="h2" title="标题 2"><strong>H2</strong></button>
+        <button class="tool-btn" data-format="h3" title="标题 3"><strong>H3</strong></button>
+        <span class="tool-divider"></span>
+        <button class="tool-btn" data-format="bold" title="加粗 (⌘B)"><strong>B</strong></button>
+        <button class="tool-btn" data-format="italic" title="斜体 (⌘I)"><em>I</em></button>
+        <button class="tool-btn" data-format="code" title="代码">
+          <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M16 18l6-6-6-6M8 6l-6 6 6 6"/>
+          </svg>
+        </button>
+        <button class="tool-btn" data-format="quote" title="引用">
+          <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+            <path stroke-linecap="round" d="M3 21l1.65-3.8a9 9 0 113.5 4.7"/>
+          </svg>
+        </button>
+        <span class="tool-divider"></span>
+        <button class="tool-btn" data-format="list" title="列表">
+          <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+            <path stroke-linecap="round" d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/>
+          </svg>
+        </button>
+        <button class="tool-btn" data-format="checkbox" title="待办">
+          <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M9 11l3 3L22 4M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/>
+          </svg>
+        </button>
+        <button class="tool-btn" data-format="image" title="插入图片">
+          <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+            <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
+            <circle cx="8.5" cy="8.5" r="1.5"/>
+            <path stroke-linecap="round" stroke-linejoin="round" d="M21 15l-5-5L5 21"/>
+          </svg>
+        </button>
+        <button class="tool-btn" data-format="link" title="链接">
+          <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+            <path stroke-linecap="round" d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71"/>
+          </svg>
+        </button>
+        <button class="tool-btn" data-format="hr" title="分隔线">—</button>
+        <span class="tool-divider"></span>
+        <button class="tool-btn ai-btn" id="noteAiBtn" title="AI 优化">
+          <svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M12 2l2 5 5 2-5 2-2 5-2-5-5-2 5-2 2-5zM18 14l1 2.5 2.5 1-2.5 1L18 21l-1-2.5-2.5-1 2.5-1L18 14z"/>
+          </svg>
+        </button>
+
+        <div class="word-count">
+          <span id="readTime"><strong>0</strong>分钟阅读</span>
+          <span id="wordCount"><strong>0</strong>字</span>
+        </div>
+
+        <div class="editor-actions">
+          <button class="icon-btn" id="moveBtn" data-tip="移动到笔记本">
+            <svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M3 7v13a1 1 0 001 1h16a1 1 0 001-1V9a1 1 0 00-1-1h-8l-2-3H4a1 1 0 00-1 1v1z"/>
+            </svg>
+          </button>
+          <button class="icon-btn" id="starBtn" data-tip="收藏">
+            <svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M11.48 3.499l2.12 4.296 4.74.69-3.43 3.343.81 4.72-4.24-2.23-4.24 2.23.81-4.72L4.62 8.485l4.74-.69L11.48 3.5z"/>
+            </svg>
+          </button>
+          <button class="icon-btn" id="modeBtn" data-tip="预览">
+            <svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+              <circle cx="12" cy="12" r="3" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </button>
+          <button class="icon-btn" id="splitBtn" data-tip="双栏对照">
+            <svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+              <rect x="3" y="4" width="18" height="16" rx="2"/>
+              <path stroke-linecap="round" d="M12 4v16"/>
+            </svg>
+          </button>
+          <button class="icon-btn" id="outlineBtn" data-tip="大纲">
+            <svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+              <path stroke-linecap="round" d="M4 6h12M4 12h16M4 18h10"/>
+            </svg>
+          </button>
+          <button class="icon-btn" id="readingBtn" data-tip="阅读模式 (Esc 退出)">
+            <svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M2 4h7a4 4 0 014 4v12a3 3 0 00-3-3H2zM22 4h-7a4 4 0 00-4 4v12a3 3 0 013-3h8z"/>
+            </svg>
+          </button>
+          <button class="icon-btn" id="copyBtn" data-tip="复制全文">
+            <svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+              <rect x="9" y="9" width="13" height="13" rx="2" ry="2" stroke-linecap="round" stroke-linejoin="round"/>
+              <path stroke-linecap="round" stroke-linejoin="round" d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/>
+            </svg>
+          </button>
+          <button class="icon-btn" id="exportMdBtn" data-tip="导出为 Markdown">
+            <svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/>
+              <path stroke-linecap="round" stroke-linejoin="round" d="M14 2v6h6M12 18v-6M9 15l3 3 3-3"/>
+            </svg>
+          </button>
+          <button class="icon-btn danger" id="deleteBtn" data-tip="删除">
+            <svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.87 12.14A2 2 0 0116.14 21H7.86a2 2 0 01-1.99-1.86L5 7m5 4v6m4-6v6M3 7h18M9 7V4a1 1 0 011-1h4a1 1 0 011 1v3"/>
+            </svg>
+          </button>
+        </div>
+      </div>
+
+      <div class="editor-content">
+        <input type="text" class="title-input" id="titleInput" placeholder="无题…" maxlength="200">
+
+        <div class="editor-meta">
+          <span id="editorNbBadge" class="editor-nb-badge"></span>
+          <span id="editorDate">—</span>
+          <span class="dot"></span>
+          <span id="editorStatus">已保存</span>
+        </div>
+
+        <div class="subtitle-row">
+          <div class="tag-input-wrap" id="tagWrap"></div>
+          <input type="text" class="tag-input" id="tagInput" placeholder="添加标签 + Enter">
+        </div>
+
+        <textarea class="content-input" id="contentInput" placeholder="此处书写。支持 Markdown：# 标题  **粗体**  *斜体*  > 引用  - 列表  `code`"></textarea>
+
+        <div class="preview" id="preview" style="display:none"></div>
+      </div>
+    </div>
+
+    <div id="todoEditorWrap" style="display:none">
+      <div class="editor-toolbar">
+        <span class="todo-state-pill" id="todoEditState">进行中</span>
+        <button class="todo-toggle-btn" id="todoEditToggle">标记完成</button>
+        <span class="tool-divider"></span>
+        <span style="font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--ink-mute);letter-spacing:0.05em;text-transform:uppercase">截止：</span>
+        <input type="datetime-local" class="todo-due-edit" id="todoEditDue">
+        <span class="tool-divider"></span>
+        <div class="remind-preset-row" style="margin: 0;">
+          <svg width="14" height="14" fill="none" stroke="var(--accent)" stroke-width="1.8" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M18 8a6 6 0 10-12 0c0 7-3 9-3 9h18s-3-2-3-9M13.7 21a2 2 0 01-3.4 0"/>
+          </svg>
+          <select id="todoEditRemindPreset" aria-label="提醒预设">
+            <option value="0">不提醒</option>
+            <option value="0-now">准时</option>
+            <option value="5">5 分前</option>
+            <option value="15">15 分前</option>
+            <option value="30">30 分前</option>
+            <option value="60">1 小时前</option>
+            <option value="180">3 小时前</option>
+            <option value="1440">1 天前</option>
+            <option value="custom">自定义…</option>
+          </select>
+          <div class="remind-advanced" id="todoEditRemindAdv">
+            提前 <input type="number" id="todoEditRemindBefore" min="0" max="10080" step="1" placeholder="0"> 分
+            × <input type="number" id="todoEditRemindCount" min="1" max="20" step="1" value="1"> 次
+            / <input type="number" id="todoEditRemindInterval" min="1" max="1440" step="1" value="5"> 分
+          </div>
+        </div>
+        <div class="word-count" style="margin-left:auto">
+          <span id="todoEditMetaTop">—</span>
+          <span id="todoEditStatus">已保存</span>
+        </div>
+        <div class="editor-actions">
+          <button class="icon-btn" id="todoImageBtn" data-tip="插入图片">
+            <svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+              <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
+              <circle cx="8.5" cy="8.5" r="1.5"/>
+              <path stroke-linecap="round" stroke-linejoin="round" d="M21 15l-5-5L5 21"/>
+            </svg>
+          </button>
+          <button class="icon-btn" id="todoPreviewBtn" data-tip="预览">
+            <svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+              <circle cx="12" cy="12" r="3" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </button>
+          <button class="icon-btn ai-btn" id="todoAiBtn" data-tip="AI 优化">
+            <svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M12 2l2 5 5 2-5 2-2 5-2-5-5-2 5-2 2-5zM18 14l1 2.5 2.5 1-2.5 1L18 21l-1-2.5-2.5-1 2.5-1L18 14z"/>
+            </svg>
+          </button>
+          <button class="icon-btn danger" id="todoEditDeleteBtn" data-tip="删除待办">
+            <svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.87 12.14A2 2 0 0116.14 21H7.86a2 2 0 01-1.99-1.86L5 7m5 4v6m4-6v6M3 7h18M9 7V4a1 1 0 011-1h4a1 1 0 011 1v3"/>
+            </svg>
+          </button>
+        </div>
+      </div>
+
+      <div class="editor-content">
+        <input type="text" class="title-input" id="todoEditTitle" placeholder="待办标题..." maxlength="200">
+        <div class="editor-meta">
+          <span id="todoEditMeta">—</span>
+        </div>
+        <textarea class="content-input" id="todoEditContent" placeholder="待办详情，支持 Markdown，可粘贴/插入图片..."></textarea>
+        <div class="preview" id="todoPreview" style="display:none"></div>
+      </div>
+    </div>
+  </main>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<div class="modal-bg" id="modalBg">
+  <div class="modal">
+    <h3 id="modalTitle">确认删除？</h3>
+    <p id="modalText">此操作将永久删除这篇笔记，无法恢复。</p>
+    <div class="modal-actions">
+      <button class="modal-btn" id="modalCancel">取消</button>
+      <button class="modal-btn primary" id="modalConfirm">确认</button>
+    </div>
+  </div>
+</div>
+
+<!-- 笔记本编辑模态框 -->
+<div class="modal-bg" id="notebookModalBg">
+  <div class="modal">
+    <h3 id="notebookModalTitle">新建笔记本</h3>
+    <label>名称</label>
+    <input type="text" id="notebookNameInput" placeholder="例如：阅读笔记、工作日志…" maxlength="40">
+    <label>颜色</label>
+    <div class="color-picker" id="colorPicker"></div>
+    <div class="modal-actions">
+      <button class="modal-btn" id="notebookModalCancel">取消</button>
+      <button class="modal-btn primary" id="notebookModalConfirm">保存</button>
+    </div>
+  </div>
+</div>
+
+<!-- 文件夹编辑模态框 -->
+<div class="modal-bg" id="folderModalBg">
+  <div class="modal">
+    <h3 id="folderModalTitle">新建文件夹</h3>
+    <label>名称</label>
+    <input type="text" id="folderNameInput" placeholder="例如：项目笔记、日记…" maxlength="40">
+    <div class="modal-actions">
+      <button class="modal-btn" id="folderModalCancel">取消</button>
+      <button class="modal-btn primary" id="folderModalConfirm">保存</button>
+    </div>
+  </div>
+</div>
+
+<!-- 主题选择模态框 -->
+<div class="modal-bg" id="themeModalBg">
+  <div class="modal" style="max-width: 580px; max-height: 88vh; overflow-y: auto;">
+    <h3>主题</h3>
+    <p style="margin-bottom: 12px; font-family: 'JetBrains Mono', monospace; font-size: 10px; color: var(--ink-mute); letter-spacing: 0.08em; text-transform: uppercase;">内置主题（点击应用）</p>
+    <div class="theme-grid" id="themeGrid"></div>
+    <p style="margin-top: 24px; margin-bottom: 12px; font-family: 'JetBrains Mono', monospace; font-size: 10px; color: var(--ink-mute); letter-spacing: 0.08em; text-transform: uppercase;">区域自定义（覆盖当前主题）</p>
+    <div class="theme-custom">
+      <div class="theme-custom-row">
+        <span class="label">左侧栏 Rail</span>
+        <span>背景</span>
+        <input type="color" id="customRailBg">
+        <span>文字</span>
+        <input type="color" id="customRailInk">
+      </div>
+      <div class="theme-custom-row">
+        <span class="label">中栏 Sidebar</span>
+        <span>背景</span>
+        <input type="color" id="customSidebarBg">
+        <span>文字</span>
+        <input type="color" id="customSidebarInk">
+      </div>
+      <div class="theme-custom-row">
+        <span class="label">右侧栏 Editor</span>
+        <span>背景</span>
+        <input type="color" id="customEditorBg">
+        <span>文字</span>
+        <input type="color" id="customEditorInk">
+      </div>
+      <div style="display: flex; gap: 8px; margin-top: 12px;">
+        <button class="modal-btn" id="customResetBtn">重置自定义</button>
+      </div>
+    </div>
+    <div class="modal-actions" style="margin-top: 20px;">
+      <button class="modal-btn primary" id="themeModalClose">完成</button>
+    </div>
+  </div>
+</div>
+
+<!-- 移动到笔记本浮层 -->
+<div id="moveMenu" style="position:fixed; display:none; background: var(--paper); border: 1px solid var(--rule); border-radius: 8px; box-shadow: var(--shadow-deep); padding: 6px; z-index: 1000; min-width: 200px; max-height: 320px; overflow-y: auto;"></div>
+
+<!-- AI 操作菜单 -->
+<div class="ai-menu" id="aiMenu"></div>
+
+<!-- 存储 / 备份模态框 -->
+<div class="modal-bg" id="storageModalBg">
+  <div class="modal" style="max-width: 560px; max-height: 88vh; overflow-y: auto;">
+    <h3>数据 · 备份</h3>
+    <p style="color: var(--ink-soft); font-size: 13px; margin-bottom: 16px;">所有笔记 / 待办 / 图片 / AI 配置存储在浏览器本地。卸载扩展或清空浏览数据会清空。请用导出功能定期备份。</p>
+
+    <p style="font-family: 'JetBrains Mono', monospace; font-size: 10px; color: var(--ink-mute); letter-spacing: 0.08em; text-transform: uppercase; margin-bottom: 8px;">存储信息</p>
+    <div class="storage-info" id="storageInfo"></div>
+
+    <p style="font-family: 'JetBrains Mono', monospace; font-size: 10px; color: var(--ink-mute); letter-spacing: 0.08em; text-transform: uppercase; margin-bottom: 8px;">手动操作</p>
+    <div class="storage-actions">
+      <button id="storageExportBtn">📦 导出全部 (zip)</button>
+      <button id="storageImportBtn">📥 导入备份</button>
+    </div>
+
+    <p style="font-family: 'JetBrains Mono', monospace; font-size: 10px; color: var(--ink-mute); letter-spacing: 0.08em; text-transform: uppercase; margin-bottom: 8px;">自动备份</p>
+    <div class="storage-auto-row">
+      <label>每隔多少天自动导出 zip</label>
+      <input type="number" id="storageAutoDays" min="0" max="365" step="1" value="0">
+      <span style="font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--ink-mute);">天 (0=关闭)</span>
+    </div>
+    <div style="font-family: 'JetBrains Mono', monospace; font-size: 10px; color: var(--ink-mute); margin-bottom: 16px;">上次备份：<span id="storageLastBackup">从未</span></div>
+
+    <p style="font-family: 'JetBrains Mono', monospace; font-size: 10px; color: var(--ink-mute); letter-spacing: 0.08em; text-transform: uppercase; margin-bottom: 8px;">本地文件夹同步</p>
+    <div class="storage-info" id="localSyncInfo" style="margin-bottom:8px;">未连接本地文件夹（数据仅存浏览器）</div>
+    <div class="storage-actions" style="grid-template-columns: 1fr 1fr 1fr;">
+      <button id="pickDirBtn">📁 选择文件夹</button>
+      <button id="syncDiskBtn">⬆ 立即同步</button>
+      <button id="restoreDiskBtn">⬇ 从本地恢复</button>
+    </div>
+    <div class="storage-auto-row">
+      <label>变更后自动同步到本地（5 秒节流）</label>
+      <input type="checkbox" id="autoSyncToggle" style="width:18px;height:18px;cursor:pointer;accent-color:var(--accent);">
+    </div>
+    <div style="font-family: 'JetBrains Mono', monospace; font-size: 10px; color: var(--ink-mute); margin-bottom: 16px;">仅 Chrome/Edge 100+ 支持。绑定后笔记和图片实时同步到本地文件夹。重装扩展后再选同一文件夹即恢复。</div>
+
+    <p style="font-family: 'JetBrains Mono', monospace; font-size: 10px; color: var(--ink-mute); letter-spacing: 0.08em; text-transform: uppercase; margin-bottom: 8px; display:flex;justify-content:space-between;align-items:center;">
+      <span>错误日志 <span id="errorLogCount" style="color:var(--accent);">(0)</span></span>
+      <button class="modal-btn" id="errorLogClearBtn" style="padding:4px 10px;font-size:11px;">清空</button>
+    </p>
+    <div class="error-log-list" id="errorLogList"></div>
+
+    <div class="modal-actions" style="margin-top: 12px;">
+      <button class="modal-btn primary" id="storageModalClose">完成</button>
+    </div>
+  </div>
+</div>
+
+<!-- AI 设置模态框 -->
+<div class="modal-bg" id="aiModalBg">
+  <div class="modal" style="max-width: 600px; max-height: 88vh; overflow-y: auto;">
+    <h3>AI 设置</h3>
+    <p style="color: var(--ink-soft); font-size: 13px; margin-bottom: 16px;">配置 OpenAI 兼容的模型接口（DeepSeek / Kimi / OpenAI / GLM / Qwen 等）。所有数据仅保存在本地浏览器。</p>
+
+    <p style="font-family: 'JetBrains Mono', monospace; font-size: 10px; color: var(--ink-mute); letter-spacing: 0.08em; text-transform: uppercase; margin-bottom: 8px;">已配置模型</p>
+    <div class="ai-provider-list" id="aiProviderList"></div>
+
+    <div class="ai-add-row">
+      <select id="aiPresetSelect"></select>
+      <button class="modal-btn primary" id="aiAddBtn">+ 新增</button>
+    </div>
+
+    <div class="ai-provider-form" id="aiProviderForm">
+      <div class="row">
+        <label>名称</label>
+        <input type="text" id="aiFormName" placeholder="如：我的 DeepSeek">
+      </div>
+      <div class="row">
+        <label>接口地址 (Endpoint，含 /chat/completions 路径)</label>
+        <input type="text" id="aiFormEndpoint" placeholder="https://api.deepseek.com/v1/chat/completions">
+      </div>
+      <div class="row split">
+        <div>
+          <label>模型 ID</label>
+          <input type="text" id="aiFormModel" placeholder="deepseek-chat">
+        </div>
+        <div>
+          <label>API Key</label>
+          <input type="password" id="aiFormKey" placeholder="sk-...">
+        </div>
+      </div>
+      <div class="row">
+        <label>代理 URL (可选；留空 = 直连)</label>
+        <input type="text" id="aiFormProxy" placeholder="http://user:pass@corp-proxy.com:8080  或  https://corsproxy.io/?{url}">
+        <div style="margin-top:4px;font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--ink-mute);line-height:1.6;">
+          <strong>HTTP 代理</strong>（含 auth）：<code>http://user:pass@host:port</code> 或 <code>https://...</code> 或 <code>socks5://...</code><br>
+          <strong>URL 反代</strong>：含 <code>{url}</code> 占位符或自定义路径<br>
+          仅作用于该模型的 endpoint host，其它流量不变
+        </div>
+      </div>
+      <div class="row">
+        <label>系统提示词 (可选，作用于本模型)</label>
+        <textarea id="aiFormSystem" placeholder="你是简洁实用的中文写作助手，输出保持 Markdown 格式。"></textarea>
+      </div>
+      <div class="row">
+        <label>温度 Temperature (0-2，默认 0.7)</label>
+        <input type="number" id="aiFormTemp" min="0" max="2" step="0.1" placeholder="0.7">
+      </div>
+      <div class="form-actions">
+        <button class="modal-btn" id="aiFormCancel">取消</button>
+        <button class="modal-btn primary" id="aiFormSave">保存</button>
+      </div>
+    </div>
+
+    <div class="modal-actions" style="margin-top: 16px;">
+      <button class="modal-btn" id="aiTestBtn">测试当前模型</button>
+      <button class="modal-btn primary" id="aiModalClose">完成</button>
+    </div>
+  </div>
+</div>
+
+<input type="file" id="importFile" accept=".json,.md,.markdown,.zip" style="display:none" multiple>
+
+<!-- 大纲面板 -->
+<aside class="outline-panel" id="outlinePanel" aria-label="大纲">
+  <h4>大纲</h4>
+  <div id="outlineList"></div>
+</aside>
+
+<!-- 阅读模式退出按钮 + 进度条 -->
+<button class="reading-exit-btn" id="readingExitBtn" aria-label="退出阅读模式">
+  <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+    <path stroke-linecap="round" d="M18 6L6 18M6 6l12 12"/>
+  </svg>
+</button>
+<div class="reading-progress" id="readingProgress"></div>
+
+<!-- AI 流式取消按钮 -->
+<button class="ai-cancel-btn" id="aiCancelBtn">
+  <span class="ai-spinner"></span> AI 生成中… 点击取消
+</button>
+
+<!-- AI 自定义指令模态框 -->
+<div class="modal-bg" id="aiCustomModalBg">
+  <div class="modal ai-custom-modal" style="max-width: 540px;">
+    <h3>AI 自定义指令</h3>
+    <p style="color: var(--ink-soft); font-size: 13px; margin-bottom: 12px;">输入对当前内容的指令，AI 会按指令处理后替换原文。</p>
+    <textarea id="aiCustomInput" placeholder="例如：把这段改写成更精炼的对话风格"></textarea>
+    <p style="font-family: 'JetBrains Mono', monospace; font-size: 10px; color: var(--ink-mute); letter-spacing: 0.05em; text-transform: uppercase; margin-bottom: 6px;">最近使用</p>
+    <div class="ai-history-list" id="aiHistoryList"></div>
+    <div class="modal-actions">
+      <button class="modal-btn" id="aiCustomCancel">取消</button>
+      <button class="modal-btn primary" id="aiCustomRun">应用</button>
+    </div>
+  </div>
+</div>
+
+<!-- 移动端汉堡 + 底部 tab -->
+<button class="mobile-fab" id="mobileFab" aria-label="切换侧栏">
+  <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+    <path stroke-linecap="round" d="M4 6h16M4 12h16M4 18h16"/>
+  </svg>
+</button>
+
+<nav class="mobile-tabs" id="mobileTabs" aria-label="移动端导航">
+  <button data-mtab="notes" class="active">
+    <svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path stroke-linecap="round" d="M4 6h16M4 12h16M4 18h12"/></svg>
+    笔记
+  </button>
+  <button data-mtab="todos">
+    <svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9 11l3 3L22 4M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg>
+    待办
+  </button>
+  <button data-mtab="theme">
+    <svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z"/></svg>
+    主题
+  </button>
+  <button data-mtab="settings">
+    <svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path stroke-linecap="round" d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 01-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 008 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H2a2 2 0 010-4h.09A1.65 1.65 0 003.6 8a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06a1.65 1.65 0 001.82.33H8a1.65 1.65 0 001-1.51V2a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06a1.65 1.65 0 00-.33 1.82V8a1.65 1.65 0 001.51 1H22a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>
+    设置
+  </button>
+</nav>
+<input type="file" id="imageFileInput" accept="image/*" style="display:none">
+
+<script src="app.js"></script>
+</body>
+</html>
