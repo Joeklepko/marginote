@@ -10,7 +10,7 @@
 [![Chrome](https://img.shields.io/badge/Chrome-supported-success.svg)](https://www.google.com/chrome/)
 [![Edge](https://img.shields.io/badge/Edge-supported-success.svg)](https://www.microsoft.com/edge)
 
-*Marginote — 取自 marginal note（页边批注），让灵感落在浏览器侧边，不必离开当前标签页*
+*Marginote — 取自 marginal note（页边批注），让灵感落在浏览器侧边*
 
 [功能](#-核心功能) · [安装](#-安装) · [截图](#-截图) · [AI 配置](#-ai-提供商) · [隐私](#-隐私与数据) · [常见问题](#-faq)
 
@@ -36,7 +36,7 @@
 
 ## 📥 安装
 
-### 方式一：从源码加载（推荐开发者）
+从源码加载（推荐开发者）
 
 ```bash
 git clone https://github.com/Joeklepko/marginote.git
@@ -47,15 +47,11 @@ git clone https://github.com/Joeklepko/marginote.git
 3. 点击 **加载已解压的扩展程序** → 选择 `marginote/` 目录
 4. 点工具栏 Marginote 图标即可使用
 
-### 方式二：Chrome Web Store
-
-> 🚧 商店上架中
-
 ---
 
-## 🖼️ 截图
+![demo_desk](images/desk_demo.gif)
 
-> _截图位 — 安装后首次打开自动生成示例笔记_
+>  安装后首次打开自动生成示例笔记
 
 ```
 ┌──────────┬──────────────┬────────────────────────────┐
@@ -69,6 +65,7 @@ git clone https://github.com/Joeklepko/marginote.git
 └──────────┴──────────────┴────────────────────────────┘
     Rail         Sidebar              Editor
 ```
+
 
 ---
 
@@ -157,16 +154,6 @@ marginote/
 ```json
 "chrome_url_overrides": { "newtab": "index.html" }
 ```
-</details>
-
-<details>
-<summary><b>API Key 安全吗？</b></summary>
-
-API Key 存浏览器本地。**任何能访问该浏览器的人都能读取**（含其他扩展、远程桌面、备份文件）。建议：
-
-- 用最低权限子 Key
-- 不绑定高额账户
-- 公司机器慎用
 </details>
 
 <details>
