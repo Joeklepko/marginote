@@ -3536,7 +3536,7 @@ renderNotesList = function() {
     return `
       <div class="note-item ${isActive ? 'active' : ''} ${compact ? 'compact' : ''}" data-id="${n.id}" role="button" tabindex="0">
         <div class="note-item-head">
-          <div class="note-title">${n.starred ? '<span class="note-pin">★</span>' : ''}${titleHtml}</div>
+          <div class="note-title" title="${escapeHtml(n.title || '无题')}">${n.starred ? '<span class="note-pin">★</span>' : ''}${titleHtml}</div>
           <div class="note-date">${date}</div>
         </div>
         ${previewHtml ? `<div class="note-preview">${previewHtml}</div>` : ''}
