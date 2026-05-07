@@ -31,7 +31,7 @@ window.addEventListener('unhandledrejection', e => logError(e.reason, 'unhandled
 
 // ===================== IndexedDB 图片仓库 =====================
 const IDB_NAME = 'marginote';
-const IDB_VERSION = 2;
+const IDB_VERSION = 3;
 let _idb = null;
 
 function openIdb() {
@@ -44,6 +44,14 @@ function openIdb() {
       }
       if (!db.objectStoreNames.contains('meta')) {
         db.createObjectStore('meta', { keyPath: 'key' });
+      }
+      if (!db.objectStoreNames.contains('versions')) {
+        const vs = db.createObjectStore('versions', { keyPath: 'key' });
+        vs.createIndex('byNote', 'noteId', { unique: false });
+      } else {
+        const tx = e.target.transaction;
+        const vs = tx.objectStore('versions');
+        if (!vs.indexNames.contains('byNote')) vs.createIndex('byNote', 'noteId', { unique: false });
       }
     };
     req.onsuccess = () => resolve(req.result);
@@ -121,6 +129,197 @@ async function persistImage(id) {
   if (!_idb) return;
   try { await idbPut('images', { id, ...images[id] }); }
   catch (e) { logError(e, 'idb-put'); }
+}
+
+// ===================== 笔记版本历史 =====================
+const VERSION_AUTO_LIMIT = 20;
+const VERSION_MIN_GAP_MS = 5 * 60 * 1000;
+const VERSION_MIN_DIFF_CHARS = 50;
+const _lastSnapshotAt = {};
+const _lastSnapshotContent = {};
+
+function listVersionsByNote(noteId) {
+  return new Promise((resolve, reject) => {
+    if (!_idb || !noteId) { resolve([]); return; }
+    try {
+      const tx = _idb.transaction('versions', 'readonly');
+      const idx = tx.objectStore('versions').index('byNote');
+      const r = idx.getAll(noteId);
+      r.onsuccess = () => resolve((r.result || []).sort((a, b) => b.ts - a.ts));
+      r.onerror = () => reject(r.error);
+    } catch (e) { resolve([]); }
+  });
+}
+
+async function pruneAutoVersions(noteId) {
+  const all = await listVersionsByNote(noteId);
+  const auto = all.filter(v => !v.label);
+  const stale = auto.slice(VERSION_AUTO_LIMIT);
+  for (const v of stale) {
+    try { await idbDelete('versions', v.key); } catch (e) { logError(e, 'idb-version-prune'); }
+  }
+}
+
+async function snapshotNote(snap, opts = {}) {
+  if (!snap || !snap.id) return false;
+  if (!_idb) return false;
+  const label = opts.label || null;
+  const force = !!opts.force;
+  const content = snap.content || '';
+  const title = snap.title || '';
+  const ts = Date.now();
+  if (!force && !label) {
+    if (!content && !title) return false;
+    const lastTs = _lastSnapshotAt[snap.id] || 0;
+    const lastContent = _lastSnapshotContent[snap.id];
+    if (lastContent !== undefined && lastContent === content) return false;
+    const gap = ts - lastTs;
+    const diff = lastContent === undefined ? Infinity : Math.abs(content.length - lastContent.length);
+    if (gap < VERSION_MIN_GAP_MS && diff < VERSION_MIN_DIFF_CHARS) return false;
+  }
+  const rec = { key: snap.id + '_' + ts, noteId: snap.id, ts, title, content, label };
+  try { await idbPut('versions', rec); }
+  catch (e) { logError(e, 'idb-version-put'); return false; }
+  _lastSnapshotAt[snap.id] = ts;
+  _lastSnapshotContent[snap.id] = content;
+  if (!label) await pruneAutoVersions(snap.id);
+  return true;
+}
+
+async function getAllVersions() {
+  if (!_idb) return [];
+  try { return await idbGetAll('versions'); }
+  catch (e) { logError(e, 'idb-version-getall'); return []; }
+}
+
+async function bulkPutVersions(arr) {
+  if (!_idb || !Array.isArray(arr)) return 0;
+  let n = 0;
+  for (const v of arr) {
+    if (!v || !v.noteId || !v.ts) continue;
+    const rec = {
+      key: v.key || (v.noteId + '_' + v.ts),
+      noteId: v.noteId,
+      ts: v.ts,
+      title: v.title || '',
+      content: v.content || '',
+      label: v.label || null
+    };
+    try { await idbPut('versions', rec); n++; }
+    catch (e) { logError(e, 'idb-version-bulk'); }
+  }
+  return n;
+}
+
+let _versionListCache = [];
+let _versionSelectedKey = null;
+
+async function openVersionModal() {
+  if (!currentNote) { showToast('请先选择一篇笔记'); return; }
+  document.getElementById('versionNoteTitle').textContent = currentNote.title || '无题';
+  document.getElementById('versionRestoreBtn').disabled = true;
+  await refreshVersionList();
+  document.getElementById('versionModalBg').classList.add('show');
+}
+
+function closeVersionModal() {
+  document.getElementById('versionModalBg').classList.remove('show');
+  _versionSelectedKey = null;
+}
+
+async function refreshVersionList() {
+  if (!currentNote) return;
+  _versionListCache = await listVersionsByNote(currentNote.id);
+  const listEl = document.getElementById('versionList');
+  if (!_versionListCache.length) {
+    listEl.innerHTML = '<div style="color:var(--ink-mute);padding:20px 8px;text-align:center;font-size:12px;">暂无历史版本<br>编辑保存后会自动记录</div>';
+    document.getElementById('versionPreviewMeta').textContent = '';
+    document.getElementById('versionPreviewTitle').textContent = '';
+    document.getElementById('versionPreviewContent').textContent = '';
+    document.getElementById('versionRestoreBtn').disabled = true;
+    return;
+  }
+  listEl.innerHTML = _versionListCache.map(v => {
+    const time = formatFullDate(v.ts);
+    const labelHtml = v.label
+      ? `<span style="background:var(--accent);color:#fff;padding:1px 6px;border-radius:3px;font-size:10px;margin-left:6px;">${escapeHtml(v.label)}</span>`
+      : '<span style="color:var(--ink-mute);font-size:10px;margin-left:6px;">自动</span>';
+    const len = (v.content || '').length;
+    const titleSnip = escapeHtml((v.title || '无题').slice(0, 36));
+    return `<div class="version-item" data-key="${v.key}" style="padding:8px 10px;border-radius:6px;cursor:pointer;border:1px solid transparent;margin-bottom:4px;">
+      <div style="font-size:12px;font-weight:500;">${time}${labelHtml}</div>
+      <div style="font-size:11px;color:var(--ink-mute);margin-top:2px;">${len} 字符 · ${titleSnip}</div>
+    </div>`;
+  }).join('');
+  listEl.querySelectorAll('.version-item').forEach(el => {
+    el.addEventListener('click', () => selectVersionItem(el.dataset.key));
+  });
+  selectVersionItem(_versionListCache[0].key);
+}
+
+function selectVersionItem(key) {
+  _versionSelectedKey = key;
+  const v = _versionListCache.find(x => x.key === key);
+  if (!v) return;
+  document.querySelectorAll('#versionList .version-item').forEach(el => {
+    if (el.dataset.key === key) {
+      el.style.background = 'color-mix(in srgb, var(--accent) 12%, transparent)';
+      el.style.borderColor = 'var(--accent)';
+    } else {
+      el.style.background = '';
+      el.style.borderColor = 'transparent';
+    }
+  });
+  const labelTxt = v.label ? ' · ' + v.label : ' · 自动';
+  document.getElementById('versionPreviewMeta').textContent = `${formatFullDate(v.ts)} · ${(v.content || '').length} 字符${labelTxt}`;
+  document.getElementById('versionPreviewTitle').textContent = v.title || '无题';
+  document.getElementById('versionPreviewContent').textContent = v.content || '';
+  document.getElementById('versionRestoreBtn').disabled = false;
+}
+
+async function manualSnapshotCurrent() {
+  if (!currentNote) { showToast('请先选择一篇笔记'); return; }
+  currentNote.title = document.getElementById('titleInput').value;
+  currentNote.content = document.getElementById('contentInput').value;
+  currentNote.updatedAt = Date.now();
+  saveNotes();
+  const ok = await snapshotNote(
+    { id: currentNote.id, title: currentNote.title, content: currentNote.content },
+    { label: '手动', force: true }
+  );
+  if (ok) { showToast('已保存当前为版本'); await refreshVersionList(); }
+  else showToast('保存版本失败');
+}
+
+function confirmRestoreSelectedVersion() {
+  if (!_versionSelectedKey || !currentNote) return;
+  const v = _versionListCache.find(x => x.key === _versionSelectedKey);
+  if (!v) return;
+  showModal(
+    '恢复到此版本？',
+    `将把当前笔记替换为 ${formatFullDate(v.ts)} 的版本。当前内容会自动保存为新版本，可再次回退。`,
+    async () => {
+      try {
+        await snapshotNote(
+          { id: currentNote.id, title: currentNote.title || '', content: currentNote.content || '' },
+          { label: '恢复前', force: true }
+        );
+      } catch (e) { logError(e, 'snapshot-pre-restore'); }
+      currentNote.title = v.title || '';
+      currentNote.content = v.content || '';
+      currentNote.updatedAt = Date.now();
+      saveNotes();
+      document.getElementById('titleInput').value = currentNote.title;
+      document.getElementById('contentInput').value = currentNote.content;
+      if (isPreviewMode) document.getElementById('preview').innerHTML = renderMarkdown(currentNote.content);
+      updateWordCount();
+      renderNotesList();
+      document.getElementById('editorDate').textContent = formatFullDate(currentNote.updatedAt);
+      document.getElementById('editorStatus').textContent = '已保存';
+      closeVersionModal();
+      showToast('已恢复到所选版本');
+    }
+  );
 }
 
 // ===================== 数据层 =====================
@@ -1290,6 +1489,17 @@ function selectNote(note) {
   currentNote = note;
   currentTodo = null;
   isPreviewMode = true;
+  if (note && note.id) {
+    listVersionsByNote(note.id).then(arr => {
+      if (arr.length) {
+        _lastSnapshotAt[note.id] = arr[0].ts;
+        _lastSnapshotContent[note.id] = arr[0].content || '';
+      } else {
+        delete _lastSnapshotAt[note.id];
+        delete _lastSnapshotContent[note.id];
+      }
+    }).catch(() => {});
+  }
   document.getElementById('emptyState').style.display = 'none';
   document.getElementById('editorWrap').style.display = 'block';
   document.getElementById('todoEditorWrap').style.display = 'none';
@@ -1517,9 +1727,18 @@ function autoSave() {
   if (!currentNote) return;
   document.getElementById('editorStatus').textContent = '保存中…';
   clearTimeout(saveTimer);
-  saveTimer = setTimeout(() => {
-    currentNote.title = document.getElementById('titleInput').value;
-    currentNote.content = document.getElementById('contentInput').value;
+  saveTimer = setTimeout(async () => {
+    const newTitle = document.getElementById('titleInput').value;
+    const newContent = document.getElementById('contentInput').value;
+    const oldTitle = currentNote.title || '';
+    const oldContent = currentNote.content || '';
+    const changed = newTitle !== oldTitle || newContent !== oldContent;
+    if (changed && (oldContent || oldTitle)) {
+      try { await snapshotNote({ id: currentNote.id, title: oldTitle, content: oldContent }); }
+      catch (e) { logError(e, 'snapshot-autosave'); }
+    }
+    currentNote.title = newTitle;
+    currentNote.content = newContent;
     currentNote.updatedAt = Date.now();
     saveNotes();
     document.getElementById('editorDate').textContent = formatFullDate(currentNote.updatedAt);
@@ -2232,9 +2451,21 @@ async function exportAll() {
     imagesMeta: Object.fromEntries(Object.entries(images).map(([k, v]) => [k, { name: v.name, ext: v.ext, createdAt: v.createdAt }]))
   }, null, 2));
 
+  // 笔记历史版本
+  let versionCount = 0;
+  try {
+    const allVersions = await getAllVersions();
+    const aliveIds = new Set(aliveNotes.map(n => n.id));
+    const filtered = allVersions.filter(v => aliveIds.has(v.noteId));
+    if (filtered.length) {
+      zip.file('_versions.json', JSON.stringify(filtered, null, 2));
+      versionCount = filtered.length;
+    }
+  } catch (e) { logError(e, 'export-versions'); }
+
   const blob = await zip.generateAsync({ type: 'blob' });
   downloadBlob(blob, `marginote-backup-${new Date().toISOString().slice(0,10)}.zip`);
-  showToast(`已导出 ${aliveNotes.length} 篇笔记 + ${usedImgIds.size} 张图`);
+  showToast(`已导出 ${aliveNotes.length} 篇笔记 + ${usedImgIds.size} 张图${versionCount ? ' + ' + versionCount + ' 历史版本' : ''}`);
 }
 
 function importFiles(files) {
@@ -2283,6 +2514,14 @@ function importFiles(files) {
               }
               if (obj.imagesMeta && typeof obj.imagesMeta === 'object') imagesMeta = obj.imagesMeta;
             } catch {}
+          }
+          // 历史版本（旧备份无此字段则跳过）
+          const versionsFile = zip.file('_versions.json');
+          if (versionsFile) {
+            try {
+              const versionsArr = JSON.parse(await versionsFile.async('string'));
+              if (Array.isArray(versionsArr)) await bulkPutVersions(versionsArr);
+            } catch (err) { logError(err, 'import-versions'); }
           }
           // 资产目录读入 images 映射
           const assetEntries = Object.keys(zip.files).filter(p => !zip.files[p].dir && p.toLowerCase().startsWith('_assets/'));
@@ -3284,6 +3523,15 @@ document.getElementById('openFileBtn').addEventListener('click', openLocalFile);
   document.getElementById('exportMdBtn').addEventListener('click', () => {
     if (currentNote) exportNoteAsMarkdown(currentNote);
     else showToast('请先选择一篇笔记');
+  });
+
+  // 历史版本
+  document.getElementById('historyBtn').addEventListener('click', openVersionModal);
+  document.getElementById('versionModalClose').addEventListener('click', closeVersionModal);
+  document.getElementById('versionSnapBtn').addEventListener('click', manualSnapshotCurrent);
+  document.getElementById('versionRestoreBtn').addEventListener('click', confirmRestoreSelectedVersion);
+  document.getElementById('versionModalBg').addEventListener('click', e => {
+    if (e.target.id === 'versionModalBg') closeVersionModal();
   });
 
   // 图片插入文件输入

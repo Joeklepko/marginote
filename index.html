@@ -3088,6 +3088,12 @@
               <path stroke-linecap="round" stroke-linejoin="round" d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/>
             </svg>
           </button>
+          <button class="icon-btn" id="historyBtn" data-tip="历史版本">
+            <svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M3 12a9 9 0 1 0 3-6.7L3 8"/>
+              <path stroke-linecap="round" stroke-linejoin="round" d="M3 3v5h5M12 7v5l3 2"/>
+            </svg>
+          </button>
           <button class="icon-btn" id="exportMdBtn" data-tip="导出为 Markdown">
             <svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/>
@@ -3325,6 +3331,27 @@
 
     <div class="modal-actions" style="margin-top: 12px;">
       <button class="modal-btn primary" id="storageModalClose">完成</button>
+    </div>
+  </div>
+</div>
+
+<!-- 历史版本模态框 -->
+<div class="modal-bg" id="versionModalBg">
+  <div class="modal" style="max-width: 880px; width: 90vw; max-height: 88vh; display:flex; flex-direction:column;">
+    <h3 style="margin-bottom:6px;">历史版本 <span id="versionNoteTitle" style="font-weight:normal;color:var(--ink-mute);font-size:13px;margin-left:6px;"></span></h3>
+    <p style="color: var(--ink-soft); font-size: 12px; margin-bottom: 12px;">编辑保存自动记录，每篇最多保留 20 个自动版本（命名版本不淘汰）。</p>
+    <div style="display:flex; gap:14px; flex:1; min-height:380px; max-height:60vh;">
+      <div id="versionList" style="width:280px; overflow-y:auto; border:1px solid var(--rule); border-radius:6px; padding:6px;"></div>
+      <div style="flex:1; display:flex; flex-direction:column; min-width:0;">
+        <div id="versionPreviewMeta" style="font-size:11px; color:var(--ink-mute); margin-bottom:6px; font-family:'JetBrains Mono',monospace;"></div>
+        <div id="versionPreviewTitle" style="font-weight:600; margin-bottom:6px; word-break:break-word;"></div>
+        <pre id="versionPreviewContent" style="flex:1; overflow:auto; background:var(--paper); border:1px solid var(--rule); border-radius:6px; padding:10px; white-space:pre-wrap; word-break:break-word; font-family:'JetBrains Mono',monospace; font-size:12px; margin:0;"></pre>
+      </div>
+    </div>
+    <div class="modal-actions" style="margin-top: 14px;">
+      <button class="modal-btn" id="versionSnapBtn">保存当前为版本</button>
+      <button class="modal-btn" id="versionModalClose">关闭</button>
+      <button class="modal-btn primary" id="versionRestoreBtn" disabled>恢复到此版本</button>
     </div>
   </div>
 </div>
