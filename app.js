@@ -384,7 +384,7 @@ function renderNotesList() {
     return `
       <div class="note-item ${isActive ? 'active' : ''}" data-id="${n.id}" title="${escapeHtml(n.title || '无题')}">
         <div class="note-item-head">
-          <div class="note-title">${n.starred ? '<span class="note-pin">★</span>' : ''}${escapeHtml(n.title || '无题')}</div>
+          <div class="note-title" title="${escapeHtml(n.title || '无题')}">${n.starred ? '<span class="note-pin">★</span>' : ''}${escapeHtml(n.title || '无题')}</div>
           <div class="note-date">${date}</div>
         </div>
         ${preview ? `<div class="note-preview">${escapeHtml(preview)}</div>` : ''}
