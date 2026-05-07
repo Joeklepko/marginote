@@ -382,9 +382,9 @@ function renderNotesList() {
       ? `<span class="note-nb-badge"><span class="note-nb-dot" style="background:${nb.color}"></span>${escapeHtml(nb.name)}</span>`
       : '';
     return `
-      <div class="note-item ${isActive ? 'active' : ''}" data-id="${n.id}">
+      <div class="note-item ${isActive ? 'active' : ''}" data-id="${n.id}" title="${escapeHtml(n.title || '无题')}">
         <div class="note-item-head">
-          <div class="note-title" title="${escapeHtml(n.title || '无题')}">${n.starred ? '<span class="note-pin">★</span>' : ''}${escapeHtml(n.title || '无题')}</div>
+          <div class="note-title">${n.starred ? '<span class="note-pin">★</span>' : ''}${escapeHtml(n.title || '无题')}</div>
           <div class="note-date">${date}</div>
         </div>
         ${preview ? `<div class="note-preview">${escapeHtml(preview)}</div>` : ''}
@@ -773,7 +773,7 @@ function selectTodo(t) {
   ta.style.display = 'none';
   pv.style.display = 'block';
   pvBtn.classList.remove('active');
-  pvBtn.setAttribute('data-tip', '预览');
+  pvBtn.setAttribute('data-tip', '编辑');
 
   renderTodos();
 }
@@ -789,12 +789,12 @@ function toggleTodoPreview() {
     ta.style.display = 'none';
     pv.style.display = 'block';
     btn.classList.remove('active');
-    btn.setAttribute('data-tip', '预览');
+    btn.setAttribute('data-tip', '编辑');
   } else {
     ta.style.display = '';
     pv.style.display = 'none';
     btn.classList.add('active');
-    btn.setAttribute('data-tip', '编辑');
+    btn.setAttribute('data-tip', '预览');
     ta.focus();
     ta.setSelectionRange(ta.value.length, ta.value.length);
   }
@@ -1317,7 +1317,7 @@ function selectNote(note) {
 
   const modeBtn = document.getElementById('modeBtn');
   modeBtn.classList.remove('active');
-  modeBtn.setAttribute('data-tip', '预览');
+  modeBtn.setAttribute('data-tip', '编辑');
 
   // 默认预览模式
   document.getElementById('preview').innerHTML = renderMarkdown(note.content || '');
@@ -1678,12 +1678,12 @@ function togglePreview() {
     ta.style.display = 'none';
     pv.style.display = 'block';
     modeBtn.classList.remove('active');
-    modeBtn.setAttribute('data-tip', '预览');
+    modeBtn.setAttribute('data-tip', '编辑');
   } else {
     ta.style.display = '';
     pv.style.display = 'none';
     modeBtn.classList.add('active');
-    modeBtn.setAttribute('data-tip', '编辑');
+    modeBtn.setAttribute('data-tip', '预览');
     ta.focus();
     ta.setSelectionRange(ta.value.length, ta.value.length);
   }
