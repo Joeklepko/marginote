@@ -778,15 +778,26 @@
   }
 
   .note-item {
-    padding: 10px 24px;
-    border-bottom: 1px solid var(--rule-soft);
+    margin: 6px 12px;
+    padding: 10px 14px;
+    background: var(--paper);
+    border: 1px solid var(--rule-soft);
+    border-radius: 8px;
+    box-shadow: 0 1px 2px rgba(26, 24, 20, 0.04);
     cursor: pointer;
-    transition: background 0.15s ease;
+    transition: background 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease;
     position: relative;
+    overflow: hidden;
   }
-  .note-item:hover { background: var(--bg-warm); }
+  .note-item:hover {
+    background: var(--bg-warm);
+    box-shadow: 0 2px 8px rgba(26, 24, 20, 0.08);
+    border-color: var(--rule);
+  }
   .note-item.active {
     background: var(--paper);
+    border-color: var(--accent);
+    box-shadow: 0 2px 10px rgba(184, 67, 31, 0.14);
   }
   .note-item.active::before {
     content: '';
@@ -1427,6 +1438,254 @@
   }
   .modal-bg.show { display: flex; }
   #modalBg.show { z-index: 1000; }
+
+  /* ====== 统一设置模态框 ====== */
+  .settings-modal { padding: 0 !important; }
+  .settings-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 18px 24px 14px;
+    border-bottom: 1px solid var(--rule-soft);
+  }
+  .settings-close-x {
+    width: 32px; height: 32px;
+    border: none; background: transparent;
+    color: var(--ink-mute);
+    font-size: 22px; line-height: 1;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s;
+  }
+  .settings-close-x:hover { background: var(--bg-warm); color: var(--ink); }
+  .settings-tabs {
+    display: flex;
+    gap: 2px;
+    padding: 8px 14px 0;
+    border-bottom: 1px solid var(--rule-soft);
+    flex-wrap: wrap;
+  }
+  .settings-tab {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 9px 14px;
+    border: none;
+    background: transparent;
+    color: var(--ink-soft);
+    font-family: var(--font-ui);
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    border-radius: 6px 6px 0 0;
+    border-bottom: 2px solid transparent;
+    margin-bottom: -1px;
+    transition: color 0.15s, border-color 0.15s, background 0.15s;
+  }
+  .settings-tab svg { width: 14px; height: 14px; }
+  .settings-tab:hover { background: var(--bg-warm); color: var(--ink); }
+  .settings-tab.active {
+    color: var(--accent);
+    border-bottom-color: var(--accent);
+    background: transparent;
+  }
+  .settings-body {
+    flex: 1;
+    overflow-y: auto;
+    padding: 20px 24px 8px;
+  }
+  .settings-pane { display: none; }
+  .settings-pane.active { display: block; animation: settings-fade 0.18s ease; }
+  @keyframes settings-fade {
+    from { opacity: 0; transform: translateY(4px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+  .settings-section-title {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    color: var(--ink-mute);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    margin: 18px 0 10px;
+  }
+  .settings-pane > .settings-section-title:first-child { margin-top: 0; }
+  .settings-select {
+    width: 100%;
+    padding: 9px 12px;
+    background: var(--paper);
+    border: 1px solid var(--rule);
+    border-radius: 6px;
+    color: var(--ink);
+    font-size: 13px;
+    cursor: pointer;
+    outline: none;
+    font-family: var(--font-ui);
+  }
+  .settings-select:focus { border-color: var(--accent); }
+  .settings-label-mono {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    color: var(--ink-mute);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+  .settings-footer {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    padding: 14px 24px 18px;
+    border-top: 1px solid var(--rule-soft);
+    background: var(--bg-warm);
+  }
+  body[data-theme="dark"] .settings-footer { background: var(--bg); }
+
+  /* ====== AI 助手模态框 ====== */
+  .assistant-modal { padding: 0 !important; }
+  .assistant-chat {
+    flex: 1;
+    overflow-y: auto;
+    padding: 16px 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    background: var(--bg);
+    min-height: 360px;
+  }
+  .assistant-msg {
+    display: flex;
+    flex-direction: column;
+    max-width: 88%;
+    font-size: 13.5px;
+    line-height: 1.6;
+  }
+  .assistant-msg.user { align-self: flex-end; }
+  .assistant-msg.bot, .assistant-msg.system { align-self: flex-start; }
+  .assistant-msg .role {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 9px;
+    color: var(--ink-mute);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    margin-bottom: 4px;
+    padding: 0 2px;
+  }
+  .assistant-msg .bubble {
+    padding: 10px 14px;
+    border-radius: 12px;
+    background: var(--paper);
+    border: 1px solid var(--rule-soft);
+    color: var(--ink);
+    word-break: break-word;
+    white-space: pre-wrap;
+  }
+  .assistant-msg.user .bubble {
+    background: var(--accent);
+    color: #fff;
+    border-color: transparent;
+  }
+  .assistant-msg.system .bubble {
+    background: var(--bg-warm);
+    color: var(--ink-soft);
+    font-size: 12px;
+    font-style: italic;
+  }
+  .assistant-msg .actions {
+    margin-top: 6px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .assistant-msg .action-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 10px;
+    background: var(--bg-warm);
+    border: 1px solid var(--rule-soft);
+    border-radius: 6px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    color: var(--ink-soft);
+    width: fit-content;
+  }
+  .assistant-msg .action-pill.ok { color: #0d9488; border-color: rgba(13, 148, 136, 0.3); }
+  .assistant-msg .action-pill.err { color: var(--accent); border-color: rgba(184, 67, 31, 0.3); }
+  .assistant-msg .result-list {
+    margin-top: 6px;
+    background: var(--bg-warm);
+    border: 1px solid var(--rule-soft);
+    border-radius: 8px;
+    padding: 8px 10px;
+    font-size: 12px;
+    max-height: 220px;
+    overflow-y: auto;
+  }
+  .assistant-msg .result-item {
+    padding: 6px 0;
+    border-bottom: 1px dashed var(--rule-soft);
+    cursor: pointer;
+    transition: color 0.12s;
+  }
+  .assistant-msg .result-item:last-child { border-bottom: none; }
+  .assistant-msg .result-item:hover { color: var(--accent); }
+  .assistant-msg .result-item .title { font-weight: 500; }
+  .assistant-msg .result-item .meta { color: var(--ink-mute); font-size: 10px; font-family: 'JetBrains Mono', monospace; margin-top: 2px; }
+  .assistant-input-row {
+    display: flex;
+    gap: 8px;
+    padding: 10px 14px 14px;
+    border-top: 1px solid var(--rule-soft);
+    align-items: stretch;
+    background: var(--bg-warm);
+  }
+  .assistant-input-row textarea {
+    flex: 1;
+    padding: 9px 12px;
+    background: var(--paper);
+    border: 1px solid var(--rule);
+    border-radius: 8px;
+    color: var(--ink);
+    font-family: var(--font-ui);
+    font-size: 13px;
+    resize: none;
+    outline: none;
+  }
+  .assistant-input-row textarea:focus { border-color: var(--accent); }
+  .assistant-input-row button { align-self: flex-end; padding: 8px 18px; }
+  .assistant-empty {
+    margin: auto;
+    text-align: center;
+    color: var(--ink-mute);
+    font-size: 13px;
+    line-height: 1.8;
+    padding: 24px;
+  }
+  .assistant-empty .examples {
+    margin-top: 12px;
+    text-align: left;
+    display: inline-block;
+    font-size: 12px;
+  }
+  .assistant-empty .examples li {
+    padding: 4px 0;
+    cursor: pointer;
+  }
+  .assistant-empty .examples li:hover { color: var(--accent); }
+  .assistant-typing {
+    display: inline-flex;
+    gap: 3px;
+  }
+  .assistant-typing span {
+    width: 6px; height: 6px; border-radius: 50%;
+    background: var(--ink-mute);
+    animation: assistant-bounce 1.2s infinite;
+  }
+  .assistant-typing span:nth-child(2) { animation-delay: 0.15s; }
+  .assistant-typing span:nth-child(3) { animation-delay: 0.3s; }
+  @keyframes assistant-bounce {
+    0%, 80%, 100% { opacity: 0.3; transform: translateY(0); }
+    40% { opacity: 1; transform: translateY(-3px); }
+  }
   .modal {
     background: var(--paper);
     padding: 32px;
@@ -1651,12 +1910,20 @@
     display: flex;
     align-items: flex-start;
     gap: 10px;
-    padding: 12px 24px;
-    border-bottom: 1px solid var(--rule-soft);
-    transition: background 0.15s;
+    margin: 6px 12px;
+    padding: 10px 12px;
+    background: var(--paper);
+    border: 1px solid var(--rule-soft);
+    border-radius: 8px;
+    box-shadow: 0 1px 2px rgba(26, 24, 20, 0.04);
+    transition: background 0.15s, box-shadow 0.15s ease, border-color 0.15s ease;
     position: relative;
   }
-  .todo-row:hover { background: var(--bg-warm); }
+  .todo-row:hover {
+    background: var(--bg-warm);
+    box-shadow: 0 2px 8px rgba(26, 24, 20, 0.08);
+    border-color: var(--rule);
+  }
   .todo-row input[type="checkbox"] {
     margin-top: 3px;
     width: 16px;
@@ -1881,7 +2148,8 @@
 
   /* 错误日志查看器 */
   .error-log-list {
-    max-height: 300px;
+    min-height: 200px;
+    max-height: 360px;
     overflow-y: auto;
     background: var(--bg-warm);
     border: 1px solid var(--rule);
@@ -2754,7 +3022,7 @@
     <div class="rail-head">
       <div class="rail-logo" id="railLogo" title="折叠/展开侧栏">M</div>
       <div class="rail-brand">
-        Margin<em>alia</em>
+        Margin<em>ote</em>
         <small>Notebooks</small>
       </div>
     </div>
@@ -2766,6 +3034,13 @@
           </svg>
           <span class="rail-item-label">全部笔记</span>
           <span class="rail-item-count" id="countAll">0</span>
+        </button>
+        <button class="rail-item" data-view="todo:all">
+          <svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M9 11l3 3L22 4M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/>
+          </svg>
+          <span class="rail-item-label">全部待办</span>
+          <span class="rail-item-count" id="countTodoAll">0</span>
         </button>
         <button class="rail-item" data-view="starred">
           <svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
@@ -2816,11 +3091,6 @@
           <span class="rail-item-label">已超期</span>
           <span class="rail-item-count" id="countTodoOverdue">0</span>
         </button>
-        <button class="rail-item todo-item-rail" data-view="todo:all">
-          <span class="todo-status-dot" style="background:#525252"></span>
-          <span class="rail-item-label">全部</span>
-          <span class="rail-item-count" id="countTodoAll">0</span>
-        </button>
       </div>
     </div>
 
@@ -2842,51 +3112,23 @@
       <div class="section-body rail-notebooks" id="notebooksList"></div>
     </div>
 
-    <div class="rail-foot">
-      <button class="rail-item" id="exportBtn" title="导出全部">
+    <div class="rail-theme-row">
+      <button class="theme-toggle" id="aiAssistantBtn" title="AI 助手">
         <svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2M7 10l5 5 5-5M12 15V3"/>
+          <path stroke-linecap="round" stroke-linejoin="round" d="M21 12c0 4.4-4 8-9 8a9.4 9.4 0 01-3.5-.7L3 21l1.5-4.3A8.3 8.3 0 013 12c0-4.4 4-8 9-8s9 3.6 9 8z"/>
+          <path stroke-linecap="round" stroke-linejoin="round" d="M9 11h.01M12 11h.01M15 11h.01"/>
         </svg>
-        <span class="rail-item-label">导出</span>
-      </button>
-      <button class="rail-item" id="importBtn" title="导入">
-        <svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2M17 8l-5-5-5 5M12 3v12"/>
-        </svg>
-        <span class="rail-item-label">导入</span>
+        <span class="label">AI 助手</span>
       </button>
     </div>
 
     <div class="rail-theme-row">
-      <button class="theme-toggle" id="themeToggle" title="切换主题">
-        <svg class="icon-moon" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z"/>
-        </svg>
-        <svg class="icon-sun" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
-          <circle cx="12" cy="12" r="4" stroke-linecap="round" stroke-linejoin="round"/>
-          <path stroke-linecap="round" stroke-linejoin="round" d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/>
-        </svg>
-        <span class="label" id="themeLabel">暗色模式</span>
-      </button>
-    </div>
-
-    <div class="rail-theme-row">
-      <button class="theme-toggle" id="aiSettingsBtn" title="AI 设置">
+      <button class="theme-toggle" id="settingsBtn" title="设置">
         <svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" d="M12 2l1.8 4.5L18 8l-3.5 3 1 4.5L12 13l-3.5 2.5 1-4.5L6 8l4.2-1.5L12 2zM5 18l1 2.5L8.5 22l-2.5 1L5 25.5 4.5 23 2 22l2.5-1.5L5 18z" transform="scale(0.9) translate(1.5,1)"/>
-          <path stroke-linecap="round" stroke-linejoin="round" d="M12 2l1.5 4 4 1.5-4 1.5L12 13l-1.5-4-4-1.5 4-1.5L12 2zM18 14l1 2.5 2.5 1-2.5 1L18 21l-1-2.5-2.5-1 2.5-1L18 14z"/>
+          <circle cx="12" cy="12" r="3"/>
+          <path stroke-linecap="round" stroke-linejoin="round" d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09a1.65 1.65 0 00-1-1.51 1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83 0 2 2 0 010-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09a1.65 1.65 0 001.51-1 1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 010-2.83 2 2 0 012.83 0l.06.06a1.65 1.65 0 001.82.33H9a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 0 2 2 0 010 2.83l-.06.06a1.65 1.65 0 00-.33 1.82V9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/>
         </svg>
-        <span class="label">AI 设置</span>
-      </button>
-    </div>
-
-    <div class="rail-theme-row">
-      <button class="theme-toggle" id="storageBtn" title="数据 / 备份">
-        <svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
-          <ellipse cx="12" cy="5" rx="9" ry="3"/>
-          <path stroke-linecap="round" d="M3 5v6c0 1.66 4.03 3 9 3s9-1.34 9-3V5M3 11v6c0 1.66 4.03 3 9 3s9-1.34 9-3v-6"/>
-        </svg>
-        <span class="label">数据 · 备份</span>
+        <span class="label">设置</span>
       </button>
     </div>
   </aside>
@@ -3243,40 +3485,224 @@
 </div>
 
 <!-- 主题选择模态框 -->
-<div class="modal-bg" id="themeModalBg">
-  <div class="modal" style="max-width: 580px; max-height: 88vh; overflow-y: auto;">
-    <h3>主题</h3>
-    <p style="margin-bottom: 12px; font-family: 'JetBrains Mono', monospace; font-size: 10px; color: var(--ink-mute); letter-spacing: 0.08em; text-transform: uppercase;">内置主题（点击应用）</p>
-    <div class="theme-grid" id="themeGrid"></div>
-    <p style="margin-top: 24px; margin-bottom: 12px; font-family: 'JetBrains Mono', monospace; font-size: 10px; color: var(--ink-mute); letter-spacing: 0.08em; text-transform: uppercase;">区域自定义（覆盖当前主题）</p>
-    <div class="theme-custom">
-      <div class="theme-custom-row">
-        <span class="label">左侧栏 Rail</span>
-        <span>背景</span>
-        <input type="color" id="customRailBg">
-        <span>文字</span>
-        <input type="color" id="customRailInk">
+<!-- 统一设置模态框 -->
+<div class="modal-bg" id="settingsModalBg">
+  <div class="modal settings-modal" style="max-width: 760px; width: 92vw; max-height: 88vh; display:flex; flex-direction:column; padding: 0; overflow: hidden;">
+    <div class="settings-header">
+      <h3 style="margin:0;">设置</h3>
+      <button class="settings-close-x" id="settingsModalCloseX" aria-label="关闭">×</button>
+    </div>
+    <div class="settings-tabs" id="settingsTabs">
+      <button class="settings-tab active" data-tab="appearance">
+        <svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path stroke-linecap="round" d="M12 3a9 9 0 010 18 4.5 4.5 0 010-9 4.5 4.5 0 000-9z"/></svg>
+        外观
+      </button>
+      <button class="settings-tab" data-tab="font">
+        <svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M4 7V5a1 1 0 011-1h14a1 1 0 011 1v2M9 20h6M12 4v16"/></svg>
+        字体
+      </button>
+      <button class="settings-tab" data-tab="ai">
+        <svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 2l1.5 4 4 1.5-4 1.5L12 13l-1.5-4-4-1.5 4-1.5L12 2zM18 14l1 2.5 2.5 1-2.5 1L18 21l-1-2.5-2.5-1 2.5-1L18 14z"/></svg>
+        AI
+      </button>
+      <button class="settings-tab" data-tab="data">
+        <svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><ellipse cx="12" cy="5" rx="9" ry="3"/><path stroke-linecap="round" d="M3 5v6c0 1.66 4.03 3 9 3s9-1.34 9-3V5M3 11v6c0 1.66 4.03 3 9 3s9-1.34 9-3v-6"/></svg>
+        数据 · 备份
+      </button>
+      <button class="settings-tab" data-tab="io">
+        <svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2M7 10l5 5 5-5M12 15V3"/></svg>
+        导入 · 导出
+      </button>
+    </div>
+    <div class="settings-body">
+
+      <!-- 外观 -->
+      <div class="settings-pane active" data-pane="appearance">
+        <p class="settings-section-title">主题（点击应用）</p>
+        <div class="theme-grid" id="themeGrid"></div>
+        <p class="settings-section-title">区域自定义（覆盖当前主题）</p>
+        <div class="theme-custom">
+          <div class="theme-custom-row">
+            <span class="label">左侧栏 Rail</span>
+            <span>背景</span>
+            <input type="color" id="customRailBg">
+            <span>文字</span>
+            <input type="color" id="customRailInk">
+          </div>
+          <div class="theme-custom-row">
+            <span class="label">中栏 Sidebar</span>
+            <span>背景</span>
+            <input type="color" id="customSidebarBg">
+            <span>文字</span>
+            <input type="color" id="customSidebarInk">
+          </div>
+          <div class="theme-custom-row">
+            <span class="label">右侧栏 Editor</span>
+            <span>背景</span>
+            <input type="color" id="customEditorBg">
+            <span>文字</span>
+            <input type="color" id="customEditorInk">
+          </div>
+          <div style="display: flex; gap: 8px; margin-top: 12px;">
+            <button class="modal-btn" id="customResetBtn">重置自定义</button>
+          </div>
+        </div>
+        <span id="themeLabel" style="display:none;"></span>
       </div>
-      <div class="theme-custom-row">
-        <span class="label">中栏 Sidebar</span>
-        <span>背景</span>
-        <input type="color" id="customSidebarBg">
-        <span>文字</span>
-        <input type="color" id="customSidebarInk">
+
+      <!-- 字体 -->
+      <div class="settings-pane" data-pane="font">
+        <p style="color: var(--ink-soft); font-size: 13px; margin-bottom: 16px;">选择全局界面字体与字号。改动立即生效，下次打开自动恢复。</p>
+        <p class="settings-section-title">字体族</p>
+        <select id="fontSelect" class="settings-select">
+          <option value="serif">默认衬线 · Fraunces / 思源宋</option>
+          <option value="sans">现代无衬线 · Inter / 苹方 · 雅黑</option>
+          <option value="hei">黑体 · 苹方 · 雅黑</option>
+          <option value="kai">楷体 · KaiTi</option>
+          <option value="song">宋体 · SimSun</option>
+          <option value="system">系统默认</option>
+        </select>
+        <p class="settings-section-title">字号</p>
+        <div style="display:flex; align-items:center; gap:12px;">
+          <input type="range" id="fontSizeRange" min="13" max="20" step="1" style="flex:1;">
+          <span id="fontSizeValue" class="settings-label-mono" style="min-width:42px; text-align:right; color:var(--ink-soft); font-size:12px;">16px</span>
+        </div>
+        <p class="settings-section-title">预览</p>
+        <div style="padding:14px 16px; background: var(--bg-warm); border:1px solid var(--rule-soft); border-radius: 8px; color: var(--ink); line-height: 1.7;">
+          <div style="font-size: 1.2em; font-weight: 600; margin-bottom: 6px;">边注 Marginote</div>
+          <div>The quick brown fox jumps over the lazy dog. 落花人独立，微雨燕双飞。</div>
+          <div style="margin-top:6px; font-family:'JetBrains Mono', monospace; font-size: 0.85em; color: var(--ink-mute);">function preview() { return 0123456789; }</div>
+        </div>
       </div>
-      <div class="theme-custom-row">
-        <span class="label">右侧栏 Editor</span>
-        <span>背景</span>
-        <input type="color" id="customEditorBg">
-        <span>文字</span>
-        <input type="color" id="customEditorInk">
+
+      <!-- AI -->
+      <div class="settings-pane" data-pane="ai">
+        <p style="color: var(--ink-soft); font-size: 13px; margin-bottom: 16px;">配置 OpenAI 兼容的模型接口（DeepSeek / Kimi / OpenAI / GLM / Qwen 等）。所有数据仅保存在本地浏览器。</p>
+        <p class="settings-section-title">已配置模型</p>
+        <div class="ai-provider-list" id="aiProviderList"></div>
+        <div class="ai-add-row">
+          <select id="aiPresetSelect"></select>
+          <button class="modal-btn primary" id="aiAddBtn">+ 新增</button>
+        </div>
+        <div class="ai-provider-form" id="aiProviderForm">
+          <div class="row">
+            <label>名称</label>
+            <input type="text" id="aiFormName" placeholder="如：我的 DeepSeek">
+          </div>
+          <div class="row">
+            <label>接口地址 (Endpoint，含 /chat/completions 路径)</label>
+            <input type="text" id="aiFormEndpoint" placeholder="https://api.deepseek.com/v1/chat/completions">
+          </div>
+          <div class="row split">
+            <div>
+              <label>模型 ID</label>
+              <input type="text" id="aiFormModel" placeholder="deepseek-chat">
+            </div>
+            <div>
+              <label>API Key</label>
+              <input type="password" id="aiFormKey" placeholder="sk-...">
+            </div>
+          </div>
+          <div class="row">
+            <label>代理 URL (可选；留空 = 直连)</label>
+            <input type="text" id="aiFormProxy" placeholder="http://user:pass@corp-proxy.com:8080  或  https://corsproxy.io/?{url}">
+            <div style="margin-top:4px;font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--ink-mute);line-height:1.6;">
+              <strong>HTTP 代理</strong>（含 auth）：<code>http://user:pass@host:port</code> 或 <code>https://...</code> 或 <code>socks5://...</code><br>
+              <strong>URL 反代</strong>：含 <code>{url}</code> 占位符或自定义路径<br>
+              仅作用于该模型的 endpoint host，其它流量不变
+            </div>
+          </div>
+          <div class="row">
+            <label>系统提示词 (可选，作用于本模型)</label>
+            <textarea id="aiFormSystem" placeholder="你是简洁实用的中文写作助手，输出保持 Markdown 格式。"></textarea>
+          </div>
+          <div class="row">
+            <label>温度 Temperature (0-2，默认 0.7)</label>
+            <input type="number" id="aiFormTemp" min="0" max="2" step="0.1" placeholder="0.7">
+          </div>
+          <div class="form-actions">
+            <button class="modal-btn" id="aiFormCancel">取消</button>
+            <button class="modal-btn primary" id="aiFormSave">保存</button>
+          </div>
+        </div>
+        <div style="margin-top: 16px;">
+          <button class="modal-btn" id="aiTestBtn">测试当前模型</button>
+        </div>
       </div>
-      <div style="display: flex; gap: 8px; margin-top: 12px;">
-        <button class="modal-btn" id="customResetBtn">重置自定义</button>
+
+      <!-- 数据 · 备份 -->
+      <div class="settings-pane" data-pane="data">
+        <p style="color: var(--ink-soft); font-size: 13px; margin-bottom: 16px;">所有笔记 / 待办 / 图片 / AI 配置存储在浏览器本地。卸载扩展或清空浏览数据会清空。请用导出功能定期备份。</p>
+        <p class="settings-section-title">存储信息</p>
+        <div class="storage-info" id="storageInfo"></div>
+        <p class="settings-section-title">手动操作</p>
+        <div class="storage-actions">
+          <button id="storageExportBtn">📦 导出全部 (zip)</button>
+          <button id="storageImportBtn">📥 导入备份</button>
+        </div>
+        <p class="settings-section-title">自动备份</p>
+        <div class="storage-auto-row">
+          <label>每隔多少天自动导出 zip</label>
+          <input type="number" id="storageAutoDays" min="0" max="365" step="1" value="0">
+          <span class="settings-label-mono">天 (0=关闭)</span>
+        </div>
+        <div class="settings-label-mono" style="margin-bottom: 16px;">上次备份：<span id="storageLastBackup">从未</span></div>
+        <p class="settings-section-title">本地文件夹同步</p>
+        <div class="storage-info" id="localSyncInfo" style="margin-bottom:8px;">未连接本地文件夹（数据仅存浏览器）</div>
+        <div class="storage-actions" style="grid-template-columns: 1fr 1fr 1fr;">
+          <button id="pickDirBtn">📁 选择文件夹</button>
+          <button id="syncDiskBtn">⬆ 立即同步</button>
+          <button id="restoreDiskBtn">⬇ 从本地恢复</button>
+        </div>
+        <div class="storage-auto-row">
+          <label>变更后自动同步到本地（5 秒节流）</label>
+          <input type="checkbox" id="autoSyncToggle" style="width:18px;height:18px;cursor:pointer;accent-color:var(--accent);">
+        </div>
+        <div class="settings-label-mono" style="margin-bottom: 16px;">仅 Chrome/Edge 100+ 支持。绑定后笔记和图片实时同步到本地文件夹。重装扩展后再选同一文件夹即恢复。</div>
+        <p class="settings-section-title" style="display:flex;justify-content:space-between;align-items:center;">
+          <span>错误日志 <span id="errorLogCount" style="color:var(--accent);">(0)</span></span>
+          <button class="modal-btn" id="errorLogClearBtn" style="padding:4px 10px;font-size:11px;">清空</button>
+        </p>
+        <div class="error-log-list" id="errorLogList"></div>
+      </div>
+
+      <!-- 导入 · 导出 -->
+      <div class="settings-pane" data-pane="io">
+        <p style="color: var(--ink-soft); font-size: 13px; margin-bottom: 16px;">导出全部笔记 / 待办为 JSON / Markdown / zip；导入支持 .json / .md / .markdown / .zip。导入会与当前数据合并。</p>
+        <p class="settings-section-title">操作</p>
+        <div class="storage-actions" style="grid-template-columns: 1fr 1fr;">
+          <button id="exportBtn">⬆ 导出全部</button>
+          <button id="importBtn">⬇ 导入文件</button>
+        </div>
+        <p class="settings-section-title" style="margin-top:18px;">提示</p>
+        <ul style="font-size:13px; color:var(--ink-soft); padding-left: 20px; line-height: 1.8;">
+          <li>导出会下载一个含全部数据的 zip（推荐定期备份）。</li>
+          <li>导入支持单个 .md / .markdown / .json 或 .zip 备份包，可一次选择多个。</li>
+          <li>主题、字体、AI 设置存在「外观」「AI」标签页，独立于数据。</li>
+        </ul>
+      </div>
+
+    </div>
+    <div class="settings-footer">
+      <button class="modal-btn primary" id="settingsModalClose">完成</button>
+    </div>
+  </div>
+</div>
+
+<!-- AI 助手模态框 -->
+<div class="modal-bg" id="assistantModalBg">
+  <div class="modal assistant-modal" style="max-width: 660px; width: 94vw; max-height: 88vh; display:flex; flex-direction:column; padding:0; overflow:hidden;">
+    <div class="settings-header">
+      <h3 style="margin:0;">AI 助手</h3>
+      <div style="display:flex; gap:6px; align-items:center;">
+        <button class="modal-btn" id="assistantClearBtn" style="padding:4px 10px; font-size:11px;">清空对话</button>
+        <button class="settings-close-x" id="assistantCloseX" aria-label="关闭">×</button>
       </div>
     </div>
-    <div class="modal-actions" style="margin-top: 20px;">
-      <button class="modal-btn primary" id="themeModalClose">完成</button>
+    <div class="assistant-chat" id="assistantChat"></div>
+    <div class="assistant-input-row">
+      <textarea id="assistantInput" rows="2" placeholder="例如：帮我新建待办「查阅机票」，明天 15:00 完成，提前 2 小时提醒"></textarea>
+      <button class="modal-btn primary" id="assistantSendBtn">发送</button>
     </div>
   </div>
 </div>
@@ -3286,54 +3712,6 @@
 
 <!-- AI 操作菜单 -->
 <div class="ai-menu" id="aiMenu"></div>
-
-<!-- 存储 / 备份模态框 -->
-<div class="modal-bg" id="storageModalBg">
-  <div class="modal" style="max-width: 560px; max-height: 88vh; overflow-y: auto;">
-    <h3>数据 · 备份</h3>
-    <p style="color: var(--ink-soft); font-size: 13px; margin-bottom: 16px;">所有笔记 / 待办 / 图片 / AI 配置存储在浏览器本地。卸载扩展或清空浏览数据会清空。请用导出功能定期备份。</p>
-
-    <p style="font-family: 'JetBrains Mono', monospace; font-size: 10px; color: var(--ink-mute); letter-spacing: 0.08em; text-transform: uppercase; margin-bottom: 8px;">存储信息</p>
-    <div class="storage-info" id="storageInfo"></div>
-
-    <p style="font-family: 'JetBrains Mono', monospace; font-size: 10px; color: var(--ink-mute); letter-spacing: 0.08em; text-transform: uppercase; margin-bottom: 8px;">手动操作</p>
-    <div class="storage-actions">
-      <button id="storageExportBtn">📦 导出全部 (zip)</button>
-      <button id="storageImportBtn">📥 导入备份</button>
-    </div>
-
-    <p style="font-family: 'JetBrains Mono', monospace; font-size: 10px; color: var(--ink-mute); letter-spacing: 0.08em; text-transform: uppercase; margin-bottom: 8px;">自动备份</p>
-    <div class="storage-auto-row">
-      <label>每隔多少天自动导出 zip</label>
-      <input type="number" id="storageAutoDays" min="0" max="365" step="1" value="0">
-      <span style="font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--ink-mute);">天 (0=关闭)</span>
-    </div>
-    <div style="font-family: 'JetBrains Mono', monospace; font-size: 10px; color: var(--ink-mute); margin-bottom: 16px;">上次备份：<span id="storageLastBackup">从未</span></div>
-
-    <p style="font-family: 'JetBrains Mono', monospace; font-size: 10px; color: var(--ink-mute); letter-spacing: 0.08em; text-transform: uppercase; margin-bottom: 8px;">本地文件夹同步</p>
-    <div class="storage-info" id="localSyncInfo" style="margin-bottom:8px;">未连接本地文件夹（数据仅存浏览器）</div>
-    <div class="storage-actions" style="grid-template-columns: 1fr 1fr 1fr;">
-      <button id="pickDirBtn">📁 选择文件夹</button>
-      <button id="syncDiskBtn">⬆ 立即同步</button>
-      <button id="restoreDiskBtn">⬇ 从本地恢复</button>
-    </div>
-    <div class="storage-auto-row">
-      <label>变更后自动同步到本地（5 秒节流）</label>
-      <input type="checkbox" id="autoSyncToggle" style="width:18px;height:18px;cursor:pointer;accent-color:var(--accent);">
-    </div>
-    <div style="font-family: 'JetBrains Mono', monospace; font-size: 10px; color: var(--ink-mute); margin-bottom: 16px;">仅 Chrome/Edge 100+ 支持。绑定后笔记和图片实时同步到本地文件夹。重装扩展后再选同一文件夹即恢复。</div>
-
-    <p style="font-family: 'JetBrains Mono', monospace; font-size: 10px; color: var(--ink-mute); letter-spacing: 0.08em; text-transform: uppercase; margin-bottom: 8px; display:flex;justify-content:space-between;align-items:center;">
-      <span>错误日志 <span id="errorLogCount" style="color:var(--accent);">(0)</span></span>
-      <button class="modal-btn" id="errorLogClearBtn" style="padding:4px 10px;font-size:11px;">清空</button>
-    </p>
-    <div class="error-log-list" id="errorLogList"></div>
-
-    <div class="modal-actions" style="margin-top: 12px;">
-      <button class="modal-btn primary" id="storageModalClose">完成</button>
-    </div>
-  </div>
-</div>
 
 <!-- 历史版本模态框 -->
 <div class="modal-bg" id="versionModalBg">
@@ -3352,69 +3730,6 @@
       <button class="modal-btn" id="versionSnapBtn">保存当前为版本</button>
       <button class="modal-btn" id="versionModalClose">关闭</button>
       <button class="modal-btn primary" id="versionRestoreBtn" disabled>恢复到此版本</button>
-    </div>
-  </div>
-</div>
-
-<!-- AI 设置模态框 -->
-<div class="modal-bg" id="aiModalBg">
-  <div class="modal" style="max-width: 600px; max-height: 88vh; overflow-y: auto;">
-    <h3>AI 设置</h3>
-    <p style="color: var(--ink-soft); font-size: 13px; margin-bottom: 16px;">配置 OpenAI 兼容的模型接口（DeepSeek / Kimi / OpenAI / GLM / Qwen 等）。所有数据仅保存在本地浏览器。</p>
-
-    <p style="font-family: 'JetBrains Mono', monospace; font-size: 10px; color: var(--ink-mute); letter-spacing: 0.08em; text-transform: uppercase; margin-bottom: 8px;">已配置模型</p>
-    <div class="ai-provider-list" id="aiProviderList"></div>
-
-    <div class="ai-add-row">
-      <select id="aiPresetSelect"></select>
-      <button class="modal-btn primary" id="aiAddBtn">+ 新增</button>
-    </div>
-
-    <div class="ai-provider-form" id="aiProviderForm">
-      <div class="row">
-        <label>名称</label>
-        <input type="text" id="aiFormName" placeholder="如：我的 DeepSeek">
-      </div>
-      <div class="row">
-        <label>接口地址 (Endpoint，含 /chat/completions 路径)</label>
-        <input type="text" id="aiFormEndpoint" placeholder="https://api.deepseek.com/v1/chat/completions">
-      </div>
-      <div class="row split">
-        <div>
-          <label>模型 ID</label>
-          <input type="text" id="aiFormModel" placeholder="deepseek-chat">
-        </div>
-        <div>
-          <label>API Key</label>
-          <input type="password" id="aiFormKey" placeholder="sk-...">
-        </div>
-      </div>
-      <div class="row">
-        <label>代理 URL (可选；留空 = 直连)</label>
-        <input type="text" id="aiFormProxy" placeholder="http://user:pass@corp-proxy.com:8080  或  https://corsproxy.io/?{url}">
-        <div style="margin-top:4px;font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--ink-mute);line-height:1.6;">
-          <strong>HTTP 代理</strong>（含 auth）：<code>http://user:pass@host:port</code> 或 <code>https://...</code> 或 <code>socks5://...</code><br>
-          <strong>URL 反代</strong>：含 <code>{url}</code> 占位符或自定义路径<br>
-          仅作用于该模型的 endpoint host，其它流量不变
-        </div>
-      </div>
-      <div class="row">
-        <label>系统提示词 (可选，作用于本模型)</label>
-        <textarea id="aiFormSystem" placeholder="你是简洁实用的中文写作助手，输出保持 Markdown 格式。"></textarea>
-      </div>
-      <div class="row">
-        <label>温度 Temperature (0-2，默认 0.7)</label>
-        <input type="number" id="aiFormTemp" min="0" max="2" step="0.1" placeholder="0.7">
-      </div>
-      <div class="form-actions">
-        <button class="modal-btn" id="aiFormCancel">取消</button>
-        <button class="modal-btn primary" id="aiFormSave">保存</button>
-      </div>
-    </div>
-
-    <div class="modal-actions" style="margin-top: 16px;">
-      <button class="modal-btn" id="aiTestBtn">测试当前模型</button>
-      <button class="modal-btn primary" id="aiModalClose">完成</button>
     </div>
   </div>
 </div>
@@ -3483,6 +3798,8 @@
 </nav>
 <input type="file" id="imageFileInput" accept="image/*" style="display:none">
 
+<script src="js/appearance.js"></script>
 <script src="app.js"></script>
+<script src="js/assistant.js"></script>
 </body>
 </html>
