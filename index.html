@@ -896,7 +896,10 @@
     overflow-y: auto;
     position: relative;
     color-scheme: light;
+    display: flex;
+    flex-direction: column;
   }
+  #editorWrap { display: flex; flex-direction: column; flex: 1; min-height: 0; }
 
   .editor::-webkit-scrollbar { width: 8px; }
   .editor::-webkit-scrollbar-track { background: transparent; }
@@ -1048,8 +1051,14 @@
   .editor-content {
     max-width: 1080px;
     margin: 0 auto;
-    padding: 32px 80px 80px;
+    padding: 32px 80px 40px;
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
   }
+  .editor-content .preview { flex: 1; min-height: 0; overflow-y: auto; }
+  .content-input { flex: 1; min-height: 0; }
 
   .editor-meta {
     display: flex;
@@ -1170,7 +1179,7 @@
 
   .content-input {
     width: 100%;
-    min-height: 60vh;
+    min-height: 0;
     border: none;
     background: transparent;
     font-family: 'Fraunces', 'Noto Serif SC', Georgia, serif;
@@ -1299,15 +1308,16 @@
     border: 1px solid var(--rule-soft);
   }
   .preview pre {
-    background: var(--ink);
-    color: var(--paper);
-    padding: 12px 16px;
-    border-radius: 6px;
+    background: var(--bg-warm);
+    color: var(--ink);
+    padding: 14px 18px;
+    border-radius: 8px;
     overflow-x: auto;
     margin: 0.9em 0;
     font-size: 13px;
     line-height: 1.5;
     white-space: pre;
+    border: 1px solid var(--rule);
   }
   .preview pre code {
     background: transparent;
@@ -2983,9 +2993,14 @@
         <span class="tool-divider"></span>
         <button class="tool-btn" data-format="bold" title="加粗 (⌘B)"><strong>B</strong></button>
         <button class="tool-btn" data-format="italic" title="斜体 (⌘I)"><em>I</em></button>
-        <button class="tool-btn" data-format="code" title="代码">
+        <button class="tool-btn" data-format="code" title="行内代码">
           <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" d="M16 18l6-6-6-6M8 6l-6 6 6 6"/>
+          </svg>
+        </button>
+        <button class="tool-btn" data-format="codeblock" title="代码块">
+          <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"/>
           </svg>
         </button>
         <button class="tool-btn" data-format="quote" title="引用">

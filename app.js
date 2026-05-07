@@ -246,9 +246,7 @@ function loadData() {
         id: uid(),
         notebookId: notebooks[0].id,
         title: '欢迎来到 Marginote',
-        content: `# 欢迎来到 Marginote
-
-这是一本属于你的数字笔记本。**Marginote** 取自 *marginal note*（页边批注），是阅读时灵感的栖息地。
+        content: `这是一本属于你的数字笔记本。**Marginote** 取自 *marginal note*（页边批注），是阅读时灵感的栖息地。
 
 ## 它能做什么
 
@@ -386,7 +384,7 @@ function renderNotesList() {
     return `
       <div class="note-item ${isActive ? 'active' : ''}" data-id="${n.id}">
         <div class="note-item-head">
-          <div class="note-title">${n.starred ? '<span class="note-pin">★</span>' : ''}${escapeHtml(n.title || '无题')}</div>
+          <div class="note-title" title="${escapeHtml(n.title || '无题')}">${n.starred ? '<span class="note-pin">★</span>' : ''}${escapeHtml(n.title || '无题')}</div>
           <div class="note-date">${date}</div>
         </div>
         ${preview ? `<div class="note-preview">${escapeHtml(preview)}</div>` : ''}
@@ -774,8 +772,8 @@ function selectTodo(t) {
   pv.innerHTML = renderMarkdown(t.content || '');
   ta.style.display = 'none';
   pv.style.display = 'block';
-  pvBtn.classList.add('active');
-  pvBtn.setAttribute('data-tip', '编辑');
+  pvBtn.classList.remove('active');
+  pvBtn.setAttribute('data-tip', '预览');
 
   renderTodos();
 }
@@ -790,13 +788,13 @@ function toggleTodoPreview() {
     pv.innerHTML = renderMarkdown(ta.value);
     ta.style.display = 'none';
     pv.style.display = 'block';
-    btn.classList.add('active');
-    btn.setAttribute('data-tip', '编辑');
+    btn.classList.remove('active');
+    btn.setAttribute('data-tip', '预览');
   } else {
     ta.style.display = '';
     pv.style.display = 'none';
-    btn.classList.remove('active');
-    btn.setAttribute('data-tip', '预览');
+    btn.classList.add('active');
+    btn.setAttribute('data-tip', '编辑');
     ta.focus();
     ta.setSelectionRange(ta.value.length, ta.value.length);
   }
@@ -1318,8 +1316,8 @@ function selectNote(note) {
   starBtn.setAttribute('data-tip', note.starred ? '取消收藏' : '收藏');
 
   const modeBtn = document.getElementById('modeBtn');
-  modeBtn.classList.add('active');
-  modeBtn.setAttribute('data-tip', '编辑');
+  modeBtn.classList.remove('active');
+  modeBtn.setAttribute('data-tip', '预览');
 
   // 默认预览模式
   document.getElementById('preview').innerHTML = renderMarkdown(note.content || '');
@@ -1679,13 +1677,13 @@ function togglePreview() {
     pv.innerHTML = renderMarkdown(ta.value);
     ta.style.display = 'none';
     pv.style.display = 'block';
-    modeBtn.classList.add('active');
-    modeBtn.setAttribute('data-tip', '编辑');
+    modeBtn.classList.remove('active');
+    modeBtn.setAttribute('data-tip', '预览');
   } else {
     ta.style.display = '';
     pv.style.display = 'none';
-    modeBtn.classList.remove('active');
-    modeBtn.setAttribute('data-tip', '预览');
+    modeBtn.classList.add('active');
+    modeBtn.setAttribute('data-tip', '编辑');
     ta.focus();
     ta.setSelectionRange(ta.value.length, ta.value.length);
   }
@@ -1887,6 +1885,7 @@ function applyFormat(format) {
     case 'bold': newText = `**${sel || '加粗文本'}**`; cursorOffset = sel ? 0 : -2; break;
     case 'italic': newText = `*${sel || '斜体文本'}*`; cursorOffset = sel ? 0 : -1; break;
     case 'code': newText = `\`${sel || '代码'}\``; break;
+    case 'codeblock': newText = `\`\`\`\n${sel || '代码'}\n\`\`\``; break;
     case 'quote': newText = `> ${sel || '引用文字'}`; break;
     case 'list': newText = `- ${sel || '列表项'}`; break;
     case 'checkbox': newText = `- [ ] ${sel || '待办事项'}`; break;
