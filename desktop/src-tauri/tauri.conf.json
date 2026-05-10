@@ -1,0 +1,55 @@
+{
+  "$schema": "https://schema.tauri.app/config/2.0.0",
+  "productName": "Marginote",
+  "version": "1.1.0",
+  "identifier": "com.marginote.app",
+  "build": {
+    "frontendDist": "../../shared",
+    "devUrl": null,
+    "beforeBuildCommand": "",
+    "beforeDevCommand": ""
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "Marginote · 笔记本",
+        "width": 1280,
+        "height": 820,
+        "minWidth": 900,
+        "minHeight": 600,
+        "decorations": true,
+        "center": true,
+        "visible": true,
+        "resizable": true
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self' ipc: http://ipc.localhost; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; img-src 'self' data: blob: asset: https:; connect-src 'self' ipc: http://ipc.localhost https: http: ws: wss:"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["nsis"],
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "windows": {
+      "nsis": {
+        "installerIcon": "icons/icon.ico",
+        "installMode": "currentUser",
+        "languages": ["SimplifiedChinese", "English"],
+        "displayLanguageSelector": false
+      }
+    },
+    "shortDescription": "本地优先 Markdown 笔记 + 待办 + AI 助手",
+    "longDescription": "Marginote 是一款本地优先的 Markdown 笔记本，含待办提醒、AI 助手（DeepSeek/Kimi/OpenAI 等）、多主题、字体定制。"
+  },
+  "plugins": {
+    "shell": { "open": true }
+  }
+}
