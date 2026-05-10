@@ -1,0 +1,62 @@
+name: Build Windows .exe
+
+on:
+  push:
+    branches: [dev_exe]
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write   # 给 softprops/action-gh-release 创建 Release 用
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust deps
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: 'desktop/src-tauri -> target'
+
+      - name: Install Tauri CLI
+        run: npm install -g @tauri-apps/cli@latest
+
+      - name: Generate icons (if missing)
+        shell: pwsh
+        run: |
+          if (-not (Test-Path desktop/src-tauri/icons/icon.ico)) {
+            tauri icon shared/icons/icon128.png -o desktop/src-tauri/icons
+          }
+
+      - name: Build Tauri app
+        working-directory: desktop
+        run: tauri build
+
+      - name: Upload installer artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: marginote-windows-installer
+          path: desktop/src-tauri/target/release/bundle/nsis/*.exe
+          retention-days: 30
+          if-no-files-found: error
+
+      - name: Publish GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: desktop/src-tauri/target/release/bundle/nsis/*.exe
+          draft: false
+          prerelease: false
+          generate_release_notes: true

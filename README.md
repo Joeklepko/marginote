@@ -2,13 +2,14 @@
 
 # 📝 Marginote
 
-**本地优先 · Markdown 笔记 · 待办提醒 · AI 优化 · Chrome 扩展**
+**本地优先 · Markdown 笔记 · 待办提醒 · AI 优化 · Chrome 扩展 / Windows 桌面版**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
 [![Manifest V3](https://img.shields.io/badge/Manifest-V3-blue.svg)](https://developer.chrome.com/docs/extensions/mv3/intro/)
-[![Version](https://img.shields.io/badge/version-1.0.0-green.svg)](./manifest.json)
+[![Version](https://img.shields.io/badge/version-1.1.0-green.svg)](./extension/manifest.json)
 [![Chrome](https://img.shields.io/badge/Chrome-supported-success.svg)](https://www.google.com/chrome/)
 [![Edge](https://img.shields.io/badge/Edge-supported-success.svg)](https://www.microsoft.com/edge)
+[![Windows](https://img.shields.io/badge/Windows-.exe-blue.svg)](https://github.com/Joeklepko/marginote/releases)
 
 *Marginote — 取自 marginal note（页边批注），让灵感落在浏览器侧边*
 
@@ -36,16 +37,34 @@
 
 ## 📥 安装
 
-从源码加载（推荐开发者）
+### 方式 A · Windows 桌面版（推荐 Windows 用户）
+
+从 [Releases](https://github.com/Joeklepko/marginote/releases) 下载最新 `Marginote_<version>_x64-setup.exe`，双击安装，桌面快捷方式直接打开。
+
+特性：
+- 🪟 系统托盘 + 关闭最小化（不占任务栏）
+- ⌨️ 全局快捷键 `Ctrl+Shift+M` 唤起（可自定义）
+- ▶️ 可选开机自启（在「设置 → 桌面」勾选）
+- 🔁 与 Chrome 扩展数据互通（导出 zip 互导）
+- 💾 仅 ~12MB 安装包，启动 < 1 秒（基于 Tauri + WebView2）
+
+> 首次安装 Windows SmartScreen 会警告"未知发布者"，点 **「更多信息」→「仍要运行」**。
+> 这是因为我们暂未购买 EV 代码签名证书。
+
+### 方式 B · Chrome 扩展（推荐开发者 / Linux/macOS）
 
 ```bash
-git clone https://github.com/Joeklepko/marginote.git
+git clone -b dev_exe https://github.com/Joeklepko/marginote.git
+cd marginote/extension
+bash build.sh                       # 把 ../shared/ 拷进 extension/，使其自包含
 ```
 
 1. 浏览器打开 `chrome://extensions/`（Edge 用 `edge://extensions/`）
 2. 右上角开启 **开发者模式**
-3. 点击 **加载已解压的扩展程序** → 选择 `marginote/` 目录
+3. 点击 **加载已解压的扩展程序** → 选择 `marginote/extension/` 目录
 4. 点工具栏 Marginote 图标即可使用
+
+> 提示：在 master 分支老结构上，扩展文件直接在仓库根目录，加载该目录即可。`dev_exe` 之后做了 monorepo 重组。
 
 ---
 
