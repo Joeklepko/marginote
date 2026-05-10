@@ -209,56 +209,70 @@ const FONT_PRESETS = {
   song:   "'Times New Roman', 'SimSun', '宋体', 'Noto Serif SC', serif",
   system: "system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif"
 };
-let _fontStyleEl = null;
+// 字体设置完全绕开 <style> 标签注入：实测 Tauri 2 / WebView2 release 下
+// <style>.innerHTML/.textContent 注入的规则常常不被 CSSOM 应用（继 12b5cee 撞过一次后这次彻底放弃这条路）。
+// 唯一稳定的路径是直接给每个目标元素写 inline style（el.style.setProperty）—— 走的是元素 CSSOM 直写，不经过样式表解析。
+// 缺点：动态新增的节点（笔记/笔记本/待办列表项）需要在每次 render 之后再 paint 一次。
+
+const FONT_TARGET_SELECTOR =
+  'body, button, input, select, textarea, '
+  + '.note-title, .note-preview, .note-date, '
+  + '.todo-text, .todo-meta, '
+  + '.editor, .content-input, .preview, '
+  + '.new-note-btn, .filter-tab, .compact-toggle, '
+  + '.rail-item-label, .rail-folder-item, .rail-section-title, '
+  + '.masthead-title h1, .masthead-title, .meta-line, '
+  + '.modal h3, .modal p, .modal label, .modal-btn, '
+  + 'h1, h2, h3, h4, h5, h6, .nb-name, .toast';
+
+// 字号目标：[选择器, 16px 基准下的目标 size]
+const FONT_SIZE_TARGETS = [
+  ['.editor, .content-input', 16],
+  ['.preview, .preview p, .preview li', 16],
+  ['.note-title', 14],
+  ['.note-preview', 13],
+  ['.todo-text', 14],
+  ['.meta-line, .note-date', 11],
+  ['.rail-item-label', 13],
+];
+
+let _currentFontStack = null;
+let _currentFontPx = 16;
+
+// 给作用域内所有目标元素直写 font-family / font-size。
+// 在 init 调一次，每次 applyFont/applyFontSize 调一次，每次动态 render 后调一次。
+function paintFontStyles(scope) {
+  const root = scope || document;
+  if (_currentFontStack) {
+    root.querySelectorAll(FONT_TARGET_SELECTOR).forEach(el => {
+      el.style.setProperty('font-family', _currentFontStack, 'important');
+    });
+    // body 单独处理（如果 scope 不含 body）
+    if (root !== document && _currentFontStack) {
+      document.body.style.setProperty('font-family', _currentFontStack, 'important');
+    }
+  }
+  const ratio = _currentFontPx / 16;
+  FONT_SIZE_TARGETS.forEach(([sel, base]) => {
+    const px = Math.round(base * ratio * 10) / 10;
+    root.querySelectorAll(sel).forEach(el => {
+      el.style.setProperty('font-size', px + 'px', 'important');
+    });
+  });
+}
+
 function applyFont(name) {
   const stack = FONT_PRESETS[name] || FONT_PRESETS.serif;
-  // WebView2 在 Tauri 2 release 下对 <style> 的 textContent 偶发不重算样式；
-  // 关键是必须 (a) 重新创建 <style>，(b) 先 appendChild 再 innerHTML（不是反过来）。
-  // 参 12b5cee：textContent 路径会 CSSOM 损坏，innerHTML 路径稳定。
-  if (_fontStyleEl && _fontStyleEl.parentNode) {
-    _fontStyleEl.parentNode.removeChild(_fontStyleEl);
-  }
-  _fontStyleEl = document.createElement('style');
-  _fontStyleEl.id = 'marginote-font-overrides';
-  document.head.appendChild(_fontStyleEl);
-  _fontStyleEl.innerHTML = `
-    body, button, input, select, textarea,
-    .note-title, .note-preview, .note-date,
-    .todo-text, .todo-meta,
-    .editor, .content-input, .preview,
-    .new-note-btn, .filter-tab, .compact-toggle,
-    .rail-item-label, .rail-folder-item, .rail-section-title,
-    .masthead-title h1, .masthead-title, .meta-line,
-    .modal h3, .modal p, .modal label, .modal-btn,
-    h1, h2, h3, h4, h5, h6, .nb-name, .toast {
-      font-family: ${stack} !important;
-    }
-  `;
+  _currentFontStack = stack;
+  paintFontStyles(document);
   localStorage.setItem(FONT_KEY, name);
 }
-let _fontSizeStyleEl = null;
+
 function applyFontSize(px) {
   const n = Math.max(13, Math.min(20, parseInt(px, 10) || 16));
+  _currentFontPx = n;
   document.body.style.fontSize = n + 'px';
-  // body 的 fontSize 只对继承默认值的元素生效；编辑器、笔记标题等都有显式 font-size，
-  // 所以再写一份 !important 覆盖（按 base=16 等比缩放，保留视觉层次）。
-  const ratio = n / 16;
-  if (_fontSizeStyleEl && _fontSizeStyleEl.parentNode) {
-    _fontSizeStyleEl.parentNode.removeChild(_fontSizeStyleEl);
-  }
-  _fontSizeStyleEl = document.createElement('style');
-  _fontSizeStyleEl.id = 'marginote-font-size-overrides';
-  document.head.appendChild(_fontSizeStyleEl);
-  const r = (base) => Math.round(base * ratio * 10) / 10; // 1 位小数
-  _fontSizeStyleEl.innerHTML = `
-    .editor, .content-input, .preview { font-size: ${r(16)}px !important; }
-    .preview p, .preview li { font-size: ${r(16)}px !important; }
-    .note-title { font-size: ${r(14)}px !important; }
-    .note-preview { font-size: ${r(13)}px !important; }
-    .todo-text { font-size: ${r(14)}px !important; }
-    .meta-line, .note-date { font-size: ${r(11)}px !important; }
-    .rail-item-label { font-size: ${r(13)}px !important; }
-  `;
+  paintFontStyles(document);
   localStorage.setItem(FONT_SIZE_KEY, String(n));
   const v = document.getElementById('fontSizeValue');
   if (v) v.textContent = n + 'px';
