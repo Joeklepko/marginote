@@ -11,7 +11,7 @@ use std::path::PathBuf;
 use std::sync::Mutex;
 use tauri::{AppHandle, Manager};
 
-const FILE: &str = "marginote.dat";
+pub const FILE: &str = "marginote.dat";
 
 // 简单进程内锁，避免并发写竞态（粒度足够）
 static LOCK: Mutex<()> = Mutex::new(());

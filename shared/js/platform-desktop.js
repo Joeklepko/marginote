@@ -127,6 +127,16 @@
     async unregisterHotkey() {
       try { await invoke('cmd_unregister_hotkey'); } catch (e) {}
     },
+    async getAppPaths() {
+      // { data_dir, kv_file, webview_dir }
+      try { return await invoke('cmd_get_app_paths'); }
+      catch (e) { return null; }
+    },
+    async setWindowTheme(mode) {
+      // mode: 'dark' | 'light' | 'system'
+      try { await invoke('cmd_set_window_theme', { mode: mode || 'system' }); }
+      catch (e) { /* 旧版本无此命令时静默失败 */ }
+    },
   };
 
   if (window.mn._readyResolve) window.mn._readyResolve();

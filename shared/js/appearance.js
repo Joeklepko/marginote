@@ -11,7 +11,14 @@ const FONT_KEY = 'marginote.font';
 const FONT_SIZE_KEY = 'marginote.fontSize';
 
 const THEMES = {
-  light: { name: '默认 · 米黄', mode: 'light', vars: {} },
+  // 默认 · 黑白：实际首装/首启就落到这里（init() 默认 'light'）。
+  // vars 给的是 mono 配色，让"默认"卡的视觉与首启的实际外观一致。
+  light: { name: '默认 · 黑白', mode: 'light', vars: {
+    '--bg': '#fafafa', '--bg-warm': '#f0f0f0', '--paper': '#ffffff',
+    '--ink': '#1a1a1a', '--ink-soft': '#404040', '--ink-mute': '#888888',
+    '--rule': '#dadada', '--rule-soft': '#ebebeb',
+    '--accent': '#1a1a1a', '--accent-soft': '#3a3a3a'
+  }},
   dark:  { name: '默认 · 暗夜', mode: 'dark',  vars: {} },
   sepia: { name: '羊皮纸', mode: 'light', vars: {
     '--bg': '#f5e9d4', '--bg-warm': '#ecdab9', '--paper': '#faf0d9',
@@ -55,12 +62,6 @@ const THEMES = {
     '--rule': '#3a4d40', '--rule-soft': '#34453b',
     '--accent': '#a3be8c', '--accent-soft': '#b4cb9e'
   }},
-  mono: { name: '黑白', mode: 'light', vars: {
-    '--bg': '#fafafa', '--bg-warm': '#f0f0f0', '--paper': '#ffffff',
-    '--ink': '#1a1a1a', '--ink-soft': '#404040', '--ink-mute': '#888888',
-    '--rule': '#dadada', '--rule-soft': '#ebebeb',
-    '--accent': '#1a1a1a', '--accent-soft': '#3a3a3a'
-  }},
   rose: { name: '玫瑰', mode: 'light', vars: {
     '--bg': '#fdf2f4', '--bg-warm': '#f7e3e7', '--paper': '#ffffff',
     '--ink': '#3a1f24', '--ink-soft': '#5e3942', '--ink-mute': '#a07a82',
@@ -81,9 +82,11 @@ const REGION_VAR_MAP = {
   sidebar: { sel: '.sidebar', bg: '--bg',      ink: '--ink' },
   editor:  { sel: '.editor',  bg: '--paper',   ink: '--ink-soft' }
 };
-let currentThemePreset = 'mono';
+let currentThemePreset = 'light';
 
 function applyTheme(name) {
+  // 迁移：旧的 'mono' 已并入 'light'（默认 · 黑白）
+  if (name === 'mono') name = 'light';
   const preset = THEMES[name] || THEMES.light;
   document.body.setAttribute('data-theme', preset.mode);
   THEME_VAR_NAMES.forEach(v => document.body.style.removeProperty(v));
@@ -95,6 +98,10 @@ function applyTheme(name) {
   applyCustomOverrides(custom);
   const label = document.getElementById('themeLabel');
   if (label) label.textContent = preset.name;
+  // 桌面端：同步原生窗口标题栏主题（Windows 下让顶部"Marginote 笔记本"横栏跟随）
+  if (window.mn?.platform?.desktop?.setWindowTheme) {
+    window.mn.platform.desktop.setWindowTheme(preset.mode);
+  }
 }
 
 function applyCustomOverrides(c) {
@@ -205,12 +212,14 @@ const FONT_PRESETS = {
 let _fontStyleEl = null;
 function applyFont(name) {
   const stack = FONT_PRESETS[name] || FONT_PRESETS.serif;
-  if (!_fontStyleEl) {
-    _fontStyleEl = document.createElement('style');
-    _fontStyleEl.id = 'marginote-font-overrides';
-    document.head.appendChild(_fontStyleEl);
+  // WebView2 (Tauri 2 release) 有时不会对已存在 <style> 的 innerHTML 重新触发样式重算。
+  // 每次 remove + 重建一次，强制走完整的 stylesheet 解析路径。
+  if (_fontStyleEl && _fontStyleEl.parentNode) {
+    _fontStyleEl.parentNode.removeChild(_fontStyleEl);
   }
-  _fontStyleEl.innerHTML = `
+  _fontStyleEl = document.createElement('style');
+  _fontStyleEl.id = 'marginote-font-overrides';
+  _fontStyleEl.textContent = `
     body, button, input, select, textarea,
     .note-title, .note-preview, .note-date,
     .todo-text, .todo-meta,
@@ -223,6 +232,7 @@ function applyFont(name) {
       font-family: ${stack} !important;
     }
   `;
+  document.head.appendChild(_fontStyleEl);
   localStorage.setItem(FONT_KEY, name);
 }
 function applyFontSize(px) {

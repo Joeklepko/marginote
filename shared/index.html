@@ -1478,6 +1478,35 @@
   .nb-dot, .note-nb-dot, .todo-status-dot, .color-swatch, .theme-card-swatch {
     background-color: transparent;
   }
+  /* 字号 slider 一行：用 class 而不是 inline style（防 WebView2 漏解析） */
+  .font-size-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    width: 100%;
+  }
+  .font-size-row input[type="range"] { flex: 1 1 auto; min-width: 0; }
+  .font-size-row .font-size-value {
+    min-width: 56px;
+    text-align: right;
+    color: var(--ink-soft);
+    font-size: 12px;
+    flex-shrink: 0;
+  }
+  /* AI 模型表单 · 代理 URL 提示文字（小号说明，避免 inline 10px 在 WebView2 漏解析变大）*/
+  .ai-form-hint {
+    margin-top: 4px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    color: var(--ink-mute);
+    line-height: 1.6;
+  }
+  .ai-form-hint code {
+    font-size: 10px;
+    background: var(--bg-warm);
+    padding: 0 4px;
+    border-radius: 3px;
+  }
   .settings-header {
     display: flex;
     align-items: center;
@@ -3602,9 +3631,9 @@
           <option value="system">系统默认</option>
         </select>
         <p class="settings-section-title">字号</p>
-        <div style="display:flex; align-items:center; gap:12px;">
-          <input type="range" id="fontSizeRange" min="13" max="20" step="1" style="flex:1;">
-          <span id="fontSizeValue" class="settings-label-mono" style="min-width:42px; text-align:right; color:var(--ink-soft); font-size:12px;">16px</span>
+        <div class="font-size-row">
+          <input type="range" id="fontSizeRange" min="13" max="20" step="1">
+          <span id="fontSizeValue" class="settings-label-mono font-size-value">16px</span>
         </div>
         <p class="settings-section-title">预览</p>
         <div style="padding:14px 16px; background: var(--bg-warm); border:1px solid var(--rule-soft); border-radius: 8px; color: var(--ink); line-height: 1.7;">
@@ -3645,7 +3674,7 @@
           <div class="row">
             <label>代理 URL (可选；留空 = 直连)</label>
             <input type="text" id="aiFormProxy" placeholder="http://user:pass@corp-proxy.com:8080  或  https://corsproxy.io/?{url}">
-            <div style="margin-top:4px;font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--ink-mute);line-height:1.6;">
+            <div class="ai-form-hint">
               <strong>HTTP 代理</strong>（含 auth）：<code>http://user:pass@host:port</code> 或 <code>https://...</code> 或 <code>socks5://...</code><br>
               <strong>URL 反代</strong>：含 <code>{url}</code> 占位符或自定义路径<br>
               仅作用于该模型的 endpoint host，其它流量不变
@@ -3671,14 +3700,9 @@
 
       <!-- 数据 · 备份 -->
       <div class="settings-pane" data-pane="data">
-        <p style="color: var(--ink-soft); font-size: 13px; margin-bottom: 16px;">所有笔记 / 待办 / 图片 / AI 配置存储在浏览器本地。卸载扩展或清空浏览数据会清空。请用导出功能定期备份。</p>
+        <p style="color: var(--ink-soft); font-size: 13px; margin-bottom: 16px;">所有笔记 / 待办 / 图片 / AI 配置存储在本地。手动「导出 / 导入」请见「导入 · 导出」标签页。</p>
         <p class="settings-section-title">存储信息</p>
         <div class="storage-info" id="storageInfo"></div>
-        <p class="settings-section-title">手动操作</p>
-        <div class="storage-actions">
-          <button id="storageExportBtn">📦 导出全部 (zip)</button>
-          <button id="storageImportBtn">📥 导入备份</button>
-        </div>
         <p class="settings-section-title">自动备份</p>
         <div class="storage-auto-row">
           <label>每隔多少天自动导出 zip</label>

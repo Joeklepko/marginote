@@ -40,6 +40,8 @@ pub fn run() {
             commands::cmd_kv_keys,
             commands::cmd_register_hotkey,
             commands::cmd_unregister_hotkey,
+            commands::cmd_get_app_paths,
+            commands::cmd_set_window_theme,
         ])
         .setup(|app| {
             // 安装托盘
