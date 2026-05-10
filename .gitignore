@@ -27,3 +27,21 @@ npm-debug.log*
 
 # Node (if any tooling added later)
 node_modules/
+
+# Extension build output (extension/build.sh 把 shared/* 拷进 extension/)
+extension/index.html
+extension/app.js
+extension/manual.md
+extension/icons/
+extension/images/
+extension/js/
+extension/vendor/
+
+# Tauri build output
+desktop/src-tauri/target/
+desktop/src-tauri/gen/
+desktop/dist/
+
+# Rust
+**/Cargo.lock.bak
+
