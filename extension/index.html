@@ -1552,7 +1552,6 @@
     flex-direction: column;
     gap: 12px;
     background: var(--bg);
-    min-height: 360px;
   }
   .assistant-msg {
     display: flex;
@@ -1636,14 +1635,14 @@
   .assistant-input-row {
     display: flex;
     gap: 8px;
-    padding: 10px 14px 14px;
+    padding: 8px 14px 12px;
     border-top: 1px solid var(--rule-soft);
-    align-items: stretch;
+    align-items: center;
     background: var(--bg-warm);
   }
   .assistant-input-row textarea {
     flex: 1;
-    padding: 9px 12px;
+    padding: 7px 10px;
     background: var(--paper);
     border: 1px solid var(--rule);
     border-radius: 8px;
@@ -1654,7 +1653,34 @@
     outline: none;
   }
   .assistant-input-row textarea:focus { border-color: var(--accent); }
-  .assistant-input-row button { align-self: flex-end; padding: 8px 18px; }
+  .assistant-send-btn {
+    padding: 8px 18px;
+    background: var(--accent);
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    cursor: pointer;
+    font-family: var(--font-ui);
+    font-size: 13px;
+    font-weight: 500;
+    transition: all 0.15s;
+    flex-shrink: 0;
+  }
+  .assistant-send-btn:hover { opacity: 0.9; }
+  .assistant-attach-btn {
+    width: 32px; height: 32px;
+    border: 1px solid var(--rule);
+    background: var(--paper);
+    border-radius: 8px;
+    cursor: pointer;
+    display: grid;
+    place-items: center;
+    color: var(--ink-mute);
+    font-size: 14px;
+    flex-shrink: 0;
+    transition: all 0.15s;
+  }
+  .assistant-attach-btn:hover { border-color: var(--accent); color: var(--accent); background: var(--bg-warm); }
   .assistant-empty {
     margin: auto;
     text-align: center;
@@ -3016,144 +3042,130 @@
   }
   .app.reading-mode .reading-progress { display: block; }
 
-  /* ====== AI 助手：多会话 + 附件 ====== */
-  .assistant-layout {
-    display: flex;
-    flex: 1;
-    min-height: 0;
-    overflow: hidden;
-  }
-  .assistant-sidebar {
-    width: 200px;
-    border-right: 1px solid var(--rule);
-    display: flex;
-    flex-direction: column;
-    background: var(--bg-warm);
-    flex-shrink: 0;
-    overflow: hidden;
-  }
-  .assistant-sidebar-head {
-    padding: 10px 12px;
-    border-bottom: 1px solid var(--rule-soft);
-  }
-  .assistant-sidebar-head button {
-    width: 100%;
-    padding: 6px 12px;
-    background: var(--paper);
-    border: 1px solid var(--rule);
-    border-radius: 6px;
-    cursor: pointer;
-    font-family: 'Fraunces', 'Noto Serif SC', serif;
-    font-size: 12px;
-    color: var(--ink);
-    transition: all 0.15s;
+  /* ====== AI 助手：内嵌右侧编辑区 ====== */
+  #assistantWrap { display: none; flex-direction: column; height: 100%; overflow: hidden; }
+  .editor.assistant-active #assistantWrap { display: flex; }
+  .editor.assistant-active > *:not(#assistantWrap):not(.reading-exit-btn):not(.reading-progress) { display: none !important; }
+
+  .assistant-topbar {
     display: flex;
     align-items: center;
-    gap: 6px;
-    justify-content: center;
+    gap: 8px;
+    padding: 10px 16px;
+    border-bottom: 1px solid var(--rule-soft);
+    flex-shrink: 0;
+    background: var(--bg);
   }
-  .assistant-sidebar-head button:hover {
+  .assistant-topbar .assistant-back-btn {
+    width: 30px; height: 30px;
+    border: 1px solid var(--rule);
+    background: var(--paper);
+    border-radius: 6px;
+    cursor: pointer;
+    display: grid;
+    place-items: center;
+    color: var(--ink-soft);
+    flex-shrink: 0;
+    transition: all 0.15s;
+  }
+  .assistant-topbar .assistant-back-btn:hover { color: var(--ink); border-color: var(--ink-soft); }
+  .assistant-topbar .assistant-back-btn svg { width: 14px; height: 14px; }
+
+  .assistant-tabs {
+    flex: 1;
+    display: flex;
+    gap: 0;
+    overflow-x: auto;
+    align-items: center;
+    min-width: 0;
+  }
+  .assistant-tabs::-webkit-scrollbar { height: 0; }
+  .assistant-tab {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 5px 12px;
+    border: 1px solid var(--rule-soft);
+    border-radius: 6px;
+    margin-right: 4px;
+    cursor: pointer;
+    font-size: 12px;
+    color: var(--ink-soft);
+    white-space: nowrap;
+    flex-shrink: 0;
+    background: var(--bg-warm);
+    transition: all 0.12s;
+  }
+  .assistant-tab:hover { color: var(--ink); border-color: var(--ink-soft); }
+  .assistant-tab.active {
     background: var(--accent);
     color: #fff;
     border-color: var(--accent);
   }
-  .assistant-group-list {
-    flex: 1;
-    overflow-y: auto;
-    padding: 6px 0;
+  .assistant-tab .tab-name { max-width: 100px; overflow: hidden; text-overflow: ellipsis; }
+  .assistant-tab .tab-close {
+    width: 14px; height: 14px; border-radius: 50%;
+    display: none; place-items: center; font-size: 10px; line-height: 1;
+    color: inherit; opacity: 0.7; cursor: pointer; border: none; background: transparent;
+    margin-left: 2px;
   }
-  .assistant-group-item {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 8px 12px;
-    cursor: pointer;
-    transition: all 0.12s;
-    border-left: 3px solid transparent;
-    font-size: 13px;
-    color: var(--ink-soft);
-    position: relative;
-  }
-  .assistant-group-item:hover {
-    background: var(--rule-soft);
-    color: var(--ink);
-  }
-  .assistant-group-item.active {
-    background: var(--paper);
-    border-left-color: var(--accent);
-    color: var(--ink);
-    font-weight: 500;
-  }
-  .assistant-group-item .group-name {
-    flex: 1;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .assistant-group-item .group-meta {
-    font-family: 'JetBrains Mono', monospace;
-    font-size: 9px;
-    color: var(--ink-mute);
-    flex-shrink: 0;
-  }
-  .assistant-group-item .group-actions {
-    display: none;
-    gap: 2px;
-    flex-shrink: 0;
-  }
-  .assistant-group-item:hover .group-actions { display: flex; }
-  .assistant-group-item:hover .group-meta { display: none; }
-  .assistant-group-item .group-action-btn {
-    width: 22px;
-    height: 22px;
-    border: none;
+  .assistant-tab:hover .tab-close { display: grid; }
+  .assistant-tab .tab-close:hover { opacity: 1; background: rgba(0,0,0,0.15); }
+
+  .assistant-new-tab-btn {
+    width: 26px; height: 26px;
+    border: 1px dashed var(--rule);
+    border-radius: 6px;
     background: transparent;
-    color: var(--ink-mute);
-    border-radius: 4px;
     cursor: pointer;
     display: grid;
     place-items: center;
+    color: var(--ink-mute);
+    flex-shrink: 0;
     transition: all 0.15s;
   }
-  .assistant-group-item .group-action-btn:hover {
-    background: var(--rule);
-    color: var(--ink);
+  .assistant-new-tab-btn:hover { border-color: var(--accent); color: var(--accent); background: var(--bg-warm); }
+  .assistant-new-tab-btn svg { width: 12px; height: 12px; }
+
+  .assistant-header-actions { display: flex; gap: 4px; flex-shrink: 0; }
+  .assistant-header-actions button {
+    padding: 4px 10px;
+    font-size: 11px;
+    border: 1px solid var(--rule);
+    background: transparent;
+    border-radius: 4px;
+    cursor: pointer;
+    color: var(--ink-mute);
+    transition: all 0.15s;
+    white-space: nowrap;
+  }
+  .assistant-header-actions button:hover { color: var(--ink); border-color: var(--ink-soft); }
+
+  #assistantWrap .assistant-chat {
+    flex: 1;
+    overflow-y: auto;
+    padding: 16px 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    background: var(--bg);
+    min-height: 0;
   }
 
-  /* 附件区 */
-  .assistant-attach-row {
+  #assistantWrap .assistant-attach-row {
     display: flex;
     align-items: center;
     gap: 6px;
-    padding: 4px 16px;
-    min-height: 28px;
+    padding: 2px 16px 0;
+    min-height: 0;
     flex-wrap: wrap;
   }
-  .attach-btn {
-    width: 28px;
-    height: 28px;
-    border: 1px dashed var(--rule);
-    background: transparent;
-    border-radius: 6px;
-    cursor: pointer;
-    display: grid;
-    place-items: center;
-    color: var(--ink-mute);
-    transition: all 0.15s;
-    flex-shrink: 0;
-    font-size: 14px;
-    line-height: 1;
-  }
-  .attach-btn:hover {
-    border-color: var(--accent);
-    color: var(--accent);
-    background: var(--bg-warm);
-  }
+  #assistantWrap .assistant-attach-row:empty { display: none; }
   .attach-pill {
     display: inline-flex;
     align-items: center;
     gap: 4px;
-    padding: 3px 8px;
+    padding: 2px 8px;
     background: var(--bg-warm);
     border: 1px solid var(--rule);
     border-radius: 4px;
@@ -3162,107 +3174,44 @@
     cursor: pointer;
     transition: all 0.15s;
   }
-  .attach-pill:hover {
-    border-color: var(--accent);
-    color: var(--accent);
-  }
-  .msg-attachments {
-    margin-top: 6px;
-    display: flex;
-    flex-wrap: wrap;
-    gap: 4px;
-  }
-  .msg-attach-pill {
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-    padding: 2px 8px;
-    background: var(--bg-warm);
-    border: 1px solid var(--rule-soft);
-    border-radius: 4px;
-    font-size: 10px;
-    color: var(--ink-mute);
-    cursor: pointer;
-    transition: all 0.15s;
-  }
-  .msg-attach-pill:hover {
-    border-color: var(--accent);
-    color: var(--accent);
-  }
+  .attach-pill:hover { border-color: var(--accent); color: var(--accent); }
 
-  /* 附件选择器 */
+  .msg-attachments { margin-top: 6px; display: flex; flex-wrap: wrap; gap: 4px; }
+  .msg-attach-pill {
+    display: inline-flex; align-items: center; gap: 4px;
+    padding: 2px 8px; background: var(--bg-warm); border: 1px solid var(--rule-soft);
+    border-radius: 4px; font-size: 10px; color: var(--ink-mute); cursor: pointer; transition: all 0.15s;
+  }
+  .msg-attach-pill:hover { border-color: var(--accent); color: var(--accent); }
+
   .attach-picker-bg {
-    position: fixed;
-    inset: 0;
-    z-index: 2000;
-    background: rgba(26, 24, 20, 0.4);
-    display: none;
-    align-items: center;
-    justify-content: center;
+    position: fixed; inset: 0; z-index: 2000;
+    background: rgba(26, 24, 20, 0.4); display: none; align-items: center; justify-content: center;
   }
   .attach-picker-bg.show { display: flex; }
   .attach-picker {
-    background: var(--paper);
-    border: 1px solid var(--rule);
-    border-radius: 12px;
-    box-shadow: var(--shadow-deep);
-    width: 420px;
-    max-width: 92vw;
-    max-height: 70vh;
-    display: flex;
-    flex-direction: column;
-    overflow: hidden;
+    background: var(--paper); border: 1px solid var(--rule); border-radius: 12px;
+    box-shadow: var(--shadow-deep); width: 420px; max-width: 92vw; max-height: 70vh;
+    display: flex; flex-direction: column; overflow: hidden;
   }
   .attach-picker-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 14px 18px;
-    border-bottom: 1px solid var(--rule-soft);
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 14px 18px; border-bottom: 1px solid var(--rule-soft);
   }
   .attach-picker-header h4 { margin: 0; font-size: 15px; }
-  .attach-picker-list {
-    flex: 1;
-    overflow-y: auto;
-    padding: 8px;
-  }
-  .attach-picker-section {
-    margin-bottom: 12px;
-  }
+  .attach-picker-list { flex: 1; overflow-y: auto; padding: 8px; }
+  .attach-picker-section { margin-bottom: 12px; }
   .attach-picker-title {
-    font-family: 'JetBrains Mono', monospace;
-    font-size: 10px;
-    color: var(--ink-mute);
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-    padding: 4px 8px;
-    margin-bottom: 4px;
+    font-family: 'JetBrains Mono', monospace; font-size: 10px; color: var(--ink-mute);
+    letter-spacing: 0.08em; text-transform: uppercase; padding: 4px 8px; margin-bottom: 4px;
   }
-  .attach-picker-empty {
-    padding: 12px 8px;
-    color: var(--ink-mute);
-    font-style: italic;
-    font-size: 13px;
-  }
+  .attach-picker-empty { padding: 12px 8px; color: var(--ink-mute); font-style: italic; font-size: 13px; }
   .attach-picker-item {
-    padding: 8px 12px;
-    border-radius: 6px;
-    cursor: pointer;
-    font-size: 13px;
-    color: var(--ink);
-    transition: all 0.12s;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
+    padding: 8px 12px; border-radius: 6px; cursor: pointer; font-size: 13px;
+    color: var(--ink); transition: all 0.12s; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   }
-  .attach-picker-item:hover {
-    background: var(--bg-warm);
-  }
-  .attach-picker-item.selected {
-    background: var(--bg-warm);
-    color: var(--accent);
-    font-weight: 500;
-  }
+  .attach-picker-item:hover { background: var(--bg-warm); }
+  .attach-picker-item.selected { background: var(--bg-warm); color: var(--accent); font-weight: 500; }
 </style>
 </head>
 <body>
@@ -3691,6 +3640,28 @@
         <div class="preview" id="todoPreview" style="display:none"></div>
       </div>
     </div>
+    <!-- AI 助手内嵌面板 -->
+    <div id="assistantWrap">
+      <div class="assistant-topbar">
+        <button class="assistant-back-btn" id="assistantBackBtn" title="返回编辑器">
+          <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M15 18l-6-6 6-6"/></svg>
+        </button>
+        <div class="assistant-tabs" id="assistantTabs"></div>
+        <button class="assistant-new-tab-btn" id="assistantNewGroupBtn" title="新建对话">
+          <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" d="M12 5v14M5 12h14"/></svg>
+        </button>
+        <div class="assistant-header-actions">
+          <button id="assistantClearBtn">清空</button>
+        </div>
+      </div>
+      <div class="assistant-chat" id="assistantChat"></div>
+      <div class="assistant-attach-row" id="assistantAttachments"></div>
+      <div class="assistant-input-row" id="assistantInputRow">
+        <button class="assistant-attach-btn" id="assistantAttachBtn" title="附加笔记或待办">📎</button>
+        <textarea id="assistantInput" rows="2" placeholder="例如：帮我新建待办「查阅机票」，明天 15:00 完成，提前 2 小时提醒"></textarea>
+        <button class="assistant-send-btn" id="assistantSendBtn">发送</button>
+      </div>
+    </div>
   </main>
 </div>
 
@@ -3936,41 +3907,6 @@
     </div>
     <div class="settings-footer">
       <button class="modal-btn primary" id="settingsModalClose">完成</button>
-    </div>
-  </div>
-</div>
-
-<!-- AI 助手模态框 -->
-<div class="modal-bg" id="assistantModalBg">
-  <div class="modal assistant-modal" style="max-width: 880px; width: 94vw; max-height: 88vh; display:flex; flex-direction:column; padding:0; overflow:hidden;">
-    <div class="settings-header">
-      <h3 style="margin:0;">AI 助手</h3>
-      <div style="display:flex; gap:6px; align-items:center;">
-        <button class="modal-btn" id="assistantClearBtn" style="padding:4px 10px; font-size:11px;">清空对话</button>
-        <button class="settings-close-x" id="assistantCloseX" aria-label="关闭">×</button>
-      </div>
-    </div>
-    <div class="assistant-layout">
-      <!-- 会话组侧栏 -->
-      <div class="assistant-sidebar">
-        <div class="assistant-sidebar-head">
-          <button id="assistantNewGroupBtn">
-            <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" style="width:14px;height:14px"><path stroke-linecap="round" d="M12 5v14M5 12h14"/></svg>
-            新对话
-          </button>
-        </div>
-        <div class="assistant-group-list" id="assistantGroupList"></div>
-      </div>
-      <!-- 聊天区 -->
-      <div style="flex:1; display:flex; flex-direction:column; min-width:0; min-height:0;">
-        <div class="assistant-chat" id="assistantChat"></div>
-        <div class="assistant-attach-row" id="assistantAttachments"></div>
-        <div class="assistant-input-row">
-          <button class="attach-btn" id="assistantAttachBtn" title="附加笔记或待办">📎</button>
-          <textarea id="assistantInput" rows="2" placeholder="例如：帮我新建待办「查阅机票」，明天 15:00 完成，提前 2 小时提醒"></textarea>
-          <button class="modal-btn primary" id="assistantSendBtn">发送</button>
-        </div>
-      </div>
     </div>
   </div>
 </div>
