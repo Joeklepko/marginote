@@ -644,10 +644,10 @@ function bindAssistantUi() {
     if (!rail || !app) return;
     const getRailId = (el) => {
       if (el.dataset.view) return 'view:' + el.dataset.view;
-      const nb = el.closest('[data-nb-id]');
-      if (nb) return 'nb:' + nb.dataset.nbId;
-      const fd = el.closest('[data-folder-id]');
-      if (fd) return 'folder:' + fd.dataset.folderId;
+      const nb = el.closest('[data-nb]');
+      if (nb && nb.dataset.nb) return 'nb:' + nb.dataset.nb;
+      const fd = el.closest('[data-folder]');
+      if (fd && fd.dataset.folder) return 'folder:' + fd.dataset.folder;
       return null;
     };
     rail.addEventListener('click', (e) => {

@@ -592,19 +592,10 @@
   }
 
   /* ====== 折叠中侧栏（双击 rail 项切换） ====== */
-  .app.sidebar-collapsed { grid-template-columns: 248px 42px 1fr; }
-  .app.rail-collapsed.sidebar-collapsed { grid-template-columns: 52px 42px 1fr; }
-  .app.sidebar-collapsed .sidebar-head { padding: 10px 6px; border-bottom: none; }
-  .app.sidebar-collapsed .masthead { margin-bottom: 0; justify-content: center; }
-  .app.sidebar-collapsed .masthead-title,
-  .app.sidebar-collapsed .issue-no,
-  .app.sidebar-collapsed .meta-line,
-  .app.sidebar-collapsed .search-row,
-  .app.sidebar-collapsed .new-note-btn,
-  .app.sidebar-collapsed .filter-tabs,
-  .app.sidebar-collapsed .list-controls,
-  .app.sidebar-collapsed .notes-list,
-  .app.sidebar-collapsed .todo-panel { display: none !important; }
+  .app.sidebar-collapsed { grid-template-columns: 248px 0px 1fr; }
+  .app.rail-collapsed.sidebar-collapsed { grid-template-columns: 52px 0px 1fr; }
+  .app.sidebar-collapsed .sidebar { overflow: hidden; min-width: 0; }
+  .app.sidebar-collapsed .sidebar > * { display: none !important; }
 
   .masthead {
     display: flex;
