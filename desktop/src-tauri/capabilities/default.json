@@ -15,15 +15,6 @@
 
     "core:event:default",
 
-    "store:default",
-    "store:allow-get",
-    "store:allow-set",
-    "store:allow-save",
-    "store:allow-load",
-    "store:allow-delete",
-    "store:allow-keys",
-    "store:allow-entries",
-
     "notification:default",
     "notification:allow-notify",
     "notification:allow-is-permission-granted",

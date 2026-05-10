@@ -4,6 +4,8 @@
 use tauri::Manager;
 
 mod commands;
+mod scheduler;
+mod storage;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -16,7 +18,6 @@ pub fn run() {
                 let _ = w.set_focus();
             }
         }))
-        .plugin(tauri_plugin_store::Builder::default().build())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_shell::init())
@@ -34,6 +35,10 @@ pub fn run() {
             commands::cmd_alarm_list,
             commands::cmd_window_focus,
             commands::cmd_window_hide,
+            commands::cmd_kv_get,
+            commands::cmd_kv_set,
+            commands::cmd_kv_remove,
+            commands::cmd_kv_keys,
         ])
         .setup(|_app| {
             // P3 在此挂载 alarm scheduler 恢复；P4 挂载托盘
