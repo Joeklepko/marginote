@@ -42,7 +42,7 @@
       "nsis": {
         "installerIcon": "icons/icon.ico",
         "installMode": "currentUser",
-        "languages": ["SimplifiedChinese", "English"],
+        "languages": ["English"],
         "displayLanguageSelector": false
       }
     },
