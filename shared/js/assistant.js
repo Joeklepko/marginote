@@ -62,7 +62,7 @@ function createAssistantGroup(name) {
   assistantGroups.unshift(g);
   assistantActiveGroupId = g.id;
   saveAssistantGroups();
-  renderAssistantTabs();
+  renderAssistantGroups();
   renderAssistantChat();
   return g;
 }
@@ -77,7 +77,7 @@ function deleteAssistantGroup(id) {
     assistantActiveGroupId = assistantGroups[0].id;
   }
   saveAssistantGroups();
-  renderAssistantTabs();
+  renderAssistantGroups();
   renderAssistantChat();
 }
 
@@ -85,7 +85,7 @@ function renameAssistantGroup(id, name) {
   const g = assistantGroups.find(x => x.id === id);
   if (g) { g.name = String(name || '未命名').trim(); }
   saveAssistantGroups();
-  renderAssistantTabs();
+  renderAssistantGroups();
 }
 
 function clearActiveGroupHistory() {
@@ -124,10 +124,8 @@ function renderPendingAttachments() {
     return;
   }
   el.innerHTML = pendingAttachments.map((a, i) => {
-    const icon = a.type === 'note' ?
-      '<svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24" style="width:10px;height:10px"><path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 12h16M4 18h12"/></svg>' :
-      '<svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24" style="width:10px;height:10px"><path stroke-linecap="round" stroke-linejoin="round" d="M9 11l3 3L22 4"/></svg>';
-    return `<span class="attach-pill" title="点击移除 ${escapeHtml(a.title)}" data-remove="${i}">${icon} ${escapeHtml(a.title.slice(0, 18))}${a.title.length > 18 ? '…' : ''} ×</span>`;
+    const badge = a.type === 'note' ? '<span class="attach-type-badge note">md</span>' : '<span class="attach-type-badge todo">✓</span>';
+    return `<span class="attach-pill" title="${escapeHtml(a.type === 'note' ? '笔记' : '待办')}: ${escapeHtml(a.title)} — 点击移除" data-remove="${i}">${badge}${escapeHtml(a.title.slice(0, 24))}${a.title.length > 24 ? '…' : ''}</span>`;
   }).join('');
   el.querySelectorAll('.attach-pill').forEach(pill => {
     pill.addEventListener('click', () => removePendingAttachment(parseInt(pill.dataset.remove)));
@@ -382,8 +380,8 @@ function renderAssistantMessage(m) {
   if (m.attachments && m.attachments.length) {
     html += '<div class="msg-attachments">';
     for (const a of m.attachments) {
-      const icon = a.type === 'note' ? '<svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24" style="width:10px;height:10px"><path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 12h16M4 18h12"/></svg>' : '<svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24" style="width:10px;height:10px"><path stroke-linecap="round" stroke-linejoin="round" d="M9 11l3 3L22 4"/></svg>';
-      html += `<span class="msg-attach-pill">${icon} ${escapeHtml(a.title.slice(0, 30))}</span>`;
+      const badge = a.type === 'note' ? '<span class="attach-type-badge note">md</span>' : '<span class="attach-type-badge todo">✓</span>';
+      html += `<span class="msg-attach-pill" title="${escapeHtml(a.type === 'note' ? '笔记' : '待办')}: ${escapeHtml(a.title)}">${badge}${escapeHtml(a.title.slice(0, 30))}</span>`;
     }
     html += '</div>';
   }
@@ -497,48 +495,60 @@ async function runAssistantTurn(userInput) {
   }
 }
 
-// ===================== 会话标签渲染 =====================
+// ===================== 会话列表渲染（竖列侧栏） =====================
 
-function renderAssistantTabs() {
-  const el = document.getElementById('assistantTabs');
+function renderAssistantGroups() {
+  const el = document.getElementById('assistantGroupList');
   if (!el) return;
   const active = assistantActiveGroupId;
   el.innerHTML = assistantGroups.map(g => {
     const isActive = g.id === active;
-    return `<div class="assistant-tab ${isActive ? 'active' : ''}" data-gid="${escapeHtml(g.id)}">
-      <span class="tab-name" title="${escapeHtml(g.name || '默认对话')}">${escapeHtml(g.name || '默认对话')}</span>
-      <button class="tab-close" data-action="delete" title="删除对话">×</button>
+    const msgCount = (g.messages || []).length;
+    return `<div class="assistant-group-item ${isActive ? 'active' : ''}" data-gid="${escapeHtml(g.id)}">
+      <span class="group-name" title="${escapeHtml(g.name || '默认对话')}">${escapeHtml(g.name || '默认对话')}</span>
+      <span class="group-meta">${msgCount}</span>
+      <span class="group-actions">
+        <button class="group-action-btn" data-action="rename" title="重命名">
+          <svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path stroke-linecap="round" stroke-linejoin="round" d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+        </button>
+        <button class="group-action-btn" data-action="delete" title="删除">
+          <svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.87 12.14A2 2 0 0116.14 21H7.86a2 2 0 01-1.99-1.86L5 7m5 4v6m4-6v6M3 7h18M9 7V4a1 1 0 011-1h4a1 1 0 011 1v3"/></svg>
+        </button>
+      </span>
     </div>`;
   }).join('');
 
-  el.querySelectorAll('.assistant-tab').forEach(tab => {
-    tab.addEventListener('click', (e) => {
-      if (e.target.closest('.tab-close')) return;
-      const gid = tab.dataset.gid;
+  el.querySelectorAll('.assistant-group-item').forEach(item => {
+    item.addEventListener('click', (e) => {
+      if (e.target.closest('.group-action-btn')) return;
+      const gid = item.dataset.gid;
       if (gid && gid !== assistantActiveGroupId) {
         assistantActiveGroupId = gid;
         clearPendingAttachments();
-        renderAssistantTabs();
+        renderAssistantGroups();
         renderAssistantChat();
       }
     });
-    tab.addEventListener('dblclick', (e) => {
-      if (e.target.closest('.tab-close')) return;
-      const gid = tab.dataset.gid;
+  });
+
+  el.querySelectorAll('.group-action-btn[data-action="rename"]').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const gid = btn.closest('.assistant-group-item')?.dataset.gid;
+      if (!gid) return;
       const g = assistantGroups.find(x => x.id === gid);
       if (!g) return;
-      const newName = prompt('重命名对话：', g.name || '');
+      const newName = prompt('新名称：', g.name || '');
       if (newName !== null && newName.trim()) renameAssistantGroup(gid, newName.trim());
     });
   });
 
-  el.querySelectorAll('.tab-close').forEach(btn => {
+  el.querySelectorAll('.group-action-btn[data-action="delete"]').forEach(btn => {
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
-      const gid = btn.closest('.assistant-tab')?.dataset.gid;
+      const gid = btn.closest('.assistant-group-item')?.dataset.gid;
       if (!gid) return;
-      if (assistantGroups.length <= 1) { showToast('至少保留一个对话'); return; }
-      if (confirm('删除这个对话？')) deleteAssistantGroup(gid);
+      if (confirm('确定删除这个对话？')) deleteAssistantGroup(gid);
     });
   });
 }
@@ -549,7 +559,7 @@ function showAssistantPanel() {
   const editor = document.querySelector('.editor');
   if (!editor) return;
   editor.classList.add('assistant-active');
-  renderAssistantTabs();
+  renderAssistantGroups();
   renderAssistantChat();
   renderPendingAttachments();
   setTimeout(() => document.getElementById('assistantInput')?.focus(), 100);

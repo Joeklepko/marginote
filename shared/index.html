@@ -3106,150 +3106,117 @@
   }
   .app.reading-mode .reading-progress { display: block; }
 
-  /* ====== AI 助手：内嵌右侧编辑区 ====== */
+  /* ====== AI 助手：内嵌右侧编辑区 + 竖列侧栏 ====== */
   #assistantWrap { display: none; flex-direction: column; height: 100%; overflow: hidden; }
   .editor.assistant-active #assistantWrap { display: flex; }
   .editor.assistant-active > *:not(#assistantWrap):not(.reading-exit-btn):not(.reading-progress) { display: none !important; }
 
   .assistant-topbar {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 10px 16px;
-    border-bottom: 1px solid var(--rule-soft);
-    flex-shrink: 0;
-    background: var(--bg);
+    display: flex; align-items: center; gap: 8px;
+    padding: 8px 14px; border-bottom: 1px solid var(--rule-soft);
+    flex-shrink: 0; background: var(--bg);
   }
+  .assistant-title { font-size: 14px; font-weight: 600; color: var(--ink); flex: 1; }
   .assistant-topbar .assistant-back-btn {
-    width: 30px; height: 30px;
-    border: 1px solid var(--rule);
-    background: var(--paper);
-    border-radius: 6px;
-    cursor: pointer;
-    display: grid;
-    place-items: center;
-    color: var(--ink-soft);
-    flex-shrink: 0;
-    transition: all 0.15s;
+    width: 28px; height: 28px; border: 1px solid var(--rule);
+    background: var(--paper); border-radius: 6px; cursor: pointer;
+    display: grid; place-items: center; color: var(--ink-soft); flex-shrink: 0; transition: all 0.15s;
   }
   .assistant-topbar .assistant-back-btn:hover { color: var(--ink); border-color: var(--ink-soft); }
   .assistant-topbar .assistant-back-btn svg { width: 14px; height: 14px; }
 
-  /* 会话标签 */
-  .assistant-tabs {
-    flex: 1;
-    display: flex;
-    gap: 0;
-    overflow-x: auto;
-    align-items: center;
-    min-width: 0;
-  }
-  .assistant-tabs::-webkit-scrollbar { height: 0; }
-  .assistant-tab {
-    display: flex;
-    align-items: center;
-    gap: 4px;
-    padding: 5px 12px;
-    border: 1px solid var(--rule-soft);
-    border-radius: 6px;
-    margin-right: 4px;
-    cursor: pointer;
-    font-size: 12px;
-    color: var(--ink-soft);
-    white-space: nowrap;
-    flex-shrink: 0;
-    background: var(--bg-warm);
-    transition: all 0.12s;
-  }
-  .assistant-tab:hover { color: var(--ink); border-color: var(--ink-soft); }
-  .assistant-tab.active {
-    background: var(--accent);
-    color: #fff;
-    border-color: var(--accent);
-  }
-  .assistant-tab .tab-name { max-width: 100px; overflow: hidden; text-overflow: ellipsis; }
-  .assistant-tab .tab-close {
-    width: 14px; height: 14px; border-radius: 50%;
-    display: none; place-items: center; font-size: 10px; line-height: 1;
-    color: inherit; opacity: 0.7; cursor: pointer; border: none; background: transparent;
-    margin-left: 2px;
-  }
-  .assistant-tab:hover .tab-close { display: grid; }
-  .assistant-tab .tab-close:hover { opacity: 1; background: rgba(0,0,0,0.15); }
-
-  /* 新建对话小按钮 */
-  .assistant-new-tab-btn {
-    width: 26px; height: 26px;
-    border: 1px dashed var(--rule);
-    border-radius: 6px;
-    background: transparent;
-    cursor: pointer;
-    display: grid;
-    place-items: center;
-    color: var(--ink-mute);
-    flex-shrink: 0;
-    transition: all 0.15s;
-  }
-  .assistant-new-tab-btn:hover { border-color: var(--accent); color: var(--accent); background: var(--bg-warm); }
-  .assistant-new-tab-btn svg { width: 12px; height: 12px; }
-
   .assistant-header-actions { display: flex; gap: 4px; flex-shrink: 0; }
   .assistant-header-actions button {
-    padding: 4px 10px;
-    font-size: 11px;
-    border: 1px solid var(--rule);
-    background: transparent;
-    border-radius: 4px;
-    cursor: pointer;
-    color: var(--ink-mute);
-    transition: all 0.15s;
-    white-space: nowrap;
+    padding: 4px 10px; font-size: 11px; border: 1px solid var(--rule);
+    background: transparent; border-radius: 4px; cursor: pointer;
+    color: var(--ink-mute); transition: all 0.15s; white-space: nowrap;
   }
   .assistant-header-actions button:hover { color: var(--ink); border-color: var(--ink-soft); }
 
-  /* 聊天区（内嵌版） */
+  /* 主体：侧栏 + 聊天区 */
+  .assistant-body { display: flex; flex: 1; min-height: 0; overflow: hidden; }
+
+  .assistant-sidebar {
+    width: 160px; border-right: 1px solid var(--rule);
+    display: flex; flex-direction: column; background: var(--bg-warm);
+    flex-shrink: 0; overflow: hidden; font-size: 12px;
+  }
+  .assistant-sidebar-head { padding: 8px 10px; border-bottom: 1px solid var(--rule-soft); }
+  .assistant-sidebar-head button {
+    width: 100%; padding: 5px 8px; background: var(--paper);
+    border: 1px solid var(--rule); border-radius: 5px; cursor: pointer;
+    font-size: 11px; color: var(--ink-soft); display: flex; align-items: center;
+    gap: 4px; justify-content: center; transition: all 0.12s;
+  }
+  .assistant-sidebar-head button:hover { color: var(--accent); border-color: var(--accent); background: var(--bg-warm); }
+  .assistant-sidebar-head button svg { width: 11px; height: 11px; }
+
+  .assistant-group-list { flex: 1; overflow-y: auto; padding: 4px 0; }
+  .assistant-group-item {
+    display: flex; align-items: center; gap: 6px; padding: 7px 10px;
+    cursor: pointer; transition: all 0.12s; border-left: 3px solid transparent;
+    font-size: 12px; color: var(--ink-soft); position: relative;
+  }
+  .assistant-group-item:hover { background: var(--rule-soft); color: var(--ink); }
+  .assistant-group-item.active { background: var(--paper); border-left-color: var(--accent); color: var(--ink); font-weight: 500; }
+  .assistant-group-item .group-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .assistant-group-item .group-meta {
+    font-size: 9px; color: var(--ink-mute); flex-shrink: 0;
+    font-family: 'JetBrains Mono', monospace;
+  }
+  .assistant-group-item .group-actions { display: none; gap: 2px; flex-shrink: 0; }
+  .assistant-group-item:hover .group-actions { display: flex; }
+  .assistant-group-item:hover .group-meta { display: none; }
+  .assistant-group-item .group-action-btn {
+    width: 20px; height: 20px; border: none; background: transparent;
+    color: var(--ink-mute); border-radius: 3px; cursor: pointer;
+    display: grid; place-items: center; transition: all 0.12s;
+  }
+  .assistant-group-item .group-action-btn:hover { background: var(--rule); color: var(--ink); }
+  .assistant-group-item .group-action-btn svg { width: 10px; height: 10px; }
+
+  .assistant-main { flex: 1; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+
   #assistantWrap .assistant-chat {
-    flex: 1;
-    overflow-y: auto;
-    padding: 16px 20px;
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-    background: var(--bg);
-    min-height: 0;
+    flex: 1; overflow-y: auto; padding: 14px 18px;
+    display: flex; flex-direction: column; gap: 12px;
+    background: var(--bg); min-height: 0;
   }
 
-  /* 附件区 — 内嵌在输入行上方，紧凑一行 */
   #assistantWrap .assistant-attach-row {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    padding: 2px 16px 0;
-    min-height: 0;
-    flex-wrap: wrap;
+    display: flex; align-items: center; gap: 6px;
+    padding: 2px 16px 0; min-height: 0; flex-wrap: wrap;
   }
   #assistantWrap .assistant-attach-row:empty { display: none; }
+
+  /* 附件标签 */
   .attach-pill {
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-    padding: 2px 8px;
-    background: var(--bg-warm);
-    border: 1px solid var(--rule);
-    border-radius: 4px;
-    font-size: 11px;
-    color: var(--ink-soft);
-    cursor: pointer;
-    transition: all 0.15s;
+    display: inline-flex; align-items: center; gap: 4px;
+    padding: 2px 8px 2px 4px; background: var(--bg-warm);
+    border: 1px solid var(--rule); border-radius: 4px;
+    font-size: 11px; color: var(--ink-soft); cursor: pointer; transition: all 0.12s;
+    line-height: 1.4;
   }
   .attach-pill:hover { border-color: var(--accent); color: var(--accent); }
 
-  /* 消息里的附件标签 */
+  .attach-type-badge {
+    display: inline-flex; align-items: center; justify-content: center;
+    min-width: 18px; height: 16px; border-radius: 3px; font-size: 9px;
+    font-weight: 600; letter-spacing: 0.02em; padding: 0 4px; flex-shrink: 0;
+    font-family: 'JetBrains Mono', monospace; line-height: 1;
+  }
+  .attach-type-badge.note { background: #dbeafe; color: #1d4ed8; }
+  .attach-type-badge.todo { background: #dcfce7; color: #166534; }
+  body[data-theme="dark"] .attach-type-badge.note { background: #1e3a5f; color: #93c5fd; }
+  body[data-theme="dark"] .attach-type-badge.todo { background: #14532d; color: #86efac; }
+
   .msg-attachments { margin-top: 6px; display: flex; flex-wrap: wrap; gap: 4px; }
   .msg-attach-pill {
     display: inline-flex; align-items: center; gap: 4px;
-    padding: 2px 8px; background: var(--bg-warm); border: 1px solid var(--rule-soft);
-    border-radius: 4px; font-size: 10px; color: var(--ink-mute); cursor: pointer; transition: all 0.15s;
+    padding: 2px 8px 2px 4px; background: var(--bg-warm);
+    border: 1px solid var(--rule-soft); border-radius: 4px;
+    font-size: 10px; color: var(--ink-mute); cursor: default; transition: all 0.12s;
+    line-height: 1.4;
   }
   .msg-attach-pill:hover { border-color: var(--accent); color: var(--accent); }
 
@@ -3282,7 +3249,7 @@
   }
   .attach-picker-item:hover { background: var(--bg-warm); }
   .attach-picker-item.selected { background: var(--bg-warm); color: var(--accent); font-weight: 500; }
-</style>
+
 </head>
 <body>
 
@@ -3713,20 +3680,32 @@
         <button class="assistant-back-btn" id="assistantBackBtn" title="返回编辑器">
           <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M15 18l-6-6 6-6"/></svg>
         </button>
-        <div class="assistant-tabs" id="assistantTabs"></div>
-        <button class="assistant-new-tab-btn" id="assistantNewGroupBtn" title="新建对话">
-          <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" d="M12 5v14M5 12h14"/></svg>
-        </button>
+        <span class="assistant-title">AI 助手</span>
         <div class="assistant-header-actions">
           <button id="assistantClearBtn">清空</button>
         </div>
       </div>
-      <div class="assistant-chat" id="assistantChat"></div>
-      <div class="assistant-attach-row" id="assistantAttachments"></div>
-      <div class="assistant-input-row" id="assistantInputRow">
-        <button class="assistant-attach-btn" id="assistantAttachBtn" title="附加笔记或待办">📎</button>
-        <textarea id="assistantInput" rows="2" placeholder="例如：帮我新建待办「查阅机票」，明天 15:00 完成，提前 2 小时提醒"></textarea>
-        <button class="assistant-send-btn" id="assistantSendBtn">发送</button>
+      <div class="assistant-body">
+        <div class="assistant-sidebar" id="assistantSidebar">
+          <div class="assistant-sidebar-head">
+            <button id="assistantNewGroupBtn" title="新建对话">
+              <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" d="M12 5v14M5 12h14"/></svg>
+              新对话
+            </button>
+          </div>
+          <div class="assistant-group-list" id="assistantGroupList"></div>
+        </div>
+        <div class="assistant-main">
+          <div class="assistant-chat" id="assistantChat"></div>
+          <div class="assistant-attach-row" id="assistantAttachments"></div>
+          <div class="assistant-input-row" id="assistantInputRow">
+            <button class="assistant-attach-btn" id="assistantAttachBtn" title="附加笔记或待办">
+              <svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24" style="width:16px;height:16px"><path stroke-linecap="round" stroke-linejoin="round" d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48"/></svg>
+            </button>
+            <textarea id="assistantInput" rows="2" placeholder="例如：帮我新建待办「查阅机票」，明天 15:00 完成，提前 2 小时提醒"></textarea>
+            <button class="assistant-send-btn" id="assistantSendBtn">发送</button>
+          </div>
+        </div>
       </div>
     </div>
   </main>
