@@ -167,6 +167,11 @@ function renderThemeGrid() {
         </div>
       </div>`;
   }).join('');
+  // 兜底：JS 强制背景色
+  grid.querySelectorAll('.theme-card-swatch').forEach(el => {
+    const c = el.style.background;
+    if (c && c !== '') el.style.setProperty('background-color', c, 'important');
+  });
   grid.querySelectorAll('.theme-card').forEach(el => {
     el.addEventListener('click', () => {
       applyTheme(el.dataset.theme);
