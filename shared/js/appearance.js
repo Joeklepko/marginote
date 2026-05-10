@@ -207,7 +207,7 @@ function applyFont(name) {
     _fontStyleEl.id = 'marginote-font-overrides';
     document.head.appendChild(_fontStyleEl);
   }
-  _fontStyleEl.textContent = `
+  _fontStyleEl.innerHTML = `
     body, button, input, select, textarea,
     .note-title, .note-preview, .note-date,
     .todo-text, .todo-meta,
