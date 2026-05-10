@@ -212,14 +212,16 @@ const FONT_PRESETS = {
 let _fontStyleEl = null;
 function applyFont(name) {
   const stack = FONT_PRESETS[name] || FONT_PRESETS.serif;
-  // WebView2 (Tauri 2 release) 有时不会对已存在 <style> 的 innerHTML 重新触发样式重算。
-  // 每次 remove + 重建一次，强制走完整的 stylesheet 解析路径。
+  // WebView2 在 Tauri 2 release 下对 <style> 的 textContent 偶发不重算样式；
+  // 关键是必须 (a) 重新创建 <style>，(b) 先 appendChild 再 innerHTML（不是反过来）。
+  // 参 12b5cee：textContent 路径会 CSSOM 损坏，innerHTML 路径稳定。
   if (_fontStyleEl && _fontStyleEl.parentNode) {
     _fontStyleEl.parentNode.removeChild(_fontStyleEl);
   }
   _fontStyleEl = document.createElement('style');
   _fontStyleEl.id = 'marginote-font-overrides';
-  _fontStyleEl.textContent = `
+  document.head.appendChild(_fontStyleEl);
+  _fontStyleEl.innerHTML = `
     body, button, input, select, textarea,
     .note-title, .note-preview, .note-date,
     .todo-text, .todo-meta,
@@ -232,12 +234,31 @@ function applyFont(name) {
       font-family: ${stack} !important;
     }
   `;
-  document.head.appendChild(_fontStyleEl);
   localStorage.setItem(FONT_KEY, name);
 }
+let _fontSizeStyleEl = null;
 function applyFontSize(px) {
   const n = Math.max(13, Math.min(20, parseInt(px, 10) || 16));
   document.body.style.fontSize = n + 'px';
+  // body 的 fontSize 只对继承默认值的元素生效；编辑器、笔记标题等都有显式 font-size，
+  // 所以再写一份 !important 覆盖（按 base=16 等比缩放，保留视觉层次）。
+  const ratio = n / 16;
+  if (_fontSizeStyleEl && _fontSizeStyleEl.parentNode) {
+    _fontSizeStyleEl.parentNode.removeChild(_fontSizeStyleEl);
+  }
+  _fontSizeStyleEl = document.createElement('style');
+  _fontSizeStyleEl.id = 'marginote-font-size-overrides';
+  document.head.appendChild(_fontSizeStyleEl);
+  const r = (base) => Math.round(base * ratio * 10) / 10; // 1 位小数
+  _fontSizeStyleEl.innerHTML = `
+    .editor, .content-input, .preview { font-size: ${r(16)}px !important; }
+    .preview p, .preview li { font-size: ${r(16)}px !important; }
+    .note-title { font-size: ${r(14)}px !important; }
+    .note-preview { font-size: ${r(13)}px !important; }
+    .todo-text { font-size: ${r(14)}px !important; }
+    .meta-line, .note-date { font-size: ${r(11)}px !important; }
+    .rail-item-label { font-size: ${r(13)}px !important; }
+  `;
   localStorage.setItem(FONT_SIZE_KEY, String(n));
   const v = document.getElementById('fontSizeValue');
   if (v) v.textContent = n + 'px';

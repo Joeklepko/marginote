@@ -5,14 +5,25 @@
 (function () {
   if (typeof window === 'undefined' || !window.mn) return;
 
-  // Tauri 2 的 invoke 在 window.__TAURI__.core.invoke
-  const tauri = window.__TAURI__ || window.__TAURI_INTERNALS__;
-  if (!tauri || !tauri.core || typeof tauri.core.invoke !== 'function') {
-    console.warn('platform-desktop: window.__TAURI__.core.invoke unavailable');
+  // Tauri 2 的 invoke 入口有两种来源：
+  //   - window.__TAURI__.core.invoke    （仅当 tauri.conf.json `withGlobalTauri: true` 时存在）
+  //   - window.__TAURI_INTERNALS__.invoke（v2 始终注入；结构是 `.invoke`，不是 `.core.invoke`）
+  // 旧实现只读 `tauri.core.invoke`，在 v2 默认配置下整个 desktop 桥接会静默失败 →
+  // platform.kind 留在 'unknown'，存储信息走"独立网页"分支，标题栏不切主题，等等。
+  const T = window.__TAURI__;
+  const TI = window.__TAURI_INTERNALS__;
+  const invoke =
+    (T && T.core && typeof T.core.invoke === 'function' && T.core.invoke) ||
+    (TI && typeof TI.invoke === 'function' && TI.invoke) ||
+    null;
+  if (!invoke) {
+    console.warn('platform-desktop: invoke unavailable (neither __TAURI__.core nor __TAURI_INTERNALS__)');
     if (window.mn._readyResolve) window.mn._readyResolve();
     return;
   }
-  const invoke = tauri.core.invoke;
+  // window.* / webviewWindow.* 命名空间（仅在 withGlobalTauri:true 时挂在 __TAURI__）
+  const tauriWin = (T && T.window) || (TI && TI.window) || null;
+  const tauriWebviewWin = (T && T.webviewWindow) || (TI && TI.webviewWindow) || null;
 
   const platform = window.mn.platform;
   platform.kind = 'desktop';
@@ -99,7 +110,7 @@
     async focus() { try { await invoke('cmd_window_focus'); } catch (e) {} },
     async minimize() {
       try {
-        const w = tauri.window?.getCurrentWindow?.() || tauri.webviewWindow?.getCurrentWebviewWindow?.();
+        const w = tauriWin?.getCurrentWindow?.() || tauriWebviewWin?.getCurrentWebviewWindow?.();
         if (w) await w.minimize();
       } catch (e) {}
     },
