@@ -360,7 +360,7 @@ function renderAssistantChat() {
   if (!box) return;
   const g = getActiveGroup();
   if (!g || !g.messages.length) {
-    box.innerHTML = `<div class="assistant-empty"><div>问我点什么吧 👋</div><div class="examples"><ul style="list-style:none; padding:0;"><li data-ex="帮我新建一个待办「查阅机票」，明天15:00完成，提前2小时提醒">· 帮我新建一个待办「查阅机票」，明天15:00完成，提前2小时提醒</li><li data-ex="查一下和「内存可靠性」相关的笔记">· 查一下和「内存可靠性」相关的笔记</li><li data-ex="新建一篇笔记「会议纪要」，内容写：今天讨论了 Q3 路线图。">· 新建一篇笔记「会议纪要」，内容写：今天讨论了 Q3 路线图</li><li data-ex="列出所有未完成的待办">· 列出所有未完成的待办</li></ul></div></div>`;
+    box.innerHTML = `<div class="assistant-empty"><div>问我点什么吧 👋</div><div class="examples"><ul style="list-style:none; padding:0;"><li data-ex="帮我新建一个待办「查阅机票」，明天15:00完成，提前2小时提醒">· 帮我新建一个待办「查阅机票」，明天15:00完成，提前2小时提醒</li><li data-ex="查一下和「旅游攻略」相关的笔记">· 查一下和「旅游攻略」相关的笔记</li><li data-ex="新建一篇笔记「会议纪要」，内容写：今天讨论了 Q3 路线图。">· 新建一篇笔记「会议纪要」，内容写：今天讨论了 Q3 路线图</li><li data-ex="列出所有未完成的待办">· 列出所有未完成的待办</li></ul></div></div>`;
     box.querySelectorAll('.examples li').forEach(li => {
       li.addEventListener('click', () => { document.getElementById('assistantInput').value = li.dataset.ex || ''; document.getElementById('assistantInput').focus(); });
     });
@@ -635,6 +635,18 @@ function bindAssistantUi() {
   };
   if (notesList) notesList.addEventListener('click', autoHide);
   if (todoList) todoList.addEventListener('click', autoHide);
+
+  // 中栏折叠按钮
+  const sidebarCollapse = document.getElementById('sidebarCollapseBtn');
+  if (sidebarCollapse) sidebarCollapse.addEventListener('click', () => {
+    document.getElementById('app').classList.toggle('sidebar-collapsed');
+    localStorage.setItem('marginote.sidebarCollapsed',
+      document.getElementById('app').classList.contains('sidebar-collapsed') ? '1' : '0');
+  });
+  // 恢复折叠状态
+  if (localStorage.getItem('marginote.sidebarCollapsed') === '1') {
+    document.getElementById('app')?.classList.add('sidebar-collapsed');
+  }
 }
 
 if (document.readyState === 'loading') {

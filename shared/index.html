@@ -594,6 +594,37 @@
     border-bottom: 1px solid var(--rule-soft);
   }
 
+  .sidebar-collapse-btn {
+    width: 28px; height: 28px;
+    border: 1px solid var(--rule);
+    background: transparent;
+    border-radius: 5px;
+    cursor: pointer;
+    display: grid;
+    place-items: center;
+    color: var(--ink-mute);
+    flex-shrink: 0;
+    transition: all 0.15s;
+  }
+  .sidebar-collapse-btn:hover { color: var(--ink); border-color: var(--ink-soft); background: var(--bg-warm); }
+  .sidebar-collapse-btn svg { width: 14px; height: 14px; transition: transform 0.2s ease; }
+  .app.sidebar-collapsed .sidebar-collapse-btn svg { transform: rotate(180deg); }
+
+  /* ====== 折叠中侧栏 ====== */
+  .app.sidebar-collapsed { grid-template-columns: var(--rail-w, 248px) 42px 1fr; }
+  .app.rail-collapsed.sidebar-collapsed { grid-template-columns: 52px 42px 1fr; }
+  .app.sidebar-collapsed .sidebar-head { padding: 10px 6px; border-bottom: none; }
+  .app.sidebar-collapsed .masthead { margin-bottom: 0; justify-content: center; }
+  .app.sidebar-collapsed .masthead-title,
+  .app.sidebar-collapsed .issue-no,
+  .app.sidebar-collapsed .meta-line,
+  .app.sidebar-collapsed .search-row,
+  .app.sidebar-collapsed .new-note-btn,
+  .app.sidebar-collapsed .filter-tabs,
+  .app.sidebar-collapsed .list-controls,
+  .app.sidebar-collapsed .notes-list,
+  .app.sidebar-collapsed .todo-panel { display: none !important; }
+
   .masthead {
     display: flex;
     align-items: center;
@@ -3375,6 +3406,9 @@
           <span class="nb-dot" id="currentNbDot" style="background-color: var(--ink)"></span>
           <h1 id="currentCollectionName">全部笔记</h1>
         </div>
+        <button class="sidebar-collapse-btn" id="sidebarCollapseBtn" title="折叠/展开中栏">
+          <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M11 19l-7-7 7-7"/></svg>
+        </button>
         <span class="issue-no" id="issueNo">№ 001</span>
       </div>
       <div class="meta-line">
