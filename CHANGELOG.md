@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.0] - 2026-05-10
+
+### Added
+- **AI 助手多会话**：支持新建 / 切换 / 重命名 / 删除多个对话，左侧会话列表管理
+- **AI 对话附件**：对话中可附加笔记或待办事项，AI 可直接对附件内容进行操作和修改
+- **新增工具**：`update_todo`（修改待办），`update_note` 支持自动匹配附件笔记
+
+### Changed
+- 设置默认字体改为「系统默认」、默认字号改为 16px
+- Chrome 扩展改为完全自包含，无需运行 `build.sh`，下载后直接加载使用
+- AI 助手模态框宽度从 660px 扩展到 880px，适配多会话侧栏
+- 手动/说明书中已移除 build.sh 依赖
+
+### Fixed
+- 旧版单会话数据自动迁移到多会话格式
+
 ## [1.1.0-desktop] - 2026-05-10
 
 ### Added
