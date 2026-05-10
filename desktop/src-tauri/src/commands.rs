@@ -5,10 +5,16 @@
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::str::FromStr;
+use std::sync::Mutex;
 use std::time::Duration;
-use tauri::AppHandle;
+use tauri::{AppHandle, Manager};
+use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
 
 use crate::{scheduler, storage};
+
+// 当前已注册的全局快捷键（用于注销时拿到原 combo）
+static CURRENT_HOTKEY: Mutex<Option<Shortcut>> = Mutex::new(None);
 
 // ---------- 类型 ----------
 
@@ -140,6 +146,46 @@ pub async fn cmd_window_focus(window: tauri::Window) -> Result<(), String> {
 #[tauri::command]
 pub async fn cmd_window_hide(window: tauri::Window) -> Result<(), String> {
     let _ = window.hide();
+    Ok(())
+}
+
+// ---------- 全局快捷键 ----------
+
+#[tauri::command]
+pub async fn cmd_register_hotkey(app: AppHandle, combo: String) -> Result<(), String> {
+    let shortcut = Shortcut::from_str(&combo).map_err(|e| format!("invalid combo '{combo}': {e:?}"))?;
+
+    // 先注销旧的
+    {
+        let mut guard = CURRENT_HOTKEY.lock().map_err(|e| format!("lock: {e}"))?;
+        if let Some(old) = guard.take() {
+            let _ = app.global_shortcut().unregister(old);
+        }
+        *guard = Some(shortcut);
+    }
+
+    let app_clone = app.clone();
+    app.global_shortcut()
+        .on_shortcut(shortcut, move |_app, _scut, event| {
+            // 只在按下时触发，避免抬起也触发
+            if event.state == ShortcutState::Pressed {
+                if let Some(w) = app_clone.get_webview_window("main") {
+                    let _ = w.unminimize();
+                    let _ = w.show();
+                    let _ = w.set_focus();
+                }
+            }
+        })
+        .map_err(|e| format!("hotkey register fail: {e}"))?;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn cmd_unregister_hotkey(app: AppHandle) -> Result<(), String> {
+    let mut guard = CURRENT_HOTKEY.lock().map_err(|e| format!("lock: {e}"))?;
+    if let Some(old) = guard.take() {
+        let _ = app.global_shortcut().unregister(old);
+    }
     Ok(())
 }
 

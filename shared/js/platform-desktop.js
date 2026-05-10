@@ -13,7 +13,6 @@
     return;
   }
   const invoke = tauri.core.invoke;
-  const event = tauri.event;
 
   const platform = window.mn.platform;
   platform.kind = 'desktop';
@@ -122,29 +121,11 @@
       } catch (e) { console.warn('autostart fail', e); }
     },
     async registerHotkey(combo) {
-      try {
-        // P4 实现：先 unregister，再 register；按下后 invoke('cmd_window_focus')
-        if (window.mn._lastHotkey) {
-          await invoke('plugin:global-shortcut|unregister', { shortcut: window.mn._lastHotkey });
-        }
-        await invoke('plugin:global-shortcut|register', { shortcut: combo });
-        window.mn._lastHotkey = combo;
-        // 监听快捷键事件
-        if (event && !window.mn._hotkeyListenerInstalled) {
-          await event.listen('global-shortcut', () => {
-            invoke('cmd_window_focus').catch(() => {});
-          });
-          window.mn._hotkeyListenerInstalled = true;
-        }
-      } catch (e) { console.warn('hotkey register fail', e); }
+      // Rust 端处理：注册 combo + 按下时聚焦窗口
+      await invoke('cmd_register_hotkey', { combo });
     },
     async unregisterHotkey() {
-      try {
-        if (window.mn._lastHotkey) {
-          await invoke('plugin:global-shortcut|unregister', { shortcut: window.mn._lastHotkey });
-          window.mn._lastHotkey = null;
-        }
-      } catch (e) {}
+      try { await invoke('cmd_unregister_hotkey'); } catch (e) {}
     },
   };
 

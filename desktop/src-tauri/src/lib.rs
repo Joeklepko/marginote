@@ -1,11 +1,12 @@
 // Marginote 桌面版应用主体。
-// 注册 Tauri 插件、命令、设置阶段（托盘、闹钟恢复在 P3/P4 加进来）。
+// 注册 Tauri 插件、命令、托盘、关闭最小化拦截、单实例。
 
-use tauri::Manager;
+use tauri::{Manager, WindowEvent};
 
 mod commands;
 mod scheduler;
 mod storage;
+mod tray;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -21,9 +22,7 @@ pub fn run() {
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_shell::init())
-        .plugin(
-            tauri_plugin_global_shortcut::Builder::new().build(),
-        )
+        .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_autostart::init(
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
             None,
@@ -39,9 +38,24 @@ pub fn run() {
             commands::cmd_kv_set,
             commands::cmd_kv_remove,
             commands::cmd_kv_keys,
+            commands::cmd_register_hotkey,
+            commands::cmd_unregister_hotkey,
         ])
-        .setup(|_app| {
-            // P3 在此挂载 alarm scheduler 恢复；P4 挂载托盘
+        .setup(|app| {
+            // 安装托盘
+            if let Err(e) = tray::install(app.handle()) {
+                eprintln!("tray install failed: {e}");
+            }
+            // 拦截主窗口关闭按钮 → 隐藏到托盘
+            if let Some(w) = app.get_webview_window("main") {
+                let w_clone = w.clone();
+                w.on_window_event(move |event| {
+                    if let WindowEvent::CloseRequested { api, .. } = event {
+                        api.prevent_close();
+                        let _ = w_clone.hide();
+                    }
+                });
+            }
             Ok(())
         })
         .run(tauri::generate_context!())
