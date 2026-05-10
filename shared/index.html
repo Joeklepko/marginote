@@ -1453,7 +1453,31 @@
   body.is-desktop .desktop-migration-hint { display: list-item !important; }
 
   /* ====== 统一设置模态框 ====== */
-  .settings-modal { padding: 0 !important; }
+  /* 注意：layout 走 class（不再依赖 inline style），避免 WebView2 inline-style
+     解析漏洞（已知 12b5cee 修过 textContent CSSOM 损坏，inline 解析也偶发失败） */
+  .settings-modal {
+    max-width: 760px;
+    width: 92vw;
+    max-height: 88vh;
+    display: flex;
+    flex-direction: column;
+    padding: 0 !important;
+    overflow: hidden;
+  }
+  .assistant-modal {
+    max-width: 660px;
+    width: 94vw;
+    max-height: 88vh;
+    display: flex;
+    flex-direction: column;
+    padding: 0 !important;
+    overflow: hidden;
+  }
+  /* 兜底：色点/色块的 background 用 longhand，避免 WebView2 解析 background:
+     shorthand 时偶发的 inline-style 失效（JS 还会再 setProperty 一次保险） */
+  .nb-dot, .note-nb-dot, .todo-status-dot, .color-swatch, .theme-card-swatch {
+    background-color: transparent;
+  }
   .settings-header {
     display: flex;
     align-items: center;
@@ -3091,17 +3115,17 @@
       </div>
       <div class="section-body">
         <button class="rail-item todo-item-rail" data-view="todo:active">
-          <span class="todo-status-dot" style="background:#0d9488"></span>
+          <span class="todo-status-dot" data-color="#0d9488" style="background-color:#0d9488"></span>
           <span class="rail-item-label">进行中</span>
           <span class="rail-item-count" id="countTodoActive">0</span>
         </button>
         <button class="rail-item todo-item-rail" data-view="todo:done">
-          <span class="todo-status-dot" style="background:#8a8275"></span>
+          <span class="todo-status-dot" data-color="#8a8275" style="background-color:#8a8275"></span>
           <span class="rail-item-label">已完成</span>
           <span class="rail-item-count" id="countTodoDone">0</span>
         </button>
         <button class="rail-item todo-item-rail" data-view="todo:overdue">
-          <span class="todo-status-dot" style="background:#b8431f"></span>
+          <span class="todo-status-dot" data-color="#b8431f" style="background-color:#b8431f"></span>
           <span class="rail-item-label">已超期</span>
           <span class="rail-item-count" id="countTodoOverdue">0</span>
         </button>
@@ -3149,7 +3173,7 @@
     <div class="sidebar-head">
       <div class="masthead">
         <div class="masthead-title">
-          <span class="nb-dot" id="currentNbDot" style="background: var(--ink)"></span>
+          <span class="nb-dot" id="currentNbDot" style="background-color: var(--ink)"></span>
           <h1 id="currentCollectionName">全部笔记</h1>
         </div>
         <span class="issue-no" id="issueNo">№ 001</span>
@@ -3498,7 +3522,7 @@
 <!-- 主题选择模态框 -->
 <!-- 统一设置模态框 -->
 <div class="modal-bg" id="settingsModalBg">
-  <div class="modal settings-modal" style="max-width: 760px; width: 92vw; max-height: 88vh; display:flex; flex-direction:column; padding: 0;">
+  <div class="modal settings-modal">
     <div class="settings-header">
       <h3 style="margin:0;">设置</h3>
       <button class="settings-close-x" id="settingsModalCloseX" aria-label="关闭">×</button>
@@ -3738,7 +3762,7 @@
 
 <!-- AI 助手模态框 -->
 <div class="modal-bg" id="assistantModalBg">
-  <div class="modal assistant-modal" style="max-width: 660px; width: 94vw; max-height: 88vh; display:flex; flex-direction:column; padding:0;">
+  <div class="modal assistant-modal">
     <div class="settings-header">
       <h3 style="margin:0;">AI 助手</h3>
       <div style="display:flex; gap:6px; align-items:center;">

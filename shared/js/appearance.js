@@ -163,15 +163,18 @@ function renderThemeGrid() {
       <div class="theme-card ${key === currentThemePreset ? 'active' : ''}" data-theme="${key}">
         <div class="theme-card-name">${escapeHtml(t.name)}</div>
         <div class="theme-card-swatches">
-          ${swatches.map(c => `<div class="theme-card-swatch" style="background:${c}"></div>`).join('')}
+          ${swatches.map(c => `<div class="theme-card-swatch" data-color="${c}" style="background-color:${c}"></div>`).join('')}
         </div>
       </div>`;
   }).join('');
-  // 兜底：JS 强制背景色
-  grid.querySelectorAll('.theme-card-swatch').forEach(el => {
-    const c = el.style.background;
-    if (c && c !== '') el.style.setProperty('background-color', c, 'important');
-  });
+  // 兜底：JS 强制把 data-color 落到 background-color（避开 WebView2 inline 漏洞）
+  if (typeof paintDotColors === 'function') {
+    paintDotColors(grid);
+  } else {
+    grid.querySelectorAll('.theme-card-swatch[data-color]').forEach(el => {
+      el.style.setProperty('background-color', el.getAttribute('data-color'), 'important');
+    });
+  }
   grid.querySelectorAll('.theme-card').forEach(el => {
     el.addEventListener('click', () => {
       applyTheme(el.dataset.theme);
