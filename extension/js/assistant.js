@@ -625,6 +625,16 @@ function bindAssistantUi() {
       if (editor?.classList.contains('assistant-active')) { e.stopPropagation(); hideAssistantPanel(); }
     }
   });
+
+  // 用户在助手面板打开时点击笔记或待办 → 自动关闭助手
+  const notesList = document.getElementById('notesList');
+  const todoList = document.getElementById('todoList');
+  const autoHide = () => {
+    const editor = document.querySelector('.editor');
+    if (editor?.classList.contains('assistant-active')) hideAssistantPanel();
+  };
+  if (notesList) notesList.addEventListener('click', autoHide);
+  if (todoList) todoList.addEventListener('click', autoHide);
 }
 
 if (document.readyState === 'loading') {
