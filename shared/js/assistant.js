@@ -636,17 +636,33 @@ function bindAssistantUi() {
   if (notesList) notesList.addEventListener('click', autoHide);
   if (todoList) todoList.addEventListener('click', autoHide);
 
-  // 中栏折叠按钮
-  const sidebarCollapse = document.getElementById('sidebarCollapseBtn');
-  if (sidebarCollapse) sidebarCollapse.addEventListener('click', () => {
-    document.getElementById('app').classList.toggle('sidebar-collapsed');
-    localStorage.setItem('marginote.sidebarCollapsed',
-      document.getElementById('app').classList.contains('sidebar-collapsed') ? '1' : '0');
-  });
-  // 恢复折叠状态
-  if (localStorage.getItem('marginote.sidebarCollapsed') === '1') {
-    document.getElementById('app')?.classList.add('sidebar-collapsed');
-  }
+  // 中栏折叠：同一 rail 项点击两次 → 折叠/展开中侧栏，点不同的项总是展开
+  (function setupSidebarCollapse() {
+    let lastRailId = null;
+    const app = document.getElementById('app');
+    const rail = document.querySelector('.rail');
+    if (!rail || !app) return;
+    const getRailId = (el) => {
+      if (el.dataset.view) return 'view:' + el.dataset.view;
+      const nb = el.closest('[data-nb-id]');
+      if (nb) return 'nb:' + nb.dataset.nbId;
+      const fd = el.closest('[data-folder-id]');
+      if (fd) return 'folder:' + fd.dataset.folderId;
+      return null;
+    };
+    rail.addEventListener('click', (e) => {
+      const item = e.target.closest('.rail-item, .rail-folder-item');
+      if (!item) return;
+      const rid = getRailId(item);
+      if (!rid) return;
+      if (rid === lastRailId) {
+        app.classList.toggle('sidebar-collapsed');
+      } else {
+        app.classList.remove('sidebar-collapsed');
+      }
+      lastRailId = rid;
+    });
+  })();
 }
 
 if (document.readyState === 'loading') {
