@@ -29,7 +29,7 @@ pub struct FetchResponse {
 #[derive(Debug, Deserialize)]
 pub struct ProxyConfig {
     #[serde(rename = "providerHost")]
-    pub provider_host: Option<String>,
+    pub _provider_host: Option<String>,
     pub host: String,
     pub port: String,
     pub scheme: String,
