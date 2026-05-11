@@ -601,6 +601,9 @@
   .app.sidebar-collapsed .sidebar > * { display: none !important; }
 
   /* ===== AI 助手视图 ===== */
+  /* AI 分组左侧缩进，体现层级关系 */
+  .rail-assistant-groups .rail-item { padding-left: 26px; }
+  .app.rail-collapsed .rail-assistant-groups .rail-item { padding-left: 10px; }
   #aiSessionsPanel { display: none; flex-direction: column; height: 100%; overflow: hidden; }
   .app.ai-view .sidebar > *:not(#aiSessionsPanel) { display: none !important; }
   .app.ai-view #aiSessionsPanel { display: flex; }
@@ -3399,7 +3402,7 @@
           <svg class="chevron" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7"/></svg>
         </span>
       </div>
-      <div class="section-body rail-notebooks" id="notebooksList" style="overflow-y:auto; max-height:calc(100vh - 480px); min-height:60px"></div>
+      <div class="section-body rail-notebooks" id="notebooksList" style="overflow-y:auto; max-height:45vh; min-height:60px"></div>
     </div>
 
     <div class="rail-section" id="sectionAssistant" style="display:flex; flex-direction:column; min-height:0;">
@@ -3616,6 +3619,11 @@
             <svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
               <circle cx="12" cy="12" r="3" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </button>
+          <button class="icon-btn" id="htmlModeBtn" data-tip="HTML 模式（预览以网页渲染）">
+            <svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M16 18l6-6-6-6M8 6l-6 6 6 6M14 4l-4 16"/>
             </svg>
           </button>
           <button class="icon-btn" id="splitBtn" data-tip="双栏对照">
