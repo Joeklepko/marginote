@@ -583,21 +583,28 @@ function renderAssistantRail() {
       <svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24" style="width:14px;height:14px;flex-shrink:0"><path stroke-linecap="round" stroke-linejoin="round" d="M21 12c0 4.4-4 8-9 8a9.4 9.4 0 01-3.5-.7L3 21l1.5-4.3A8.3 8.3 0 013 12c0-4.4 4-8 9-8s9 3.6 9 8z"/></svg>
       <span class="rail-item-label" title="${escapeHtml(g.name)}">${escapeHtml(g.name)}</span>
       <span class="rail-item-count">${sessionCount}</span>
+      <span class="nb-actions">
+        <button data-action="edit-group" data-gid="${escapeHtml(g.id)}" title="重命名">
+          <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7M18.5 2.5a2.121 2.121 0 113 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+        </button>
+        <button data-action="delete-group" data-gid="${escapeHtml(g.id)}" title="删除">
+          <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.87 12.14A2 2 0 0116.14 21H7.86a2 2 0 01-1.99-1.86L5 7M3 7h18M9 7V4a1 1 0 011-1h4a1 1 0 011 1v3"/></svg>
+        </button>
+      </span>
     </div>`;
   }).join('');
 
-  // 右键菜单：重命名 / 删除分组
-  el.querySelectorAll('.rail-item[data-ai-group]').forEach(it => {
-    it.addEventListener('contextmenu', (e) => {
-      e.preventDefault();
-      const gid = it.dataset.aiGroup;
+  el.querySelectorAll('.rail-item[data-ai-group] button[data-action]').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const action = btn.dataset.action;
+      const gid = btn.dataset.gid;
       const g = assistantGroups.find(x => x.id === gid);
       if (!g) return;
-      const action = prompt('输入操作：r=重命名 / d=删除', '');
-      if (action === 'r') {
+      if (action === 'edit-group') {
         const newName = prompt('新名称：', g.name);
         if (newName !== null && newName.trim()) renameAssistantGroup(gid, newName.trim());
-      } else if (action === 'd') {
+      } else if (action === 'delete-group') {
         if (confirm('删除分组「' + g.name + '」？该分组下所有会话将一并删除。')) deleteAssistantGroup(gid);
       }
     });
