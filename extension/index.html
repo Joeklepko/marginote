@@ -601,6 +601,49 @@
   /* AI 分组左侧缩进，体现层级关系 */
   .rail-assistant-groups .rail-item { padding-left: 26px; }
   .app.rail-collapsed .rail-assistant-groups .rail-item { padding-left: 10px; }
+  /* 左侧栏可滚动区滚动条：默认透明，hover 才显出 */
+  #notebooksList, #assistantGroupListRail {
+    scrollbar-width: thin;
+    scrollbar-color: transparent transparent;
+    transition: scrollbar-color 0.2s;
+  }
+  #notebooksList::-webkit-scrollbar,
+  #assistantGroupListRail::-webkit-scrollbar { width: 6px; }
+  #notebooksList::-webkit-scrollbar-track,
+  #assistantGroupListRail::-webkit-scrollbar-track { background: transparent; }
+  #notebooksList::-webkit-scrollbar-thumb,
+  #assistantGroupListRail::-webkit-scrollbar-thumb {
+    background: transparent;
+    border-radius: 3px;
+    transition: background 0.2s;
+  }
+  #notebooksList:hover::-webkit-scrollbar-thumb,
+  #assistantGroupListRail:hover::-webkit-scrollbar-thumb {
+    background: rgba(0,0,0,0.18);
+  }
+  #notebooksList:hover, #assistantGroupListRail:hover {
+    scrollbar-color: rgba(0,0,0,0.22) transparent;
+  }
+  body[data-theme="dark"] #notebooksList:hover::-webkit-scrollbar-thumb,
+  body[data-theme="dark"] #assistantGroupListRail:hover::-webkit-scrollbar-thumb {
+    background: rgba(255,255,255,0.22);
+  }
+  /* AI 优化按钮浅黄底色，提高可见度 */
+  .tool-btn.ai-btn,
+  .icon-btn.ai-btn {
+    background: #fff3b8;
+    border-radius: 5px;
+  }
+  .tool-btn.ai-btn:hover,
+  .icon-btn.ai-btn:hover { background: #ffe888; }
+  body[data-theme="dark"] .tool-btn.ai-btn,
+  body[data-theme="dark"] .icon-btn.ai-btn {
+    background: rgba(255, 215, 90, 0.22);
+  }
+  body[data-theme="dark"] .tool-btn.ai-btn:hover,
+  body[data-theme="dark"] .icon-btn.ai-btn:hover {
+    background: rgba(255, 215, 90, 0.35);
+  }
   #aiSessionsPanel { display: none; flex-direction: column; height: 100%; overflow: hidden; }
   .app.ai-view .sidebar > *:not(#aiSessionsPanel) { display: none !important; }
   .app.ai-view #aiSessionsPanel { display: flex; }
@@ -3324,7 +3367,7 @@
       </div>
     </div>
 
-    <div class="rail-section" id="sectionNotebooks" style="display:flex; flex-direction:column; min-height:0; padding-bottom:0">
+    <div class="rail-section" id="sectionNotebooks" style="flex:1 1 0; display:flex; flex-direction:column; min-height:0; padding-bottom:0">
       <div class="rail-section-title" data-toggle="sectionNotebooks">
         <span class="section-left">
           <svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 6.25a3.5 3.5 0 013.5 3.5c0 2.72-3.5 6-3.5 6s-3.5-3.28-3.5-6a3.5 3.5 0 013.5-3.5zM4 19.5v-15A2.5 2.5 0 016.5 2H20v20H6.5A2.5 2.5 0 014 19.5z"/></svg>
@@ -3339,7 +3382,7 @@
           <svg class="chevron" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7"/></svg>
         </span>
       </div>
-      <div class="section-body rail-notebooks" id="notebooksList" style="overflow-y:auto; max-height:45vh; min-height:60px"></div>
+      <div class="section-body rail-notebooks" id="notebooksList" style="overflow-y:auto; flex:1 1 0; min-height:0; max-height:none"></div>
     </div>
 
     <div class="rail-section" id="sectionAssistant" style="display:flex; flex-direction:column; min-height:0;">
