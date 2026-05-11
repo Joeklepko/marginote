@@ -7,7 +7,24 @@
 
   const hasChrome = typeof chrome !== 'undefined' && !!(chrome.runtime && chrome.runtime.id);
   if (!hasChrome) {
-    console.warn('platform-extension: chrome runtime unavailable, leaving stubs in place');
+    // 通过 file:// 或本地服务器直接打开 index.html 调试场景：用浏览器原生 fetch 兜底
+    console.warn('platform-extension: chrome runtime unavailable, using direct fetch fallback');
+    const platform = window.mn.platform;
+    platform.kind = 'web';
+    platform.fetch = async function (url, init) {
+      init = init || {};
+      try {
+        const res = await fetch(url, {
+          method: init.method || 'POST',
+          headers: init.headers || {},
+          body: init.body || null,
+        });
+        const body = await res.text();
+        return { ok: res.ok, status: res.status, body };
+      } catch (e) {
+        return { ok: false, status: 0, body: '', error: String(e) };
+      }
+    };
     if (window.mn._readyResolve) window.mn._readyResolve();
     return;
   }
