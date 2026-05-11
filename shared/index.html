@@ -631,22 +631,8 @@
   body[data-theme="dark"] #assistantGroupListRail:hover::-webkit-scrollbar-thumb {
     background: rgba(255,255,255,0.22);
   }
-  /* AI 优化按钮浅黄底色，提高可见度 */
-  .tool-btn.ai-btn,
-  .icon-btn.ai-btn {
-    background: #fff3b8;
-    border-radius: 5px;
-  }
-  .tool-btn.ai-btn:hover,
-  .icon-btn.ai-btn:hover { background: #ffe888; }
-  body[data-theme="dark"] .tool-btn.ai-btn,
-  body[data-theme="dark"] .icon-btn.ai-btn {
-    background: rgba(255, 215, 90, 0.22);
-  }
-  body[data-theme="dark"] .tool-btn.ai-btn:hover,
-  body[data-theme="dark"] .icon-btn.ai-btn:hover {
-    background: rgba(255, 215, 90, 0.35);
-  }
+  /* 折叠后的 rail-section 不再 flex-grow，下方 section 自动上移 */
+  .rail-section.collapsed { flex: 0 0 auto !important; }
   #aiSessionsPanel { display: none; flex-direction: column; height: 100%; overflow: hidden; }
   .app.ai-view .sidebar > *:not(#aiSessionsPanel) { display: none !important; }
   .app.ai-view #aiSessionsPanel { display: flex; }
