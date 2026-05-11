@@ -88,8 +88,18 @@
     border-right: 1px solid var(--rule);
     display: flex;
     flex-direction: column;
-    overflow: hidden;
+    overflow-y: auto;
+    overflow-x: hidden;
+    scrollbar-width: thin;
+    scrollbar-color: transparent transparent;
+    transition: scrollbar-color 0.2s;
   }
+  .rail::-webkit-scrollbar { width: 6px; }
+  .rail::-webkit-scrollbar-track { background: transparent; }
+  .rail::-webkit-scrollbar-thumb { background: transparent; border-radius: 3px; transition: background 0.2s; }
+  .rail:hover::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.18); }
+  .rail:hover { scrollbar-color: rgba(0,0,0,0.22) transparent; }
+  body[data-theme="dark"] .rail:hover::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.22); }
 
   .rail-head {
     padding: 20px 20px 16px;
@@ -309,7 +319,7 @@
   .rail-section .section-body {
     overflow: hidden;
     transition: max-height 0.25s ease, opacity 0.2s ease;
-    max-height: 800px;
+    max-height: 2000px;
     opacity: 1;
   }
   .rail-section.collapsed .section-body {
@@ -516,10 +526,15 @@
   }
 
   .rail-foot {
+    margin-top: auto;
     padding: 12px;
     border-top: 1px solid var(--rule-soft);
     display: flex;
     gap: 4px;
+    position: sticky;
+    bottom: 0;
+    background: var(--bg-warm);
+    z-index: 5;
   }
   .rail-foot .rail-item {
     padding: 6px 10px;
@@ -601,35 +616,6 @@
   /* AI 分组左侧缩进，体现层级关系 */
   .rail-assistant-groups .rail-item { padding-left: 26px; }
   .app.rail-collapsed .rail-assistant-groups .rail-item { padding-left: 10px; }
-  /* 左侧栏可滚动区滚动条：默认透明，hover 才显出 */
-  #notebooksList, #assistantGroupListRail {
-    scrollbar-width: thin;
-    scrollbar-color: transparent transparent;
-    transition: scrollbar-color 0.2s;
-  }
-  #notebooksList::-webkit-scrollbar,
-  #assistantGroupListRail::-webkit-scrollbar { width: 6px; }
-  #notebooksList::-webkit-scrollbar-track,
-  #assistantGroupListRail::-webkit-scrollbar-track { background: transparent; }
-  #notebooksList::-webkit-scrollbar-thumb,
-  #assistantGroupListRail::-webkit-scrollbar-thumb {
-    background: transparent;
-    border-radius: 3px;
-    transition: background 0.2s;
-  }
-  #notebooksList:hover::-webkit-scrollbar-thumb,
-  #assistantGroupListRail:hover::-webkit-scrollbar-thumb {
-    background: rgba(0,0,0,0.18);
-  }
-  #notebooksList:hover, #assistantGroupListRail:hover {
-    scrollbar-color: rgba(0,0,0,0.22) transparent;
-  }
-  body[data-theme="dark"] #notebooksList:hover::-webkit-scrollbar-thumb,
-  body[data-theme="dark"] #assistantGroupListRail:hover::-webkit-scrollbar-thumb {
-    background: rgba(255,255,255,0.22);
-  }
-  /* 折叠后的 rail-section 不再 flex-grow，下方 section 自动上移 */
-  .rail-section.collapsed { flex: 0 0 auto !important; }
   #aiSessionsPanel { display: none; flex-direction: column; height: 100%; overflow: hidden; }
   .app.ai-view .sidebar > *:not(#aiSessionsPanel) { display: none !important; }
   .app.ai-view #aiSessionsPanel { display: flex; }
@@ -1908,6 +1894,11 @@
     border-top: 1px solid var(--rule-soft);
     display: flex;
     justify-content: center;
+    margin-top: auto;
+    position: sticky;
+    bottom: 0;
+    background: var(--bg-warm);
+    z-index: 5;
   }
   .theme-toggle {
     display: inline-flex;
@@ -3353,7 +3344,7 @@
       </div>
     </div>
 
-    <div class="rail-section" id="sectionNotebooks" style="flex:0 1 auto; display:flex; flex-direction:column; min-height:0; padding-bottom:0">
+    <div class="rail-section" id="sectionNotebooks" style="padding-bottom:0">
       <div class="rail-section-title" data-toggle="sectionNotebooks">
         <span class="section-left">
           <svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 6.25a3.5 3.5 0 013.5 3.5c0 2.72-3.5 6-3.5 6s-3.5-3.28-3.5-6a3.5 3.5 0 013.5-3.5zM4 19.5v-15A2.5 2.5 0 016.5 2H20v20H6.5A2.5 2.5 0 014 19.5z"/></svg>
@@ -3368,10 +3359,10 @@
           <svg class="chevron" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7"/></svg>
         </span>
       </div>
-      <div class="section-body rail-notebooks" id="notebooksList" style="overflow-y:auto; max-height:50vh; min-height:0"></div>
+      <div class="section-body rail-notebooks" id="notebooksList"></div>
     </div>
 
-    <div class="rail-section" id="sectionAssistant" style="display:flex; flex-direction:column; min-height:0;">
+    <div class="rail-section" id="sectionAssistant">
       <div class="rail-section-title" data-toggle="sectionAssistant">
         <span class="section-left">
           <svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M21 12c0 4.4-4 8-9 8a9.4 9.4 0 01-3.5-.7L3 21l1.5-4.3A8.3 8.3 0 013 12c0-4.4 4-8 9-8s9 3.6 9 8z"/><path stroke-linecap="round" stroke-linejoin="round" d="M9 11h.01M12 11h.01M15 11h.01"/></svg>
@@ -3386,7 +3377,7 @@
           <svg class="chevron" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7"/></svg>
         </span>
       </div>
-      <div class="section-body rail-assistant-groups" id="assistantGroupListRail" style="max-height: 240px; overflow-y: auto;"></div>
+      <div class="section-body rail-assistant-groups" id="assistantGroupListRail"></div>
     </div>
 
     <div class="rail-theme-row">
