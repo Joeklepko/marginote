@@ -10,9 +10,9 @@
 <script src="vendor/jszip.min.js"></script>
 <script src="vendor/markdown-it.min.js"></script>
 <script src="vendor/purify.min.js"></script>
-<!-- 平台抽象层（扩展 / 桌面运行时择一） -->
+<!-- 平台抽象层（桌面端 Tauri 直接静态加载，避免动态 loader 竞态） -->
 <script src="js/platform.js"></script>
-<script src="js/bridge-loader.js"></script>
+<script src="js/platform-desktop.js"></script>
 <style>
   :root {
     --bg: #f4efe6;
