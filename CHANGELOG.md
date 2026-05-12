@@ -5,6 +5,26 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.2] - 2026-05-12
+
+跟进 v1.2.1 灰度反馈的小修小补。
+
+### 新功能
+
+- **指令管理**：新增「＋ 新增指令」按钮，支持自定义全新指令（label / mode / system prompt 全可编辑）
+- **指令开关**：每条预设 / 自定义指令旁增加「启用」复选框，关闭后在「AI 优化」下拉菜单中自动隐藏
+- **存储结构升级**：`marginote.aiActions` 改为 `{overrides, custom, disabled}` 结构，兼容 v1.2.1 老数据自动迁移
+
+### 修复
+
+- **`---` 仍渲染为「· · ·」**：根因不在 markdown-it（markdown-it 正确生成 `<hr>`），而是 `.preview hr::after { content: '· · ·' }` 这条装饰 CSS；现已改为 `border-top: 1px solid var(--rule)` 实线分隔
+- **AI 设置文案**：去掉「公司内部禁止接入外部模型，违反后果自负。」一句，仅保留「配置 OpenAI 兼容的模型接口」
+
+### 发布
+
+- Chrome 扩展：v1.2.2（自包含，下载后直接加载 `extension/` 目录）
+- Windows 桌面版：v1.2.2（Tauri + WebView2）
+
 ## [1.2.1] - 2026-05-12
 
 相对 v1.2.0 的小版本修复 + 体验增强。

@@ -1461,17 +1461,11 @@
   .preview a:hover { background: rgba(184, 67, 31, 0.08); }
   .preview hr {
     border: none;
-    text-align: center;
-    margin: 1.2em 0;
-    color: var(--rule);
+    border-top: 1px solid var(--rule);
+    margin: 1.6em 0;
+    height: 0;
   }
-  .preview hr::after {
-    content: '· · ·';
-    font-family: 'Fraunces', serif;
-    font-size: 18px;
-    letter-spacing: 0.5em;
-    color: var(--ink-mute);
-  }
+  .preview hr::after { content: none; }
   .preview mark {
     background: var(--highlight);
     padding: 0 4px;
@@ -3947,7 +3941,7 @@
 
       <!-- AI -->
       <div class="settings-pane" data-pane="ai">
-        <p style="color: var(--ink-soft); font-size: 13px; margin-bottom: 16px;">配置OpenAI兼容的模型接口。公司内部禁止接入外部模型，违反后果自负。</p>
+        <p style="color: var(--ink-soft); font-size: 13px; margin-bottom: 16px;">配置OpenAI兼容的模型接口</p>
         <p class="settings-section-title">已配置模型</p>
         <div class="ai-provider-list" id="aiProviderList"></div>
         <div class="ai-add-row">
