@@ -1,7 +1,7 @@
 {
   "name": "marginote-desktop",
   "private": true,
-  "version": "1.2.2",
+  "version": "1.2.1",
   "description": "Marginote Tauri 桌面壳。仅供 @tauri-apps/cli 使用。",
   "scripts": {
     "tauri": "tauri",

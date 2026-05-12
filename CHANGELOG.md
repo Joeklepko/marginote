@@ -5,26 +5,6 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.2.2] - 2026-05-12
-
-跟进 v1.2.1 灰度反馈的小修小补。
-
-### 新功能
-
-- **指令管理**：新增「＋ 新增指令」按钮，支持自定义全新指令（label / mode / system prompt 全可编辑）
-- **指令开关**：每条预设 / 自定义指令旁增加「启用」复选框，关闭后在「AI 优化」下拉菜单中自动隐藏
-- **存储结构升级**：`marginote.aiActions` 改为 `{overrides, custom, disabled}` 结构，兼容 v1.2.1 老数据自动迁移
-
-### 修复
-
-- **`---` 仍渲染为「· · ·」**：根因不在 markdown-it（markdown-it 正确生成 `<hr>`），而是 `.preview hr::after { content: '· · ·' }` 这条装饰 CSS；现已改为 `border-top: 1px solid var(--rule)` 实线分隔
-- **AI 设置文案**：去掉「公司内部禁止接入外部模型，违反后果自负。」一句，仅保留「配置 OpenAI 兼容的模型接口」
-
-### 发布
-
-- Chrome 扩展：v1.2.2（自包含，下载后直接加载 `extension/` 目录）
-- Windows 桌面版：v1.2.2（Tauri + WebView2）
-
 ## [1.2.1] - 2026-05-12
 
 相对 v1.2.0 的小版本修复 + 体验增强。
@@ -33,14 +13,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **编辑区缩放**：右侧栏笔记/待办编辑区与预览支持 `Ctrl + 鼠标滚轮` 缩放，比例自动持久化（50%–300%）
 - **拖拽排序**：左侧栏「笔记本」「AI 分组 / 会话」与中栏「待办列表」子项支持鼠标拖拽调整顺序
-- **AI 指令管理**：「AI 优化」下拉新增「🧩 指令管理」入口，可查看 / 编辑预设指令的标题与系统提示词，支持「恢复默认」
+- **AI 指令管理**：「AI 优化」下拉新增「🧩 指令管理」入口，可查看 / 编辑预设指令的标题与系统提示词；支持「＋ 新增指令」自定义全新指令，每条指令旁有「启用」开关，关闭后在菜单中隐藏；支持「恢复默认」
 - **AI 系统提示词升级**：内置 `🏷 标题总结` 等 8 个预设全面重写为 Markdown 结构化模板，输出更稳定
+- **笔记标题瘦身**：右侧栏编辑区标题字号从 32 → 22px（响应式 26 → 20px），副标题行间距同步收紧，腾出更多正文空间
 
 ### 修复
 
-- **`---` 分隔线渲染**：在前文紧贴非空行时，markdown-it 会把上一行误识为 setext H2 导致分隔线消失；现已自动补足空行，恒渲染为 `<hr>`
+- **`---` 分隔线渲染**：双重根因 — ① markdown-it 在前文紧贴非空行时把上一行误识为 setext H2 → 已在预处理自动补空行；② `.preview hr::after { content: '· · ·' }` 装饰 CSS 把 `<hr>` 画成三个点 → 改为 `border-top` 实线分隔
 - **Ctrl+Z 撤销失效**：插入图片 / 工具栏「引用」「分隔线」等操作切到 `execCommand('insertText')`，保留浏览器原生 undo 栈
 - **AI 自定义指令**：弹窗新增「直接返回修改后的正文，不要无关注释」等特色提示词建议，降低无关前后缀输出概率
+- **AI 设置文案**：精简为「配置 OpenAI 兼容的模型接口」
+
+### 存储
+
+- `marginote.aiActions` 升级为 `{overrides, custom, disabled}` 结构，兼容 v1.2.0 老数据自动迁移
 
 ### 发布
 
