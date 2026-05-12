@@ -609,6 +609,17 @@ function renderAssistantRail() {
       }
     });
   });
+
+  // v1.2.1 拖拽排序：AI 分组
+  if (typeof window.enableDragReorder === 'function') {
+    el.querySelectorAll('.rail-item[data-ai-group]').forEach(it => { it.dataset.dragKey = it.dataset.aiGroup; });
+    window.enableDragReorder(el, '.rail-item[data-ai-group]', (src, dst) => {
+      if (window.reorderArrayById(assistantGroups, src, dst)) {
+        saveAssistantGroups();
+        renderAssistantRail();
+      }
+    });
+  }
 }
 
 // ===================== 中侧栏：会话列表渲染 =====================
@@ -663,6 +674,17 @@ function renderAssistantSessions() {
       if (confirm('删除该会话？')) deleteAssistantSession(g.id, sid);
     });
   });
+
+  // v1.2.1 拖拽排序：AI 会话
+  if (typeof window.enableDragReorder === 'function') {
+    listEl.querySelectorAll('.ai-session-item').forEach(it => { it.dataset.dragKey = it.dataset.sid; });
+    window.enableDragReorder(listEl, '.ai-session-item', (src, dst) => {
+      if (window.reorderArrayById(g.sessions || [], src, dst)) {
+        saveAssistantGroups();
+        renderAssistantSessions();
+      }
+    });
+  }
 }
 
 // 兼容旧名（runAssistantTurn 等其它代码若引用）

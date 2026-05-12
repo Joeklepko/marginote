@@ -5,6 +5,29 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.1] - 2026-05-12
+
+相对 v1.2.0 的小版本修复 + 体验增强。
+
+### 新功能
+
+- **编辑区缩放**：右侧栏笔记/待办编辑区与预览支持 `Ctrl + 鼠标滚轮` 缩放，比例自动持久化（50%–300%）
+- **拖拽排序**：左侧栏「笔记本」「AI 分组 / 会话」与中栏「待办列表」子项支持鼠标拖拽调整顺序
+- **AI 指令管理**：「AI 优化」下拉新增「🧩 指令管理」入口，可查看 / 编辑预设指令的标题与系统提示词，支持「恢复默认」
+- **AI 系统提示词升级**：内置 `🏷 标题总结` 等 8 个预设全面重写为 Markdown 结构化模板，输出更稳定
+
+### 修复
+
+- **`---` 分隔线渲染**：在前文紧贴非空行时，markdown-it 会把上一行误识为 setext H2 导致分隔线消失；现已自动补足空行，恒渲染为 `<hr>`
+- **Ctrl+Z 撤销失效**：插入图片 / 工具栏「引用」「分隔线」等操作切到 `execCommand('insertText')`，保留浏览器原生 undo 栈
+- **AI 自定义指令**：弹窗新增「直接返回修改后的正文，不要无关注释」等特色提示词建议，降低无关前后缀输出概率
+
+### 发布
+
+- Chrome 扩展：v1.2.1（自包含，下载后直接加载 `extension/` 目录）
+- Windows 桌面版：v1.2.1（Tauri + WebView2，安装包约 12 MB）
+- 已配置的 AI 模型、笔记数据全部沿用 v1.2.0；首次启动会读取覆盖后的指令配置
+
 ## [1.2.0] - 2026-05-11
 
 相对 v1.1.0 的主要变化。
