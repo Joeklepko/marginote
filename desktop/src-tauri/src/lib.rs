@@ -29,6 +29,7 @@ pub fn run() {
         ))
         .invoke_handler(tauri::generate_handler![
             commands::cmd_fetch,
+            commands::cmd_stream_fetch,
             commands::cmd_alarm_set,
             commands::cmd_alarm_clear,
             commands::cmd_alarm_list,

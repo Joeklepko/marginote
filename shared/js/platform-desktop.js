@@ -105,6 +105,22 @@
     }
   };
 
+  // ===== 流式 fetch（SSE → Tauri events）=====
+  platform.cmd_stream_fetch = async function (url, streamId, method, headers, body) {
+    try {
+      await invoke('cmd_stream_fetch', {
+        url,
+        streamId,
+        method: method || 'POST',
+        headers: headers || null,
+        body: body || null,
+      });
+    } catch (e) {
+      console.warn('cmd_stream_fetch fail', e);
+      throw e;
+    }
+  };
+
   // ===== window =====
   platform.window = {
     async focus() { try { await invoke('cmd_window_focus'); } catch (e) {} },

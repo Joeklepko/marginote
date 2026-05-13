@@ -239,7 +239,107 @@ pub async fn cmd_get_app_paths(app: AppHandle) -> Result<AppPaths, String> {
     })
 }
 
-// ---------- 窗口主题（Windows 标题栏跟随应用主题） ----------
+// ---------- 流式 fetch（SSE 逐块推送到前端） ----------
+
+#[derive(Debug, Serialize, Clone)]
+pub struct StreamChunk {
+    pub stream_id: String,
+    pub data: String,        // SSE data payload
+    pub done: bool,
+    pub error: Option<String>,
+}
+
+#[tauri::command]
+pub async fn cmd_stream_fetch(
+    app: AppHandle,
+    url: String,
+    stream_id: String,
+    method: Option<String>,
+    headers: Option<serde_json::Value>,
+    body: Option<String>,
+) -> Result<(), String> {
+    let method = method.unwrap_or_else(|| "POST".into()).to_uppercase();
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(120))
+        .danger_accept_invalid_certs(false)
+        .build()
+        .map_err(|e| format!("client build: {e}"))?;
+
+    let mut req = match method.as_str() {
+        "GET" => client.get(&url),
+        _ => client.post(&url),
+    };
+
+    if let Some(hdrs) = headers {
+        if let Some(obj) = hdrs.as_object() {
+            for (k, v) in obj {
+                if let Some(s) = v.as_str() {
+                    req = req.header(k, s);
+                }
+            }
+        }
+    }
+    if let Some(b) = body {
+        req = req.body(b);
+    }
+
+    let resp = req.send().await.map_err(|e| {
+        let _ = app.emit("ai-stream-chunk", StreamChunk {
+            stream_id: stream_id.clone(),
+            data: String::new(),
+            done: true,
+            error: Some(format!("{e}")),
+        });
+        format!("{e}")
+    })?;
+
+    if !resp.status().is_success() {
+        let status = resp.status().as_u16();
+        let txt = resp.text().await.unwrap_or_default();
+        let _ = app.emit("ai-stream-chunk", StreamChunk {
+            stream_id: stream_id.clone(),
+            data: String::new(),
+            done: true,
+            error: Some(format!("HTTP {status}: {txt}")),
+        });
+        return Err(format!("HTTP {status}"));
+    }
+
+    // 读取流式响应体的 chunk，逐塊发送给前端
+    use futures::StreamExt;
+    let mut stream = resp.bytes_stream();
+    while let Some(item) = stream.next().await {
+        match item {
+            Ok(bytes) => {
+                let chunk = String::from_utf8_lossy(&bytes).to_string();
+                let _ = app.emit("ai-stream-chunk", StreamChunk {
+                    stream_id: stream_id.clone(),
+                    data: chunk,
+                    done: false,
+                    error: None,
+                });
+            }
+            Err(e) => {
+                let _ = app.emit("ai-stream-chunk", StreamChunk {
+                    stream_id: stream_id.clone(),
+                    data: String::new(),
+                    done: true,
+                    error: Some(format!("stream error: {e}")),
+                });
+                return Err(format!("{e}"));
+            }
+        }
+    }
+
+    let _ = app.emit("ai-stream-chunk", StreamChunk {
+        stream_id: stream_id.clone(),
+        data: String::new(),
+        done: true,
+        error: None,
+    });
+
+    Ok(())
+}
 
 #[tauri::command]
 pub async fn cmd_set_window_theme(window: tauri::Window, mode: String) -> Result<(), String> {
