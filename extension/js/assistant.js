@@ -173,11 +173,17 @@ function clearActiveSessionHistory() {
 
 // ===================== 附件管理 =====================
 
-let pendingAttachments = [];   // [{type: 'note'|'todo', id, title}]
+let pendingAttachments = [];   // [{type: 'note'|'todo', id, title} | {type:'image', dataUrl, name}]
 
 function addPendingAttachment(type, id, title) {
   if (pendingAttachments.some(a => a.type === type && a.id === id)) return;
   pendingAttachments.push({ type, id, title: String(title || '') });
+  renderPendingAttachments();
+}
+
+function addPendingImage(dataUrl, name) {
+  if (!dataUrl) return;
+  pendingAttachments.push({ type: 'image', dataUrl, name: String(name || 'image') });
   renderPendingAttachments();
 }
 
@@ -199,8 +205,15 @@ function renderPendingAttachments() {
     return;
   }
   el.innerHTML = pendingAttachments.map((a, i) => {
+    if (a.type === 'image') {
+      return `<span class="attach-pill image" title="图片附件 — 点击移除" data-remove="${i}" style="display:inline-flex;align-items:center;gap:4px;">
+        <img src="${a.dataUrl}" style="width:18px;height:18px;object-fit:cover;border-radius:3px;vertical-align:middle">
+        ${escapeHtml((a.name || 'image').slice(0, 20))}
+      </span>`;
+    }
     const badge = a.type === 'note' ? '<span class="attach-type-badge note">md</span>' : '<span class="attach-type-badge todo">✓</span>';
-    return `<span class="attach-pill" title="${escapeHtml(a.type === 'note' ? '笔记' : '待办')}: ${escapeHtml(a.title)} — 点击移除" data-remove="${i}">${badge}${escapeHtml(a.title.slice(0, 24))}${a.title.length > 24 ? '…' : ''}</span>`;
+    const title = a.title || '';
+    return `<span class="attach-pill" title="${escapeHtml(a.type === 'note' ? '笔记' : '待办')}: ${escapeHtml(title)} — 点击移除" data-remove="${i}">${badge}${escapeHtml(title.slice(0, 24))}${title.length > 24 ? '…' : ''}</span>`;
   }).join('');
   el.querySelectorAll('.attach-pill').forEach(pill => {
     pill.addEventListener('click', () => removePendingAttachment(parseInt(pill.dataset.remove)));
@@ -382,10 +395,13 @@ function buildAssistantSystemPrompt() {
   let attachInfo = '';
   if (pendingAttachments.length) {
     const parts = [];
+    let imgCount = 0;
     for (const a of pendingAttachments) {
       if (a.type === 'note') { const n = notes.find(x => x.id === a.id); if (n) parts.push(`[笔记附件: id=${n.id}, 标题=${n.title || '(无标题)'}, 内容=${(n.content || '').slice(0, 2000)}]`); }
       else if (a.type === 'todo') { const t = todos.find(x => x.id === a.id); if (t) parts.push(`[待办附件: id=${t.id}, 标题=${t.text}, 完成=${t.done ? '是' : '否'}, 内容=${(t.content || '').slice(0, 2000)}, 截止=${t.dueDate ? new Date(t.dueDate).toISOString() : '无'}]`); }
+      else if (a.type === 'image') { imgCount++; }
     }
+    if (imgCount) parts.push(`[图片附件: ${imgCount} 张（已作为 image_url 部分附在最后一条用户消息中，请直接读取并理解）]`);
     if (parts.length) { attachInfo = '\n\n【当前附件】\n' + parts.join('\n') + '\n【注意】修改附件内容时使用 update_note / update_todo，不传 id 时自动使用附件中的第一个对应类型。'; }
   }
   return `你是 Marginote 笔记应用内置的 AI 助手，帮用户管理笔记和待办。
@@ -557,8 +573,32 @@ async function runAssistantTurn(userInput) {
   const ctx = [{ role: 'system', content: sysPrompt }];
   const s = getActiveSession();
   const recent = (s?.messages || []).slice(-12);
-  for (const m of recent) {
-    if (m.role === 'user') ctx.push({ role: 'user', content: m.content });
+  const provider = getActiveProvider();
+  const mm = !!(provider && provider.multimodal);
+  // 收集图片附件（仅当本轮多模态启用时生效）
+  const pendingImages = mm ? pendingAttachments.filter(a => a.type === 'image') : [];
+  // 同时也把笔记附件里包含的 img:<id> 拉出来一并发送
+  const noteAttachmentImages = mm
+    ? pendingAttachments
+        .filter(a => a.type === 'note')
+        .flatMap(a => {
+          const n = notes.find(x => x.id === a.id);
+          return n && typeof _resolveContentImages === 'function' ? _resolveContentImages(n.content || '') : [];
+        })
+    : [];
+  for (let i = 0; i < recent.length; i++) {
+    const m = recent[i];
+    if (m.role === 'user') {
+      const isLast = (i === recent.length - 1);
+      const allImgs = isLast ? [...pendingImages, ...noteAttachmentImages] : [];
+      if (mm && allImgs.length) {
+        const parts = [{ type: 'text', text: m.content || '' }];
+        for (const im of allImgs) parts.push({ type: 'image_url', image_url: { url: im.dataUrl } });
+        ctx.push({ role: 'user', content: parts });
+      } else {
+        ctx.push({ role: 'user', content: m.content });
+      }
+    }
     else if (m.role === 'assistant') ctx.push({ role: 'assistant', content: m.content });
     else if (m.role === 'system') ctx.push({ role: 'user', content: '【工具结果】' + m.content });
   }
@@ -823,6 +863,56 @@ function bindAssistantUi() {
   if (attachClose) attachClose.addEventListener('click', closeAttachmentPicker);
   const attachBg = document.getElementById('attachmentPickerBg');
   if (attachBg) attachBg.addEventListener('click', e => { if (e.target.id === 'attachmentPickerBg') closeAttachmentPicker(); });
+
+  // 图片附件：本地文件 + 剪贴板粘贴
+  const imageBtn = document.getElementById('assistantImageBtn');
+  const imageFile = document.getElementById('assistantImageFile');
+  if (imageBtn && imageFile) {
+    imageBtn.addEventListener('click', () => imageFile.click());
+    imageFile.addEventListener('change', async () => {
+      const files = Array.from(imageFile.files || []);
+      for (const f of files) {
+        if (!f.type.startsWith('image/')) continue;
+        try {
+          const dataUrl = await new Promise((resolve, reject) => {
+            const r = new FileReader();
+            r.onload = () => resolve(r.result);
+            r.onerror = reject;
+            r.readAsDataURL(f);
+          });
+          addPendingImage(dataUrl, f.name);
+        } catch (e) {
+          if (typeof showToast === 'function') showToast('图片读取失败');
+        }
+      }
+      imageFile.value = '';
+    });
+  }
+  const inputForPaste = document.getElementById('assistantInput');
+  if (inputForPaste) {
+    inputForPaste.addEventListener('paste', async (e) => {
+      const items = e.clipboardData && e.clipboardData.items;
+      if (!items) return;
+      let consumed = false;
+      for (const it of items) {
+        if (it.kind === 'file' && it.type && it.type.startsWith('image/')) {
+          const f = it.getAsFile();
+          if (!f) continue;
+          consumed = true;
+          try {
+            const dataUrl = await new Promise((resolve, reject) => {
+              const r = new FileReader();
+              r.onload = () => resolve(r.result);
+              r.onerror = reject;
+              r.readAsDataURL(f);
+            });
+            addPendingImage(dataUrl, f.name || ('pasted-' + Date.now() + '.png'));
+          } catch {}
+        }
+      }
+      if (consumed) e.preventDefault();
+    });
+  }
 
   // 发送
   const send = document.getElementById('assistantSendBtn');

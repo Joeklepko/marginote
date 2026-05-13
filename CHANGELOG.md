@@ -26,6 +26,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **AI 助手对话改为流式输出**：`runAssistantTurn` 接通 `callAi(stream:true)`，边收到 token 边在 typing 气泡实时展示 reply 文本，完成后再走原有 JSON 解析与工具调度
 - **「🏷 标题总结」语义修复**：新增 `mode:'title'` 专用通道——AI 优化后仅替换标题栏（笔记 title / 待办 text），正文保持不变；输出自动剥离 `#`、引号与多行
 - **Windows 桌面版拖拽不生效**：根因为 Tauri 2 `window.dragDropEnabled` 默认 `true`，OS 级拖拽 handler 抢占 HTML5 内部 dragstart/drop；改为 `false` 后桌面版的笔记本 / AI 分组 / 会话 / 待办列表均可正常拖拽排序
+- **去掉「AI 生成中… 点击取消」浮动条**：移除 `#aiCancelBtn` HTML 元素，流式仍在底层运行（仅去掉视觉打扰）
+
+### 多模态（图片识别）
+
+- **provider 新增 `multimodal` 开关**：AI 设置的模型表单加「支持图片识别」复选框；勾选后笔记 / 待办中的 `![...](img:xxx)` 与聊天图片附件以 OpenAI Vision `image_url` 格式发送
+- **AI 优化**：开启 multimodal 的 provider 调用「润色 / 总结 / 标题 / 自定义指令」等任意 action 时，自动把笔记图片一并发送
+- **AI 助手聊天图片**：
+  - 输入框旁新增 🖼 按钮，可从本地选择多张图片
+  - 直接在输入框 `Ctrl+V` 粘贴剪贴板图片
+  - 笔记附件中的图片会与聊天图片一并以 `image_url` 形式发给模型
 
 ### 存储
 
