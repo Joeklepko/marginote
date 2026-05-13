@@ -512,6 +512,40 @@ function summarizeActionResult(name, result) {
   return '';
 }
 
+// 流式中从未完成 JSON 中提取 "reply": "...部分..." 的可见字符
+function _extractStreamingReply(s) {
+  if (!s) return '';
+  let body = s;
+  const fence = s.match(/```(?:json)?\s*([\s\S]*)/i);
+  if (fence) body = fence[1];
+  const idx = body.search(/"reply"\s*:\s*"/);
+  if (idx < 0) return '';
+  const afterKey = body.slice(idx).match(/"reply"\s*:\s*"([\s\S]*)$/);
+  if (!afterKey) return '';
+  const raw = afterKey[1];
+  let result = '';
+  for (let i = 0; i < raw.length; i++) {
+    const c = raw[i];
+    if (c === '\\') {
+      const nx = raw[i + 1];
+      if (nx === 'n') { result += '\n'; i++; }
+      else if (nx === 't') { result += '\t'; i++; }
+      else if (nx === '"') { result += '"'; i++; }
+      else if (nx === '\\') { result += '\\'; i++; }
+      else if (nx === 'r') { i++; }
+      else if (nx === 'u' && raw.length >= i + 6) {
+        const code = parseInt(raw.slice(i + 2, i + 6), 16);
+        if (!isNaN(code)) { result += String.fromCharCode(code); i += 5; } else { result += c; }
+      }
+      else if (nx) { result += nx; i++; }
+      continue;
+    }
+    if (c === '"') break;
+    result += c;
+  }
+  return result;
+}
+
 async function runAssistantTurn(userInput) {
   if (assistantBusy) { showToast('AI 正在思考中...'); return; }
   if (!getActiveProvider()) { showToast('请先在「设置 → AI」中配置模型'); openSettingsModal('ai'); return; }
@@ -535,7 +569,29 @@ async function runAssistantTurn(userInput) {
     while (iter++ < 4) {
       setAssistantTyping(true);
       let raw;
-      try { raw = await callAi(ctx, { temperature: 0.3 }); } finally { setAssistantTyping(false); }
+      try {
+        // 流式输出：边收到 token 边在 typing 气泡中显示提取出的 reply 文本，
+        // 完整结果出来后再走原有 parseAssistantReply 流程。
+        let liveBubble = null;
+        raw = await callAi(ctx, {
+          temperature: 0.3,
+          stream: true,
+          onDelta: (delta, full) => {
+            const box = document.getElementById('assistantChat');
+            if (!box) return;
+            if (!liveBubble) {
+              box.querySelectorAll('.assistant-typing-msg').forEach(el => el.remove());
+              const div = document.createElement('div');
+              div.className = 'assistant-msg bot assistant-typing-msg';
+              div.innerHTML = '<span class="role">AI</span><div class="bubble"></div>';
+              box.appendChild(div);
+              liveBubble = div.querySelector('.bubble');
+            }
+            liveBubble.textContent = _extractStreamingReply(full);
+            box.scrollTop = box.scrollHeight;
+          }
+        });
+      } finally { setAssistantTyping(false); }
 
       const parsed = parseAssistantReply(raw);
       const actionMeta = [];

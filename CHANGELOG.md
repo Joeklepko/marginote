@@ -23,6 +23,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Ctrl+Z 撤销失效**：插入图片 / 工具栏「引用」「分隔线」等操作切到 `execCommand('insertText')`，保留浏览器原生 undo 栈
 - **AI 自定义指令**：弹窗新增「直接返回修改后的正文，不要无关注释」等特色提示词建议，降低无关前后缀输出概率
 - **AI 设置文案**：精简为「配置 OpenAI 兼容的模型接口」
+- **AI 助手对话改为流式输出**：`runAssistantTurn` 接通 `callAi(stream:true)`，边收到 token 边在 typing 气泡实时展示 reply 文本，完成后再走原有 JSON 解析与工具调度
+- **「🏷 标题总结」语义修复**：新增 `mode:'title'` 专用通道——AI 优化后仅替换标题栏（笔记 title / 待办 text），正文保持不变；输出自动剥离 `#`、引号与多行
+- **Windows 桌面版拖拽不生效**：根因为 Tauri 2 `window.dragDropEnabled` 默认 `true`，OS 级拖拽 handler 抢占 HTML5 内部 dragstart/drop；改为 `false` 后桌面版的笔记本 / AI 分组 / 会话 / 待办列表均可正常拖拽排序
 
 ### 存储
 
