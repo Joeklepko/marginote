@@ -270,12 +270,9 @@ function renderAttachmentPickerContent() {
   const activeNotes = notes.filter(n => !n.deleted);
   const activeTodos = todos.slice();
 
-  // 图片 section（顶部）
+  // 图片上传
   const imgAttached = pendingAttachments.filter(a => a.type === 'image');
-  let html = '<div class="attach-picker-section"><div class="attach-picker-title">🖼 图片</div>';
-  html += '<div style="padding:6px 0; display:flex; flex-direction:column; gap:8px;">';
-  html += '<div><button class="modal-btn" id="attachImagePickBtn" type="button">本地上传</button>';
-  html += '</div>';
+  let html = '<div style="padding:4px 0 10px;"><button class="modal-btn" id="attachImagePickBtn" type="button">本地上传</button></div>';
   if (imgAttached.length) {
     html += '<div style="display:flex; flex-wrap:wrap; gap:8px;">';
     for (let i = 0; i < pendingAttachments.length; i++) {
@@ -288,7 +285,6 @@ function renderAttachmentPickerContent() {
     }
     html += '</div>';
   }
-  html += '</div></div>';
 
   html += '<div class="attach-picker-section"><div class="attach-picker-title">📝 笔记</div>';
   if (!activeNotes.length) {
