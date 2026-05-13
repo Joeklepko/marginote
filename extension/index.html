@@ -4017,15 +4017,15 @@
 
 <!-- 历史版本模态框 -->
 <div class="modal-bg" id="versionModalBg">
-  <div class="modal" style="max-width: 880px; width: 90vw; max-height: 88vh; display:flex; flex-direction:column;">
+  <div class="modal" style="max-width: 880px; width: 90vw; max-height: 88vh; display:flex; flex-direction:column; overflow: hidden;">
     <h3 style="margin-bottom:6px;">历史版本 <span id="versionNoteTitle" style="font-weight:normal;color:var(--ink-mute);font-size:13px;margin-left:6px;"></span></h3>
     <p style="color: var(--ink-soft); font-size: 12px; margin-bottom: 12px;">编辑保存自动记录，每篇最多保留 20 个自动版本（命名版本不淘汰）。</p>
-    <div style="display:flex; gap:14px; flex:1; min-height:380px; max-height:60vh;">
+    <div style="display:flex; gap:14px; flex:1; min-height:0; max-height:60vh;">
       <div id="versionList" style="width:280px; overflow-y:auto; border:1px solid var(--rule); border-radius:6px; padding:6px;"></div>
-      <div style="flex:1; display:flex; flex-direction:column; min-width:0;">
-        <div id="versionPreviewMeta" style="font-size:11px; color:var(--ink-mute); margin-bottom:6px; font-family:'JetBrains Mono',monospace;"></div>
-        <div id="versionPreviewTitle" style="font-weight:600; margin-bottom:6px; word-break:break-word;"></div>
-        <pre id="versionPreviewContent" style="flex:1; overflow:auto; background:var(--paper); border:1px solid var(--rule); border-radius:6px; padding:10px; white-space:pre-wrap; word-break:break-word; font-family:'JetBrains Mono',monospace; font-size:12px; margin:0;"></pre>
+      <div style="flex:1; display:flex; flex-direction:column; min-width:0; min-height:0;">
+        <div id="versionPreviewMeta" style="font-size:11px; color:var(--ink-mute); margin-bottom:6px; font-family:'JetBrains Mono',monospace; flex-shrink:0;"></div>
+        <div id="versionPreviewTitle" style="font-weight:600; margin-bottom:6px; word-break:break-word; flex-shrink:0;"></div>
+        <pre id="versionPreviewContent" style="flex:1; overflow:auto; background:var(--paper); border:1px solid var(--rule); border-radius:6px; padding:10px; white-space:pre-wrap; word-break:break-word; font-family:'JetBrains Mono',monospace; font-size:12px; margin:0; min-height:0;"></pre>
       </div>
     </div>
     <div class="modal-actions" style="margin-top: 14px;">
