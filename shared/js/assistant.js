@@ -239,7 +239,7 @@ function renderPendingAttachments() {
   el.innerHTML = pendingAttachments.map((a, i) => {
     if (a.type === 'image') {
       return `<span class="attach-pill image" title="图片附件 — 点击移除" data-remove="${i}" style="display:inline-flex;align-items:center;gap:4px;">
-        <img src="${a.dataUrl}" style="width:18px;height:18px;object-fit:cover;border-radius:3px;vertical-align:middle">
+        <img src="${a.dataUrl}" style="width:20px;height:20px;object-fit:cover;border-radius:3px;vertical-align:middle">
         ${escapeHtml((a.name || 'image').slice(0, 20))}
       </span>`;
     }
@@ -530,7 +530,13 @@ function renderAssistantMessage(m) {
     html += '<div class="msg-attachments">';
     for (const a of m.attachments) {
       if (a.type === 'image') {
-        html += `<span class="msg-attach-pill" title="图片附件: ${escapeHtml(a.title || '图片')}"><span class="attach-type-badge image">🖼</span>${escapeHtml(String(a.title || '图片').slice(0, 30))}</span>`;
+        // 尝试从 pendingAttachments 中找回 dataUrl 显示缩略图
+        const matchedImg = typeof pendingAttachments !== 'undefined' ? pendingAttachments.find(p => p.type === 'image' && p.name === a.title) : null;
+        if (matchedImg && matchedImg.dataUrl) {
+          html += `<span class="msg-attach-pill" title="图片附件: ${escapeHtml(a.title || '图片')}" style="display:inline-flex;align-items:center;gap:4px;"><img src="${matchedImg.dataUrl}" style="width:20px;height:20px;object-fit:cover;border-radius:3px;"><span class="attach-type-badge image">🖼</span>${escapeHtml(String(a.title || '图片').slice(0, 30))}</span>`;
+        } else {
+          html += `<span class="msg-attach-pill" title="图片附件: ${escapeHtml(a.title || '图片')}"><span class="attach-type-badge image">🖼</span>${escapeHtml(String(a.title || '图片').slice(0, 30))}</span>`;
+        }
         continue;
       }
       const badge = a.type === 'note' ? '<span class="attach-type-badge note">md</span>' : '<span class="attach-type-badge todo">✓</span>';
@@ -572,7 +578,7 @@ function setAssistantTyping(on) {
   if (on) {
     const div = document.createElement('div');
     div.className = 'assistant-msg bot assistant-typing-msg';
-    div.innerHTML = `<span class="role">AI</span><div class="bubble"><span class="assistant-typing"><span></span><span></span><span></span></span></div>`;
+    div.innerHTML = `<span class="role">AI</span><div class="bubble"><span class="assistant-typing"><span></span><span></span><span></span></span> <span style="color:var(--ink-mute);font-size:11px;">思考中…</span></div>`;
     box.appendChild(div);
     box.scrollTop = box.scrollHeight;
   }
@@ -648,6 +654,11 @@ async function runAssistantTurn(userInput) {
   const recent = (s?.messages || []).slice(-12);
   const provider = getActiveProvider();
   const mm = !!(provider && provider.multimodal);
+  // 如果有图片附件但未开启多模态，提醒用户
+  const hasImages = pendingAttachments.some(a => a.type === 'image');
+  if (hasImages && !mm) {
+    if (typeof showToast === 'function') showToast('当前模型未开启「支持图片识别」，图片附件将被忽略。请在 AI 设置中勾选该模型的「支持图片识别」复选框。');
+  }
   // 收集图片附件（仅当本轮多模态启用时生效）
   const pendingImages = mm ? pendingAttachments.filter(a => a.type === 'image') : [];
   // 同时也把笔记附件里包含的 img:<id> 拉出来一并发送
