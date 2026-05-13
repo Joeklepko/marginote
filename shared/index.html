@@ -1709,9 +1709,9 @@
     white-space: pre-wrap;
   }
   .assistant-msg.user .bubble {
-    background: var(--accent);
-    color: #fff;
-    border-color: transparent;
+    background: #dbeafe;
+    color: #1e3a5f;
+    border-color: #93c5fd;
   }
   .assistant-msg.system .bubble {
     background: var(--bg-warm);
@@ -1793,10 +1793,11 @@
     font-weight: 500;
     transition: all 0.15s;
     flex-shrink: 0;
+    min-height: 36px;
   }
   .assistant-send-btn:hover { opacity: 0.9; }
   .assistant-attach-btn {
-    width: 32px; height: 32px;
+    width: 36px; height: 36px;
     border: 1px solid var(--rule);
     background: var(--paper);
     border-radius: 8px;
@@ -3794,7 +3795,7 @@
             <button class="assistant-attach-btn" id="assistantAttachBtn" title="附加笔记 / 待办">
               <svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24" style="width:16px;height:16px"><path stroke-linecap="round" stroke-linejoin="round" d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48"/></svg>
             </button>
-            <textarea id="assistantInput" rows="2" placeholder="例如：帮我新建待办「查阅机票」，明天 15:00 完成"></textarea>
+            <textarea id="assistantInput" rows="1" placeholder="例如：帮我新建待办「查阅机票」，明天 15:00 完成"></textarea>
             <button class="assistant-send-btn" id="assistantSendBtn">发送</button>
           </div>
         </div>
