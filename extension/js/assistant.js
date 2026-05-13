@@ -533,7 +533,7 @@ function renderAssistantMessage(m) {
         // 尝试从 pendingAttachments 中找回 dataUrl 显示大图
         const matchedImg = typeof pendingAttachments !== 'undefined' ? pendingAttachments.find(p => p.type === 'image' && p.name === a.title) : null;
         if (matchedImg && matchedImg.dataUrl) {
-          html += '<div class="msg-image-attach" style="margin-top:6px; max-width:260px;"><a href="' + matchedImg.dataUrl + '" target="_blank" title="点击查看原图"><img src="' + matchedImg.dataUrl + '" style="width:100%; max-height:200px; object-fit:contain; border-radius:8px; border:1px solid var(--rule-soft); cursor:pointer;"></a></div>';
+          html += '<div class="msg-image-attach" style="margin-top:6px; max-width:260px;"><img src="' + matchedImg.dataUrl + '" data-full-img="' + matchedImg.dataUrl + '" class="chat-img-preview" style="width:100%; max-height:200px; object-fit:contain; border-radius:8px; border:1px solid var(--rule-soft); cursor:zoom-in;" title="点击放大查看"></div>';
         } else {
           html += '<span class="msg-attach-pill" title="图片附件: ' + escapeHtml(a.title || '图片') + '"><span class="attach-type-badge image">图片</span>' + escapeHtml(String(a.title || '图片').slice(0, 30)) + '</span>';
         }
@@ -1057,6 +1057,29 @@ function bindAssistantUi() {
       lastRailId = rid;
     });
   })();
+  // 聊天图片点击 → 全屏灯箱查看
+  const chatBox = document.getElementById('assistantChat');
+  if (chatBox) {
+    chatBox.addEventListener('click', (e) => {
+      const img = e.target.closest('.chat-img-preview');
+      if (!img) return;
+      const src = img.dataset.fullImg || img.src;
+      if (!src) return;
+      // 创建灯箱
+      const overlay = document.createElement('div');
+      overlay.className = 'img-lightbox';
+      overlay.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.85);z-index:9999;display:flex;align-items:center;justify-content:center;cursor:zoom-out;';
+      const lbImg = document.createElement('img');
+      lbImg.src = src;
+      lbImg.style.cssText = 'max-width:94vw;max-height:94vh;object-fit:contain;border-radius:4px;box-shadow:0 4px 48px rgba(0,0,0,0.5);';
+      overlay.appendChild(lbImg);
+      overlay.addEventListener('click', () => overlay.remove());
+      document.addEventListener('keydown', function closeEsc(ev) {
+        if (ev.key === 'Escape') { overlay.remove(); document.removeEventListener('keydown', closeEsc); }
+      });
+      document.body.appendChild(overlay);
+    });
+  }
 }
 
 if (document.readyState === 'loading') {
