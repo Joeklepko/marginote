@@ -187,6 +187,38 @@ function addPendingImage(dataUrl, name) {
   renderPendingAttachments();
 }
 
+// 把图片缩放到 maxDim 边长以内并压成 jpeg，避免上送 base64 过大触发 413
+async function _downscaleImage(dataUrl, maxDim = 1280, quality = 0.85) {
+  if (!dataUrl || typeof dataUrl !== 'string') return dataUrl;
+  return new Promise((resolve) => {
+    try {
+      const img = new Image();
+      img.onload = () => {
+        try {
+          const w = img.naturalWidth || img.width;
+          const h = img.naturalHeight || img.height;
+          if (!w || !h) { resolve(dataUrl); return; }
+          const longest = Math.max(w, h);
+          // 较小或本身较短的直接原样发
+          if (longest <= maxDim && dataUrl.length < 800 * 1024) { resolve(dataUrl); return; }
+          const ratio = Math.min(1, maxDim / longest);
+          const nw = Math.max(1, Math.round(w * ratio));
+          const nh = Math.max(1, Math.round(h * ratio));
+          const canvas = document.createElement('canvas');
+          canvas.width = nw; canvas.height = nh;
+          const ctx = canvas.getContext('2d');
+          ctx.drawImage(img, 0, 0, nw, nh);
+          const out = canvas.toDataURL('image/jpeg', quality);
+          resolve(out && out.length < dataUrl.length ? out : dataUrl);
+        } catch { resolve(dataUrl); }
+      };
+      img.onerror = () => resolve(dataUrl);
+      img.src = dataUrl;
+    } catch { resolve(dataUrl); }
+  });
+}
+window._downscaleImage = _downscaleImage;
+
 function removePendingAttachment(index) {
   pendingAttachments.splice(index, 1);
   renderPendingAttachments();
@@ -238,7 +270,27 @@ function renderAttachmentPickerContent() {
   const activeNotes = notes.filter(n => !n.deleted);
   const activeTodos = todos.slice();
 
-  let html = '<div class="attach-picker-section"><div class="attach-picker-title">📝 笔记</div>';
+  // 图片 section（顶部）
+  const imgAttached = pendingAttachments.filter(a => a.type === 'image');
+  let html = '<div class="attach-picker-section"><div class="attach-picker-title">🖼 图片</div>';
+  html += '<div style="padding:6px 0; display:flex; flex-direction:column; gap:8px;">';
+  html += '<div><button class="modal-btn" id="attachImagePickBtn" type="button">＋ 从本地选择图片</button>';
+  html += '<span style="margin-left:8px; color:var(--ink-mute); font-size:11px;">也可在输入框直接 Ctrl+V 粘贴</span></div>';
+  if (imgAttached.length) {
+    html += '<div style="display:flex; flex-wrap:wrap; gap:8px;">';
+    for (let i = 0; i < pendingAttachments.length; i++) {
+      const a = pendingAttachments[i];
+      if (a.type !== 'image') continue;
+      html += `<div class="attach-image-tile" data-remove-idx="${i}" title="${escapeHtml(a.name || 'image')} — 点击移除" style="position:relative; cursor:pointer; border:1px solid var(--rule); border-radius:6px; overflow:hidden; width:80px; height:80px;">
+        <img src="${a.dataUrl}" style="width:100%; height:100%; object-fit:cover; display:block;">
+        <span style="position:absolute; top:2px; right:4px; background:rgba(0,0,0,0.55); color:#fff; font-size:11px; line-height:14px; padding:0 4px; border-radius:7px;">✕</span>
+      </div>`;
+    }
+    html += '</div>';
+  }
+  html += '</div></div>';
+
+  html += '<div class="attach-picker-section"><div class="attach-picker-title">📝 笔记</div>';
   if (!activeNotes.length) {
     html += '<div class="attach-picker-empty">暂无笔记</div>';
   } else {
@@ -261,6 +313,16 @@ function renderAttachmentPickerContent() {
   html += '</div>';
 
   list.innerHTML = html;
+  const pickBtn = list.querySelector('#attachImagePickBtn');
+  const fileEl = document.getElementById('assistantImageFile');
+  if (pickBtn && fileEl) pickBtn.addEventListener('click', () => fileEl.click());
+  list.querySelectorAll('.attach-image-tile').forEach(tile => {
+    tile.addEventListener('click', () => {
+      const idx = parseInt(tile.dataset.removeIdx, 10);
+      if (!isNaN(idx)) removePendingAttachment(idx);
+      renderAttachmentPickerContent();
+    });
+  });
   list.querySelectorAll('.attach-picker-item').forEach(item => {
     item.addEventListener('click', () => {
       const type = item.dataset.type;
@@ -471,8 +533,13 @@ function renderAssistantMessage(m) {
   if (m.attachments && m.attachments.length) {
     html += '<div class="msg-attachments">';
     for (const a of m.attachments) {
+      if (a.type === 'image') {
+        html += `<span class="msg-attach-pill" title="图片附件: ${escapeHtml(a.title || '图片')}"><span class="attach-type-badge image">🖼</span>${escapeHtml(String(a.title || '图片').slice(0, 30))}</span>`;
+        continue;
+      }
       const badge = a.type === 'note' ? '<span class="attach-type-badge note">md</span>' : '<span class="attach-type-badge todo">✓</span>';
-      html += `<span class="msg-attach-pill" title="${escapeHtml(a.type === 'note' ? '笔记' : '待办')}: ${escapeHtml(a.title)}">${badge}${escapeHtml(a.title.slice(0, 30))}</span>`;
+      const title = a.title || '';
+      html += `<span class="msg-attach-pill" title="${escapeHtml(a.type === 'note' ? '笔记' : '待办')}: ${escapeHtml(title)}">${badge}${escapeHtml(title.slice(0, 30))}</span>`;
     }
     html += '</div>';
   }
@@ -566,7 +633,12 @@ async function runAssistantTurn(userInput) {
   if (assistantBusy) { showToast('AI 正在思考中...'); return; }
   if (!getActiveProvider()) { showToast('请先在「设置 → AI」中配置模型'); openSettingsModal('ai'); return; }
 
-  const attachSnapshot = pendingAttachments.length ? [...pendingAttachments] : undefined;
+  // 持久化到会话历史里的附件快照不写 dataUrl（避免 localStorage 膨胀 + 渲染缺字段崩溃）
+  const attachSnapshot = pendingAttachments.length
+    ? pendingAttachments.map(a => a.type === 'image'
+        ? { type: 'image', title: a.name || '图片' }
+        : { type: a.type, id: a.id, title: a.title })
+    : undefined;
   pushAssistantMessage('user', userInput, attachSnapshot ? { attachments: attachSnapshot } : undefined);
 
   const sysPrompt = buildAssistantSystemPrompt();
@@ -586,14 +658,20 @@ async function runAssistantTurn(userInput) {
           return n && typeof _resolveContentImages === 'function' ? _resolveContentImages(n.content || '') : [];
         })
     : [];
+  // 预先把每张图片缩到 1280px / JPEG，避免 413 + 限速
+  const allImagesAll = [...pendingImages, ...noteAttachmentImages];
+  const downscaled = [];
+  for (const im of allImagesAll) {
+    try { downscaled.push(await _downscaleImage(im.dataUrl, 1280, 0.85)); }
+    catch { downscaled.push(im.dataUrl); }
+  }
   for (let i = 0; i < recent.length; i++) {
     const m = recent[i];
     if (m.role === 'user') {
       const isLast = (i === recent.length - 1);
-      const allImgs = isLast ? [...pendingImages, ...noteAttachmentImages] : [];
-      if (mm && allImgs.length) {
+      if (mm && isLast && downscaled.length) {
         const parts = [{ type: 'text', text: m.content || '' }];
-        for (const im of allImgs) parts.push({ type: 'image_url', image_url: { url: im.dataUrl } });
+        for (const url of downscaled) parts.push({ type: 'image_url', image_url: { url } });
         ctx.push({ role: 'user', content: parts });
       } else {
         ctx.push({ role: 'user', content: m.content });
@@ -864,11 +942,9 @@ function bindAssistantUi() {
   const attachBg = document.getElementById('attachmentPickerBg');
   if (attachBg) attachBg.addEventListener('click', e => { if (e.target.id === 'attachmentPickerBg') closeAttachmentPicker(); });
 
-  // 图片附件：本地文件 + 剪贴板粘贴
-  const imageBtn = document.getElementById('assistantImageBtn');
+  // 图片附件：picker 模态内的本地文件
   const imageFile = document.getElementById('assistantImageFile');
-  if (imageBtn && imageFile) {
-    imageBtn.addEventListener('click', () => imageFile.click());
+  if (imageFile) {
     imageFile.addEventListener('change', async () => {
       const files = Array.from(imageFile.files || []);
       for (const f of files) {
@@ -886,6 +962,7 @@ function bindAssistantUi() {
         }
       }
       imageFile.value = '';
+      renderAttachmentPickerContent();
     });
   }
   const inputForPaste = document.getElementById('assistantInput');

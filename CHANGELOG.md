@@ -30,12 +30,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### 多模态（图片识别）
 
-- **provider 新增 `multimodal` 开关**：AI 设置的模型表单加「支持图片识别」复选框；勾选后笔记 / 待办中的 `![...](img:xxx)` 与聊天图片附件以 OpenAI Vision `image_url` 格式发送
-- **AI 优化**：开启 multimodal 的 provider 调用「润色 / 总结 / 标题 / 自定义指令」等任意 action 时，自动把笔记图片一并发送
-- **AI 助手聊天图片**：
-  - 输入框旁新增 🖼 按钮，可从本地选择多张图片
-  - 直接在输入框 `Ctrl+V` 粘贴剪贴板图片
-  - 笔记附件中的图片会与聊天图片一并以 `image_url` 形式发给模型
+- **provider 新增 `multimodal` 开关**：AI 设置的模型表单加「支持图片识别」复选框；勾选后任意 provider（包括自定义接口）都可作为 vision 通道使用，不再限定具体厂商
+- **AI 优化**：开启 multimodal 的 provider 调用「润色 / 总结 / 标题 / 自定义指令」等任意 action 时，自动把笔记里的 `![...](img:xxx)` 图片解析为 dataUrl 并以 OpenAI Vision `image_url` 格式发送
+- **AI 助手聊天图片**：picker 弹窗新增「🖼 图片」分区（支持本地多选 + 缩略图预览 + 点击移除），输入框 `Ctrl+V` 粘贴剪贴板图片照常生效；笔记附件中的图片与聊天图片一并以 `image_url` 发送
+- **413 / 上下文过大保护**：上送前自动把每张图片缩到 1280px 长边 + JPEG 0.85 重压，避免触发 `Request Entity Too Large`
+- **聊天历史不再因图片崩溃**：保存到会话历史的附件快照不再保留 dataUrl，仅留 type/title 元信息；`renderAssistantMessage` 显式处理 `type:'image'`，修复"发图后整个会话不见了"
+
+### 流式输出兜底
+
+- **服务端不支持 SSE 时模拟流式**：`callAi` 包装器在响应 `content-type` 非 `event-stream` 或走 HTTP 后台桥时，会把完整回复按 6 字符 / 14ms 节奏回放到 `onDelta`，让 UI 也有"打字"观感
+- **AI 优化 / AI 助手** 任意 provider 现都能看到流式效果（即使后端是一次性返回）
+
+### 标题总结
+
+- prompt 不再要求 emoji 前缀；`cleanTitleText` 额外剥离开头的 emoji 字符；菜单 label 改为「标题总结」
+- 输出风格统一为 `[核心主题] - [关键动作/状态]` 纯文本
+
+### 体验
+
+- AI 设置「支持图片识别」复选框去掉冗长解释文字，复选框 / 标签垂直居中对齐
+- AI 助手输入框去掉单独的图片按钮，统一从「附件」按钮进入 picker（旧版布局），消除原生 file input 显示「选择文件 / 未选择文件」的视觉打扰
 
 ### 存储
 
