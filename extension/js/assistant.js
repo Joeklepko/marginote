@@ -199,8 +199,8 @@ async function _downscaleImage(dataUrl, maxDim = 1280, quality = 0.85) {
           const h = img.naturalHeight || img.height;
           if (!w || !h) { resolve(dataUrl); return; }
           const longest = Math.max(w, h);
-          // 较小或本身较短的直接原样发
-          if (longest <= maxDim && dataUrl.length < 800 * 1024) { resolve(dataUrl); return; }
+          // 超过阈值才重压，避免小图无谓损耗
+          if (longest <= maxDim && dataUrl.length < 200 * 1024) { resolve(dataUrl); return; }
           const ratio = Math.min(1, maxDim / longest);
           const nw = Math.max(1, Math.round(w * ratio));
           const nh = Math.max(1, Math.round(h * ratio));
@@ -274,14 +274,14 @@ function renderAttachmentPickerContent() {
   const imgAttached = pendingAttachments.filter(a => a.type === 'image');
   let html = '<div class="attach-picker-section"><div class="attach-picker-title">🖼 图片</div>';
   html += '<div style="padding:6px 0; display:flex; flex-direction:column; gap:8px;">';
-  html += '<div><button class="modal-btn" id="attachImagePickBtn" type="button">＋ 从本地选择图片</button>';
-  html += '<span style="margin-left:8px; color:var(--ink-mute); font-size:11px;">也可在输入框直接 Ctrl+V 粘贴</span></div>';
+  html += '<div><button class="modal-btn" id="attachImagePickBtn" type="button">本地上传</button>';
+  html += '</div>';
   if (imgAttached.length) {
     html += '<div style="display:flex; flex-wrap:wrap; gap:8px;">';
     for (let i = 0; i < pendingAttachments.length; i++) {
       const a = pendingAttachments[i];
       if (a.type !== 'image') continue;
-      html += `<div class="attach-image-tile" data-remove-idx="${i}" title="${escapeHtml(a.name || 'image')} — 点击移除" style="position:relative; cursor:pointer; border:1px solid var(--rule); border-radius:6px; overflow:hidden; width:80px; height:80px;">
+      html += `<div class="attach-image-tile" data-remove-idx="${i}" title="${escapeHtml(a.name || 'image')} — 点击移除" style="position:relative; cursor:pointer; border:1px solid var(--rule); border-radius:6px; overflow:hidden; width:56px; height:56px;">
         <img src="${a.dataUrl}" style="width:100%; height:100%; object-fit:cover; display:block;">
         <span style="position:absolute; top:2px; right:4px; background:rgba(0,0,0,0.55); color:#fff; font-size:11px; line-height:14px; padding:0 4px; border-radius:7px;">✕</span>
       </div>`;
@@ -596,13 +596,18 @@ function summarizeActionResult(name, result) {
 }
 
 // 流式中从未完成 JSON 中提取 "reply": "...部分..." 的可见字符
+// 若找不到 JSON reply 字段则回退到显示纯净文本（避免推理模型前端空白）
 function _extractStreamingReply(s) {
   if (!s) return '';
   let body = s;
   const fence = s.match(/```(?:json)?\s*([\s\S]*)/i);
   if (fence) body = fence[1];
   const idx = body.search(/"reply"\s*:\s*"/);
-  if (idx < 0) return '';
+  if (idx < 0) {
+    // 回退：若暂未出现 JSON reply 字段，展示最后 200 字符的纯文本（丢弃代码块标记）
+    const clean = s.replace(/```[\s\S]*$/g, '').replace(/^[\s\S]*?```(?:json)?\s*/g, '');
+    return clean.slice(-200).trim();
+  }
   const afterKey = body.slice(idx).match(/"reply"\s*:\s*"([\s\S]*)$/);
   if (!afterKey) return '';
   const raw = afterKey[1];
