@@ -167,4 +167,29 @@
   };
 
   if (window.mn._readyResolve) window.mn._readyResolve();
+
+  // ===== WebView2 CSS 修复：Flexbox align-items:center + 超高子元素裁切 =====
+  // Chrome 对此容忍度高，WebView2 会严格裁切导致弹窗顶部/底部不可见。
+  // 只在 body.is-desktop 下生效，不影响浏览器插件版本。
+  (function injectDesktopCssPatch() {
+    const style = document.createElement('style');
+    style.textContent = `
+      body.is-desktop .modal-bg.show {
+        align-items: flex-start;
+        overflow-y: auto;
+        padding: 5vh 0;
+      }
+      body.is-desktop .modal {
+        contain: layout style;
+        transform: translateZ(0);
+      }
+      body.is-desktop #versionModalBg #versionList {
+        min-height: 0;
+      }
+      body.is-desktop #versionModalBg #versionPreviewContent {
+        min-height: 0;
+      }
+    `;
+    document.head.appendChild(style);
+  })();
 })();
