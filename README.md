@@ -6,7 +6,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
 [![Manifest V3](https://img.shields.io/badge/Manifest-V3-blue.svg)](https://developer.chrome.com/docs/extensions/mv3/intro/)
-[![Version](https://img.shields.io/badge/version-1.2.0-green.svg)](./extension/manifest.json)
+[![Version](https://img.shields.io/badge/version-1.2.1-green.svg)](./extension/manifest.json)
 [![Chrome](https://img.shields.io/badge/Chrome-supported-success.svg)](https://www.google.com/chrome/)
 [![Edge](https://img.shields.io/badge/Edge-supported-success.svg)](https://www.microsoft.com/edge)
 [![Windows](https://img.shields.io/badge/Windows-.exe-blue.svg)](https://github.com/Joeklepko/marginote/releases)

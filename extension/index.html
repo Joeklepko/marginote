@@ -1196,13 +1196,13 @@
     border: none;
     background: transparent;
     font-family: 'Fraunces', 'Noto Serif SC', serif;
-    font-size: 32px;
+    font-size: 22px;
     font-weight: 500;
-    line-height: 1.15;
+    line-height: 1.2;
     color: var(--ink);
-    letter-spacing: -0.02em;
+    letter-spacing: -0.01em;
     outline: none;
-    margin-bottom: 4px;
+    margin-bottom: 2px;
     font-feature-settings: "ss01";
     caret-color: #c9532a;
   }
@@ -1216,8 +1216,8 @@
     display: flex;
     gap: 8px;
     align-items: center;
-    margin-bottom: 16px;
-    padding-bottom: 12px;
+    margin-bottom: 10px;
+    padding-bottom: 8px;
     border-bottom: 1px solid var(--rule-soft);
     flex-wrap: wrap;
   }
@@ -1459,17 +1459,11 @@
   .preview a:hover { background: rgba(184, 67, 31, 0.08); }
   .preview hr {
     border: none;
-    text-align: center;
-    margin: 1.2em 0;
-    color: var(--rule);
+    border-top: 1px solid var(--rule);
+    margin: 1.6em 0;
+    height: 0;
   }
-  .preview hr::after {
-    content: '· · ·';
-    font-family: 'Fraunces', serif;
-    font-size: 18px;
-    letter-spacing: 0.5em;
-    color: var(--ink-mute);
-  }
+  .preview hr::after { content: none; }
   .preview mark {
     background: var(--highlight);
     padding: 0 4px;
@@ -1845,7 +1839,7 @@
   @media (max-width: 1024px) {
     .app { grid-template-columns: 220px 280px 1fr; }
     .editor-content { padding: 24px 48px 64px; }
-    .title-input { font-size: 26px; }
+    .title-input { font-size: 20px; }
   }
   @media (max-width: 768px) {
     .app { grid-template-columns: 1fr; }
@@ -3884,7 +3878,7 @@
 
       <!-- AI -->
       <div class="settings-pane" data-pane="ai">
-        <p style="color: var(--ink-soft); font-size: 13px; margin-bottom: 16px;">配置OpenAI兼容的模型接口。公司内部禁止接入外部模型，违反后果自负。</p>
+        <p style="color: var(--ink-soft); font-size: 13px; margin-bottom: 16px;">配置OpenAI兼容的模型接口</p>
         <p class="settings-section-title">已配置模型</p>
         <div class="ai-provider-list" id="aiProviderList"></div>
         <div class="ai-add-row">
