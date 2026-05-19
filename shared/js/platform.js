@@ -43,6 +43,8 @@
       setAutostart: () => Promise.resolve(),
       registerHotkey: () => Promise.resolve(),
       unregisterHotkey: () => Promise.resolve(),
+      getAppPaths: () => Promise.resolve(null),     // () → Promise<{data_dir, kv_file, webview_dir}|null>
+      setWindowTheme: () => Promise.resolve(),       // (mode: 'dark'|'light'|'system') → Promise<void>
     },
   };
 

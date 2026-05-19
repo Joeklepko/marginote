@@ -210,3 +210,46 @@ pub async fn cmd_kv_remove(app: AppHandle, key: String) -> Result<(), String> {
 pub async fn cmd_kv_keys(app: AppHandle) -> Result<Vec<String>, String> {
     Ok(storage::keys(&app))
 }
+
+// ---------- 应用数据目录（用于设置·数据·备份显示真实路径） ----------
+
+#[derive(Debug, Serialize)]
+pub struct AppPaths {
+    /// app_data_dir，例：%APPDATA%\com.marginote.app
+    pub data_dir: String,
+    /// marginote.dat 全路径（mn.platform.storage 写在这里）
+    pub kv_file: String,
+    /// WebView2 实例目录（笔记 / 待办 bulk 数据走 localStorage 实际落地点）
+    pub webview_dir: String,
+}
+
+#[tauri::command]
+pub async fn cmd_get_app_paths(app: AppHandle) -> Result<AppPaths, String> {
+    let data_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("app_data_dir: {e}"))?;
+    let kv_file = data_dir.join(crate::storage::FILE);
+    // WebView2 在 app_data_dir 下的 EBWebView/Default/Local Storage（Tauri 2 默认）
+    let webview_dir = data_dir.join("EBWebView").join("Default").join("Local Storage");
+    Ok(AppPaths {
+        data_dir: data_dir.to_string_lossy().to_string(),
+        kv_file: kv_file.to_string_lossy().to_string(),
+        webview_dir: webview_dir.to_string_lossy().to_string(),
+    })
+}
+
+// ---------- 窗口主题（Windows 标题栏跟随应用主题） ----------
+
+#[tauri::command]
+pub async fn cmd_set_window_theme(window: tauri::Window, mode: String) -> Result<(), String> {
+    use tauri::Theme;
+    let theme = match mode.as_str() {
+        "dark" => Some(Theme::Dark),
+        "light" => Some(Theme::Light),
+        _ => None, // 跟随系统
+    };
+    window
+        .set_theme(theme)
+        .map_err(|e| format!("set_theme: {e}"))
+}
