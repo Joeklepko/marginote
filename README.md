@@ -6,7 +6,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
 [![Manifest V3](https://img.shields.io/badge/Manifest-V3-blue.svg)](https://developer.chrome.com/docs/extensions/mv3/intro/)
-[![Version](https://img.shields.io/badge/version-1.1.0-green.svg)](./extension/manifest.json)
+[![Version](https://img.shields.io/badge/version-1.2.0-green.svg)](./extension/manifest.json)
 [![Chrome](https://img.shields.io/badge/Chrome-supported-success.svg)](https://www.google.com/chrome/)
 [![Edge](https://img.shields.io/badge/Edge-supported-success.svg)](https://www.microsoft.com/edge)
 [![Windows](https://img.shields.io/badge/Windows-.exe-blue.svg)](https://github.com/Joeklepko/marginote/releases)
@@ -55,13 +55,11 @@
 
 ```bash
 git clone -b dev_exe https://github.com/Joeklepko/marginote.git
-cd marginote/extension
-bash build.sh                       # 把 ../shared/ 拷进 extension/，使其自包含
 ```
 
 1. 浏览器打开 `chrome://extensions/`（Edge 用 `edge://extensions/`）
 2. 右上角开启 **开发者模式**
-3. 点击 **加载已解压的扩展程序** → 选择 `marginote/extension/` 目录
+3. 点击 **加载已解压的扩展程序** → 选择 `marginote/extension/` 目录（扩展已自包含，无需额外构建）
 4. 点工具栏 Marginote 图标即可使用
 
 > 提示：在 master 分支老结构上，扩展文件直接在仓库根目录，加载该目录即可。`dev_exe` 之后做了 monorepo 重组。

@@ -1,22 +1,6 @@
 #!/usr/bin/env bash
 # Marginote · Chrome 扩展构建脚本
-# 把 ../shared/* 拷进当前目录，让 extension/ 成为自包含的 Chrome 扩展根。
-# 拷入的副本被 .gitignore 忽略。
-set -euo pipefail
-
-cd "$(dirname "$0")"
-SHARED="../shared"
-
-if [ ! -d "$SHARED" ]; then
-  echo "error: $SHARED not found (must run from extension/ directory)" >&2
-  exit 1
-fi
-
-# 清理上次拷入的内容（保留 manifest.json / background.js / build.sh）
-rm -rf icons images js vendor index.html app.js manual.md
-
-# 拷贝 shared 全部内容到当前目录
-cp -R "$SHARED"/. .
-
-echo "✔ Extension built at: $(pwd)"
-echo "  Load this directory as unpacked extension in Chrome (chrome://extensions → 加载已解压的扩展程序)."
+# ⚠️ 此脚本已弃用。扩展已改为自包含，下载后直接在 Chrome 加载 extension/ 目录即可，无需运行此脚本。
+# 本文件保留仅用于兼容旧文档。删除此文件不影响任何功能。
+echo "⚠️  Marginote 扩展已自包含，无需运行 build.sh。在 Chrome 中直接加载 extension/ 目录即可。"
+exit 0
