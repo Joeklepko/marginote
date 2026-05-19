@@ -5,6 +5,28 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.0-desktop] - 2026-05-10
+
+### Added
+- **Windows 桌面版**（Tauri 2 + WebView2，`.exe` 安装包约 12MB）
+- 系统托盘图标：左键单击显示窗口、菜单可显示 / 退出
+- 关闭最小化到托盘：× 不退出、托盘菜单"退出"才真正结束进程
+- 全局快捷键：默认 `Ctrl+Shift+M` 唤起（可在「设置 → 桌面」自定义）
+- 开机自启选项（仅桌面版）
+- 单实例：第二次启动自动唤起首个窗口
+- 数据迁移：从 Chrome 扩展导出 zip 在桌面版导入即可
+- GitHub Actions 自动构建：推 `dev_exe` 分支即出 `.exe` artifact，打 tag 自动发 Release
+
+### Changed
+- 仓库结构重组为 monorepo：`shared/`（应用核心）+ `extension/`（Chrome 壳）+ `desktop/`（Tauri 壳）
+- 引入 `mn.platform` 平台抽象层，业务代码不再直接调 `chrome.*`，扩展和桌面共享 90%+ 代码
+- 数据存储：扩展端继续 `chrome.storage.local`；桌面端用 `marginote.dat`（在 `%APPDATA%\com.marginote.app\`）
+- AI 代理 fetch 桌面端走 Rust `reqwest`，比扩展端 PAC 脚本更稳定，HTTP/HTTPS/SOCKS 都支持
+
+### Notes
+- 扩展版（master 分支）功能完全不受影响，老用户继续用扩展无障碍
+- 详细设计与实施方案见 [`docs/superpowers/specs/2026-05-10-windows-desktop-design.md`](docs/superpowers/specs/2026-05-10-windows-desktop-design.md)
+
 ## [1.1.0] - 2026-05-07
 
 ### Added
