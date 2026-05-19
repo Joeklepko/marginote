@@ -80,7 +80,7 @@ const THEME_VAR_NAMES = ['--bg','--bg-warm','--paper','--ink','--ink-soft','--in
 const REGION_VAR_MAP = {
   rail:    { sel: '.rail',    bg: '--bg-warm', ink: '--ink-soft' },
   sidebar: { sel: '.sidebar', bg: '--bg',      ink: '--ink' },
-  editor:  { sel: '.editor',  bg: '--paper',   ink: '--ink-soft' }
+  editor:  { sel: '.editor',  bg: '--paper',   ink: '--ink' }
 };
 let currentThemePreset = 'light';
 

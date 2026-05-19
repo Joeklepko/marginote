@@ -173,13 +173,51 @@ function clearActiveSessionHistory() {
 
 // ===================== 附件管理 =====================
 
-let pendingAttachments = [];   // [{type: 'note'|'todo', id, title}]
+let pendingAttachments = [];   // [{type: 'note'|'todo', id, title} | {type:'image', dataUrl, name}]
 
 function addPendingAttachment(type, id, title) {
   if (pendingAttachments.some(a => a.type === type && a.id === id)) return;
   pendingAttachments.push({ type, id, title: String(title || '') });
   renderPendingAttachments();
 }
+
+function addPendingImage(dataUrl, name) {
+  if (!dataUrl) return;
+  pendingAttachments.push({ type: 'image', dataUrl, name: String(name || 'image') });
+  renderPendingAttachments();
+}
+
+// 把图片缩放到 maxDim 边长以内并压成 jpeg，避免上送 base64 过大触发 413
+async function _downscaleImage(dataUrl, maxDim = 1280, quality = 0.85) {
+  if (!dataUrl || typeof dataUrl !== 'string') return dataUrl;
+  return new Promise((resolve) => {
+    try {
+      const img = new Image();
+      img.onload = () => {
+        try {
+          const w = img.naturalWidth || img.width;
+          const h = img.naturalHeight || img.height;
+          if (!w || !h) { resolve(dataUrl); return; }
+          const longest = Math.max(w, h);
+          // 超过阈值才重压，避免小图无谓损耗
+          if (longest <= maxDim && dataUrl.length < 200 * 1024) { resolve(dataUrl); return; }
+          const ratio = Math.min(1, maxDim / longest);
+          const nw = Math.max(1, Math.round(w * ratio));
+          const nh = Math.max(1, Math.round(h * ratio));
+          const canvas = document.createElement('canvas');
+          canvas.width = nw; canvas.height = nh;
+          const ctx = canvas.getContext('2d');
+          ctx.drawImage(img, 0, 0, nw, nh);
+          const out = canvas.toDataURL('image/jpeg', quality);
+          resolve(out && out.length < dataUrl.length ? out : dataUrl);
+        } catch { resolve(dataUrl); }
+      };
+      img.onerror = () => resolve(dataUrl);
+      img.src = dataUrl;
+    } catch { resolve(dataUrl); }
+  });
+}
+window._downscaleImage = _downscaleImage;
 
 function removePendingAttachment(index) {
   pendingAttachments.splice(index, 1);
@@ -199,8 +237,15 @@ function renderPendingAttachments() {
     return;
   }
   el.innerHTML = pendingAttachments.map((a, i) => {
+    if (a.type === 'image') {
+      return `<span class="attach-pill image" title="图片附件 — 点击移除" data-remove="${i}" style="display:inline-flex;align-items:center;gap:4px;">
+        <img src="${a.dataUrl}" style="width:20px;height:20px;object-fit:cover;border-radius:3px;vertical-align:middle">
+        ${escapeHtml((a.name || 'image').slice(0, 20))}
+      </span>`;
+    }
     const badge = a.type === 'note' ? '<span class="attach-type-badge note">md</span>' : '<span class="attach-type-badge todo">✓</span>';
-    return `<span class="attach-pill" title="${escapeHtml(a.type === 'note' ? '笔记' : '待办')}: ${escapeHtml(a.title)} — 点击移除" data-remove="${i}">${badge}${escapeHtml(a.title.slice(0, 24))}${a.title.length > 24 ? '…' : ''}</span>`;
+    const title = a.title || '';
+    return `<span class="attach-pill" title="${escapeHtml(a.type === 'note' ? '笔记' : '待办')}: ${escapeHtml(title)} — 点击移除" data-remove="${i}">${badge}${escapeHtml(title.slice(0, 24))}${title.length > 24 ? '…' : ''}</span>`;
   }).join('');
   el.querySelectorAll('.attach-pill').forEach(pill => {
     pill.addEventListener('click', () => removePendingAttachment(parseInt(pill.dataset.remove)));
@@ -225,7 +270,23 @@ function renderAttachmentPickerContent() {
   const activeNotes = notes.filter(n => !n.deleted);
   const activeTodos = todos.slice();
 
-  let html = '<div class="attach-picker-section"><div class="attach-picker-title">📝 笔记</div>';
+  // 图片上传
+  const imgAttached = pendingAttachments.filter(a => a.type === 'image');
+  let html = '<div style="padding:4px 0 10px;"><button class="modal-btn" id="attachImagePickBtn" type="button">本地上传</button></div>';
+  if (imgAttached.length) {
+    html += '<div style="display:flex; flex-wrap:wrap; gap:8px;">';
+    for (let i = 0; i < pendingAttachments.length; i++) {
+      const a = pendingAttachments[i];
+      if (a.type !== 'image') continue;
+      html += `<div class="attach-image-tile" data-remove-idx="${i}" title="${escapeHtml(a.name || 'image')} — 点击移除" style="position:relative; cursor:pointer; border:1px solid var(--rule); border-radius:6px; overflow:hidden; width:56px; height:56px;">
+        <img src="${a.dataUrl}" style="width:100%; height:100%; object-fit:cover; display:block;">
+        <span style="position:absolute; top:2px; right:4px; background:rgba(0,0,0,0.55); color:#fff; font-size:11px; line-height:14px; padding:0 4px; border-radius:7px;">✕</span>
+      </div>`;
+    }
+    html += '</div>';
+  }
+
+  html += '<div class="attach-picker-section"><div class="attach-picker-title">📝 笔记</div>';
   if (!activeNotes.length) {
     html += '<div class="attach-picker-empty">暂无笔记</div>';
   } else {
@@ -248,6 +309,16 @@ function renderAttachmentPickerContent() {
   html += '</div>';
 
   list.innerHTML = html;
+  const pickBtn = list.querySelector('#attachImagePickBtn');
+  const fileEl = document.getElementById('assistantImageFile');
+  if (pickBtn && fileEl) pickBtn.addEventListener('click', () => fileEl.click());
+  list.querySelectorAll('.attach-image-tile').forEach(tile => {
+    tile.addEventListener('click', () => {
+      const idx = parseInt(tile.dataset.removeIdx, 10);
+      if (!isNaN(idx)) removePendingAttachment(idx);
+      renderAttachmentPickerContent();
+    });
+  });
   list.querySelectorAll('.attach-picker-item').forEach(item => {
     item.addEventListener('click', () => {
       const type = item.dataset.type;
@@ -382,10 +453,13 @@ function buildAssistantSystemPrompt() {
   let attachInfo = '';
   if (pendingAttachments.length) {
     const parts = [];
+    let imgCount = 0;
     for (const a of pendingAttachments) {
       if (a.type === 'note') { const n = notes.find(x => x.id === a.id); if (n) parts.push(`[笔记附件: id=${n.id}, 标题=${n.title || '(无标题)'}, 内容=${(n.content || '').slice(0, 2000)}]`); }
       else if (a.type === 'todo') { const t = todos.find(x => x.id === a.id); if (t) parts.push(`[待办附件: id=${t.id}, 标题=${t.text}, 完成=${t.done ? '是' : '否'}, 内容=${(t.content || '').slice(0, 2000)}, 截止=${t.dueDate ? new Date(t.dueDate).toISOString() : '无'}]`); }
+      else if (a.type === 'image') { imgCount++; }
     }
+    if (imgCount) parts.push(`[图片附件: ${imgCount} 张（已作为 image_url 部分附在最后一条用户消息中，请直接读取并理解）]`);
     if (parts.length) { attachInfo = '\n\n【当前附件】\n' + parts.join('\n') + '\n【注意】修改附件内容时使用 update_note / update_todo，不传 id 时自动使用附件中的第一个对应类型。'; }
   }
   return `你是 Marginote 笔记应用内置的 AI 助手，帮用户管理笔记和待办。
@@ -455,8 +529,19 @@ function renderAssistantMessage(m) {
   if (m.attachments && m.attachments.length) {
     html += '<div class="msg-attachments">';
     for (const a of m.attachments) {
+      if (a.type === 'image') {
+        // 尝试从 pendingAttachments 中找回 dataUrl 显示大图
+        const matchedImg = typeof pendingAttachments !== 'undefined' ? pendingAttachments.find(p => p.type === 'image' && p.name === a.title) : null;
+        if (matchedImg && matchedImg.dataUrl) {
+          html += '<div class="msg-image-attach" style="margin-top:6px; max-width:260px;"><img src="' + matchedImg.dataUrl + '" data-full-img="' + matchedImg.dataUrl + '" class="chat-img-preview" style="width:100%; max-height:200px; object-fit:contain; border-radius:8px; border:1px solid var(--rule-soft); cursor:zoom-in;" title="点击放大查看"></div>';
+        } else {
+          html += '<span class="msg-attach-pill" title="图片附件: ' + escapeHtml(a.title || '图片') + '"><span class="attach-type-badge image">图片</span>' + escapeHtml(String(a.title || '图片').slice(0, 30)) + '</span>';
+        }
+        continue;
+      }
       const badge = a.type === 'note' ? '<span class="attach-type-badge note">md</span>' : '<span class="attach-type-badge todo">✓</span>';
-      html += `<span class="msg-attach-pill" title="${escapeHtml(a.type === 'note' ? '笔记' : '待办')}: ${escapeHtml(a.title)}">${badge}${escapeHtml(a.title.slice(0, 30))}</span>`;
+      const title = a.title || '';
+      html += `<span class="msg-attach-pill" title="${escapeHtml(a.type === 'note' ? '笔记' : '待办')}: ${escapeHtml(title)}">${badge}${escapeHtml(title.slice(0, 30))}</span>`;
     }
     html += '</div>';
   }
@@ -493,7 +578,7 @@ function setAssistantTyping(on) {
   if (on) {
     const div = document.createElement('div');
     div.className = 'assistant-msg bot assistant-typing-msg';
-    div.innerHTML = `<span class="role">AI</span><div class="bubble"><span class="assistant-typing"><span></span><span></span><span></span></span></div>`;
+    div.innerHTML = `<span class="role">AI</span><div class="bubble"><span class="assistant-typing"><span></span><span></span><span></span></span> <span style="color:var(--ink-mute);font-size:11px;">思考中…</span></div>`;
     box.appendChild(div);
     box.scrollTop = box.scrollHeight;
   }
@@ -512,19 +597,98 @@ function summarizeActionResult(name, result) {
   return '';
 }
 
+// 流式中从未完成 JSON 中提取 "reply": "...部分..." 的可见字符
+// 若找不到 JSON reply 字段则回退到显示纯净文本（避免推理模型前端空白）
+function _extractStreamingReply(s) {
+  if (!s) return '';
+  let body = s;
+  const fence = s.match(/```(?:json)?\s*([\s\S]*)/i);
+  if (fence) body = fence[1];
+  const idx = body.search(/"reply"\s*:\s*"/);
+  if (idx < 0) {
+    // 回退：若暂未出现 JSON reply 字段，展示最后 200 字符的纯文本（丢弃代码块标记）
+    const clean = s.replace(/```[\s\S]*$/g, '').replace(/^[\s\S]*?```(?:json)?\s*/g, '');
+    return clean.slice(-200).trim();
+  }
+  const afterKey = body.slice(idx).match(/"reply"\s*:\s*"([\s\S]*)$/);
+  if (!afterKey) return '';
+  const raw = afterKey[1];
+  let result = '';
+  for (let i = 0; i < raw.length; i++) {
+    const c = raw[i];
+    if (c === '\\') {
+      const nx = raw[i + 1];
+      if (nx === 'n') { result += '\n'; i++; }
+      else if (nx === 't') { result += '\t'; i++; }
+      else if (nx === '"') { result += '"'; i++; }
+      else if (nx === '\\') { result += '\\'; i++; }
+      else if (nx === 'r') { i++; }
+      else if (nx === 'u' && raw.length >= i + 6) {
+        const code = parseInt(raw.slice(i + 2, i + 6), 16);
+        if (!isNaN(code)) { result += String.fromCharCode(code); i += 5; } else { result += c; }
+      }
+      else if (nx) { result += nx; i++; }
+      continue;
+    }
+    if (c === '"') break;
+    result += c;
+  }
+  return result;
+}
+
 async function runAssistantTurn(userInput) {
   if (assistantBusy) { showToast('AI 正在思考中...'); return; }
   if (!getActiveProvider()) { showToast('请先在「设置 → AI」中配置模型'); openSettingsModal('ai'); return; }
 
-  const attachSnapshot = pendingAttachments.length ? [...pendingAttachments] : undefined;
+  // 持久化到会话历史里的附件快照不写 dataUrl（避免 localStorage 膨胀 + 渲染缺字段崩溃）
+  const attachSnapshot = pendingAttachments.length
+    ? pendingAttachments.map(a => a.type === 'image'
+        ? { type: 'image', title: a.name || '图片' }
+        : { type: a.type, id: a.id, title: a.title })
+    : undefined;
   pushAssistantMessage('user', userInput, attachSnapshot ? { attachments: attachSnapshot } : undefined);
 
   const sysPrompt = buildAssistantSystemPrompt();
   const ctx = [{ role: 'system', content: sysPrompt }];
   const s = getActiveSession();
   const recent = (s?.messages || []).slice(-12);
-  for (const m of recent) {
-    if (m.role === 'user') ctx.push({ role: 'user', content: m.content });
+  const provider = getActiveProvider();
+  const mm = !!(provider && provider.multimodal);
+  // 如果有图片附件但未开启多模态，提醒用户
+  const hasImages = pendingAttachments.some(a => a.type === 'image');
+  if (hasImages && !mm) {
+    if (typeof showToast === 'function') showToast('当前模型未开启「支持图片识别」，图片附件将被忽略。请在 AI 设置中勾选该模型的「支持图片识别」复选框。');
+  }
+  // 收集图片附件（仅当本轮多模态启用时生效）
+  const pendingImages = mm ? pendingAttachments.filter(a => a.type === 'image') : [];
+  // 同时也把笔记附件里包含的 img:<id> 拉出来一并发送
+  const noteAttachmentImages = mm
+    ? pendingAttachments
+        .filter(a => a.type === 'note')
+        .flatMap(a => {
+          const n = notes.find(x => x.id === a.id);
+          return n && typeof _resolveContentImages === 'function' ? _resolveContentImages(n.content || '') : [];
+        })
+    : [];
+  // 预先把每张图片缩到 1280px / JPEG，避免 413 + 限速
+  const allImagesAll = [...pendingImages, ...noteAttachmentImages];
+  const downscaled = [];
+  for (const im of allImagesAll) {
+    try { downscaled.push(await _downscaleImage(im.dataUrl, 1280, 0.85)); }
+    catch { downscaled.push(im.dataUrl); }
+  }
+  for (let i = 0; i < recent.length; i++) {
+    const m = recent[i];
+    if (m.role === 'user') {
+      const isLast = (i === recent.length - 1);
+      if (mm && isLast && downscaled.length) {
+        const parts = [{ type: 'text', text: m.content || '' }];
+        for (const url of downscaled) parts.push({ type: 'image_url', image_url: { url } });
+        ctx.push({ role: 'user', content: parts });
+      } else {
+        ctx.push({ role: 'user', content: m.content });
+      }
+    }
     else if (m.role === 'assistant') ctx.push({ role: 'assistant', content: m.content });
     else if (m.role === 'system') ctx.push({ role: 'user', content: '【工具结果】' + m.content });
   }
@@ -535,7 +699,29 @@ async function runAssistantTurn(userInput) {
     while (iter++ < 4) {
       setAssistantTyping(true);
       let raw;
-      try { raw = await callAi(ctx, { temperature: 0.3 }); } finally { setAssistantTyping(false); }
+      try {
+        // 流式输出：边收到 token 边在 typing 气泡中显示提取出的 reply 文本，
+        // 完整结果出来后再走原有 parseAssistantReply 流程。
+        let liveBubble = null;
+        raw = await callAi(ctx, {
+          temperature: 0.3,
+          stream: true,
+          onDelta: (delta, full) => {
+            const box = document.getElementById('assistantChat');
+            if (!box) return;
+            if (!liveBubble) {
+              box.querySelectorAll('.assistant-typing-msg').forEach(el => el.remove());
+              const div = document.createElement('div');
+              div.className = 'assistant-msg bot assistant-typing-msg';
+              div.innerHTML = '<span class="role">AI</span><div class="bubble"></div>';
+              box.appendChild(div);
+              liveBubble = div.querySelector('.bubble');
+            }
+            liveBubble.textContent = _extractStreamingReply(full);
+            box.scrollTop = box.scrollHeight;
+          }
+        });
+      } finally { setAssistantTyping(false); }
 
       const parsed = parseAssistantReply(raw);
       const actionMeta = [];
@@ -768,6 +954,55 @@ function bindAssistantUi() {
   const attachBg = document.getElementById('attachmentPickerBg');
   if (attachBg) attachBg.addEventListener('click', e => { if (e.target.id === 'attachmentPickerBg') closeAttachmentPicker(); });
 
+  // 图片附件：picker 模态内的本地文件
+  const imageFile = document.getElementById('assistantImageFile');
+  if (imageFile) {
+    imageFile.addEventListener('change', async () => {
+      const files = Array.from(imageFile.files || []);
+      for (const f of files) {
+        if (!f.type.startsWith('image/')) continue;
+        try {
+          const dataUrl = await new Promise((resolve, reject) => {
+            const r = new FileReader();
+            r.onload = () => resolve(r.result);
+            r.onerror = reject;
+            r.readAsDataURL(f);
+          });
+          addPendingImage(dataUrl, f.name);
+        } catch (e) {
+          if (typeof showToast === 'function') showToast('图片读取失败');
+        }
+      }
+      imageFile.value = '';
+      renderAttachmentPickerContent();
+    });
+  }
+  const inputForPaste = document.getElementById('assistantInput');
+  if (inputForPaste) {
+    inputForPaste.addEventListener('paste', async (e) => {
+      const items = e.clipboardData && e.clipboardData.items;
+      if (!items) return;
+      let consumed = false;
+      for (const it of items) {
+        if (it.kind === 'file' && it.type && it.type.startsWith('image/')) {
+          const f = it.getAsFile();
+          if (!f) continue;
+          consumed = true;
+          try {
+            const dataUrl = await new Promise((resolve, reject) => {
+              const r = new FileReader();
+              r.onload = () => resolve(r.result);
+              r.onerror = reject;
+              r.readAsDataURL(f);
+            });
+            addPendingImage(dataUrl, f.name || ('pasted-' + Date.now() + '.png'));
+          } catch {}
+        }
+      }
+      if (consumed) e.preventDefault();
+    });
+  }
+
   // 发送
   const send = document.getElementById('assistantSendBtn');
   const input = document.getElementById('assistantInput');
@@ -822,6 +1057,30 @@ function bindAssistantUi() {
       lastRailId = rid;
     });
   })();
+
+  // 聊天图片点击 → 全屏灯箱查看
+  const chatBox = document.getElementById('assistantChat');
+  if (chatBox) {
+    chatBox.addEventListener('click', (e) => {
+      const img = e.target.closest('.chat-img-preview');
+      if (!img) return;
+      const src = img.dataset.fullImg || img.src;
+      if (!src) return;
+      // 创建灯箱
+      const overlay = document.createElement('div');
+      overlay.className = 'img-lightbox';
+      overlay.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.85);z-index:9999;display:flex;align-items:center;justify-content:center;cursor:zoom-out;';
+      const lbImg = document.createElement('img');
+      lbImg.src = src;
+      lbImg.style.cssText = 'max-width:94vw;max-height:94vh;object-fit:contain;border-radius:4px;box-shadow:0 4px 48px rgba(0,0,0,0.5);';
+      overlay.appendChild(lbImg);
+      overlay.addEventListener('click', () => overlay.remove());
+      document.addEventListener('keydown', function closeEsc(ev) {
+        if (ev.key === 'Escape') { overlay.remove(); document.removeEventListener('keydown', closeEsc); }
+      });
+      document.body.appendChild(overlay);
+    });
+  }
 }
 
 if (document.readyState === 'loading') {
