@@ -3314,6 +3314,120 @@
   }
   .attach-picker-item:hover { background: var(--bg-warm); }
   .attach-picker-item.selected { background: var(--bg-warm); color: var(--accent); font-weight: 500; }
+
+  /* ====== 图片放大 Lightbox ====== */
+  .lightbox-bg {
+    position: fixed;
+    inset: 0;
+    z-index: 9999;
+    background: rgba(255, 255, 255, 0.85);
+    display: none;
+    align-items: center;
+    justify-content: center;
+    cursor: zoom-out;
+    backdrop-filter: blur(8px);
+  }
+  .lightbox-bg.show { display: flex; }
+  body[data-theme="dark"] .lightbox-bg { background: rgba(30, 30, 30, 0.85); }
+
+  .lightbox-container {
+    position: relative;
+    max-width: 95vw;
+    max-height: 95vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .lightbox-img {
+    max-width: 95vw;
+    max-height: 90vh;
+    object-fit: contain;
+    border-radius: 4px;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+    cursor: default;
+    transition: transform 0.2s ease;
+    user-select: none;
+    -webkit-user-drag: none;
+  }
+
+  .lightbox-close {
+    position: absolute;
+    top: 16px;
+    right: 16px;
+    width: 40px;
+    height: 40px;
+    border: none;
+    background: rgba(0, 0, 0, 0.08);
+    color: var(--ink);
+    border-radius: 50%;
+    cursor: pointer;
+    display: grid;
+    place-items: center;
+    font-size: 24px;
+    line-height: 1;
+    transition: all 0.15s;
+    z-index: 10001;
+  }
+  .lightbox-close:hover { background: rgba(0, 0, 0, 0.15); transform: scale(1.1); }
+  body[data-theme="dark"] .lightbox-close { background: rgba(255, 255, 255, 0.15); color: #fff; }
+  body[data-theme="dark"] .lightbox-close:hover { background: rgba(255, 255, 255, 0.25); }
+
+  .lightbox-toolbar {
+    position: absolute;
+    bottom: 20px;
+    left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+    gap: 8px;
+    background: rgba(255, 255, 255, 0.9);
+    border: 1px solid var(--rule);
+    padding: 8px 12px;
+    border-radius: 8px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+    z-index: 10001;
+  }
+  body[data-theme="dark"] .lightbox-toolbar { background: rgba(40, 40, 40, 0.9); border-color: rgba(255,255,255,0.1); }
+
+  .lightbox-btn {
+    width: 36px;
+    height: 36px;
+    border: none;
+    background: rgba(0, 0, 0, 0.06);
+    color: var(--ink);
+    border-radius: 6px;
+    cursor: pointer;
+    display: grid;
+    place-items: center;
+    transition: all 0.15s;
+  }
+  .lightbox-btn:hover { background: rgba(0, 0, 0, 0.12); }
+  .lightbox-btn:active { transform: scale(0.95); }
+  .lightbox-btn svg { width: 20px; height: 20px; }
+  body[data-theme="dark"] .lightbox-btn { background: rgba(255, 255, 255, 0.1); color: #fff; }
+  body[data-theme="dark"] .lightbox-btn:hover { background: rgba(255, 255, 255, 0.2); }
+
+  .lightbox-scale {
+    color: var(--ink);
+    font-size: 12px;
+    font-family: 'JetBrains Mono', monospace;
+    min-width: 48px;
+    text-align: center;
+    line-height: 36px;
+    user-select: none;
+  }
+  body[data-theme="dark"] .lightbox-scale { color: #fff; }
+
+  /* 预览区图片可点击提示 */
+  .preview img {
+    cursor: zoom-in;
+    transition: transform 0.15s, box-shadow 0.15s;
+  }
+  .preview img:hover {
+    transform: scale(1.01);
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
+  }
+
 </style>
 </head>
 <body>
@@ -4184,6 +4298,32 @@
   </button>
 </nav>
 <input type="file" id="imageFileInput" accept="image/*" style="display:none">
+
+<!-- 图片放大 Lightbox -->
+<div class="lightbox-bg" id="lightboxBg">
+  <button class="lightbox-close" id="lightboxClose" aria-label="关闭">&times;</button>
+  <div class="lightbox-container">
+    <img class="lightbox-img" id="lightboxImg" src="" alt="放大图片">
+  </div>
+  <div class="lightbox-toolbar">
+    <button class="lightbox-btn" id="lightboxZoomOut" title="缩小 (-)">
+      <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+        <circle cx="11" cy="11" r="8"/><path stroke-linecap="round" d="M21 21l-4.35-4.35M8 11h6"/>
+      </svg>
+    </button>
+    <span class="lightbox-scale" id="lightboxScale">100%</span>
+    <button class="lightbox-btn" id="lightboxZoomIn" title="放大 (+)">
+      <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+        <circle cx="11" cy="11" r="8"/><path stroke-linecap="round" d="M21 21l-4.35-4.35M11 8v6M8 11h6"/>
+      </svg>
+    </button>
+    <button class="lightbox-btn" id="lightboxReset" title="重置 (0)">
+      <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M4 4v5h5M20 20v-5h-5M4 9a9 9 0 0115.5-6.36L20 4M20 15a9 9 0 01-15.5 6.36L4 20"/>
+      </svg>
+    </button>
+  </div>
+</div>
 
 <script src="js/appearance.js"></script>
 <script src="app.js"></script>
