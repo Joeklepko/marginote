@@ -1145,9 +1145,27 @@
   }
 
   .editor-content {
-    max-width: 1080px;
+    max-width: 860px;
     margin: 0 auto;
-    padding: 32px 80px 80px;
+    padding: 32px 48px 80px;
+  }
+  /* 大屏幕优化：24寸及以上显示器 */
+  @media (min-width: 1600px) {
+    .editor-content {
+      max-width: 1080px;
+      padding: 32px 64px 80px;
+    }
+  }
+  @media (min-width: 1920px) {
+    .editor-content {
+      max-width: 1280px;
+      padding: 32px 80px 80px;
+    }
+  }
+  @media (min-width: 2200px) {
+    .editor-content {
+      max-width: 1480px;
+    }
   }
   .preview { min-height: calc(100vh - 260px); }
   .content-input { min-height: calc(100vh - 260px); }
