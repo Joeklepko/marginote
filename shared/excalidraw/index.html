@@ -9,14 +9,17 @@
      不能用 CDN。缺资源时下方脚本会显示提示而非白屏。 -->
 <link rel="stylesheet" href="./vendor/excalidraw.css" onerror="window.__cssFail=true">
 <style>
-  html, body, #root { height: 100%; margin: 0; }
+  html, body { height: 100%; margin: 0; }
+  /* canvas 必须有确定高度，否则 Excalidraw 工具栏（绝对定位）能显示但
+     画布区域高度为 0 → 看似打开实则无法编辑。用 absolute fill 固定尺寸。 */
+  #root { position: absolute; inset: 0; }
   body { font-family: system-ui, -apple-system, 'Microsoft YaHei', sans-serif; }
   #setup-hint {
     display: none;
     position: absolute; inset: 0;
     align-items: center; justify-content: center;
     flex-direction: column; gap: 14px; padding: 40px;
-    text-align: center; color: #444; background: #faf6ed;
+    text-align: center; color: #444; background: #faf6ed; z-index: 10;
   }
   #setup-hint.show { display: flex; }
   #setup-hint h2 { margin: 0; font-size: 18px; }
@@ -59,15 +62,16 @@
   }
   if (!assetsReady()) {
     document.getElementById('setup-hint').classList.add('show');
-    // 仍然回告父窗口，父窗口可据此提示用户
     try { parent.postMessage({ source: 'mn-excalidraw', type: 'assets-missing' }, '*'); } catch (e) {}
     return;
   }
 
-  const { Excalidraw, serializeAsJSON } = window.ExcalidrawLib;
+  const Lib = window.ExcalidrawLib;
+  const { Excalidraw, serializeAsJSON } = Lib;
   let excalidrawAPI = null;
   let pendingScene = null;   // 父窗口在 ready 之前发来的场景
   let saveTimer = null;
+  let thumbTimer = null;
 
   function postToParent(msg) {
     try { parent.postMessage(Object.assign({ source: 'mn-excalidraw' }, msg), '*'); } catch (e) {}
@@ -85,6 +89,57 @@
     } catch (e) { return ''; }
   }
 
+  function blobToB64(blob) {
+    return new Promise(function (resolve) {
+      const r = new FileReader();
+      r.onload = function () {
+        const s = String(r.result || '');
+        const i = s.indexOf('base64,');
+        resolve(i >= 0 ? s.slice(i + 7) : '');
+      };
+      r.onerror = function () { resolve(''); };
+      r.readAsDataURL(blob);
+    });
+  }
+
+  // 生成缩略图 PNG base64（长边 ~320px）。失败返回 ''。
+  async function makeThumb() {
+    if (!excalidrawAPI || typeof Lib.exportToBlob !== 'function') return '';
+    try {
+      const elements = excalidrawAPI.getSceneElements();
+      if (!elements || !elements.length) return '';
+      const blob = await Lib.exportToBlob({
+        elements: elements,
+        appState: Object.assign({}, excalidrawAPI.getAppState(), { exportBackground: true }),
+        files: excalidrawAPI.getFiles(),
+        mimeType: 'image/png',
+        maxWidthOrHeight: 320,
+      });
+      return await blobToB64(blob);
+    } catch (e) { return ''; }
+  }
+
+  // 导出整图 PNG/SVG base64（用于「导出到笔记」，全尺寸）
+  async function exportFull(kind) {
+    if (!excalidrawAPI) return null;
+    const elements = excalidrawAPI.getSceneElements();
+    if (!elements || !elements.length) return null;
+    const appState = Object.assign({}, excalidrawAPI.getAppState(), { exportBackground: true });
+    const files = excalidrawAPI.getFiles();
+    try {
+      if (kind === 'svg' && typeof Lib.exportToSvg === 'function') {
+        const svg = await Lib.exportToSvg({ elements: elements, appState: appState, files: files });
+        const str = new XMLSerializer().serializeToString(svg);
+        return { ext: '.svg', mime: 'image/svg+xml', b64: btoa(unescape(encodeURIComponent(str))) };
+      }
+      if (typeof Lib.exportToBlob === 'function') {
+        const blob = await Lib.exportToBlob({ elements: elements, appState: appState, files: files, mimeType: 'image/png', maxWidthOrHeight: 2000 });
+        return { ext: '.png', mime: 'image/png', b64: await blobToB64(blob) };
+      }
+    } catch (e) { postToParent({ type: 'error', message: 'export failed: ' + (e && e.message) }); }
+    return null;
+  }
+
   function loadSceneJSON(json) {
     if (!excalidrawAPI) { pendingScene = json; return; }
     try {
@@ -94,21 +149,35 @@
         appState: Object.assign({}, data.appState || {}, { collaborators: [] }),
       });
       if (data.files && Object.keys(data.files).length) {
-        const arr = Object.keys(data.files).map(k => data.files[k]);
+        const arr = Object.keys(data.files).map(function (k) { return data.files[k]; });
         try { excalidrawAPI.addFiles(arr); } catch (e) {}
       }
       try { excalidrawAPI.scrollToContent(); } catch (e) {}
+      // 加载后强制刷新画布尺寸（修复 canvas rect 缓存为 0 导致无法编辑）
+      try { excalidrawAPI.refresh(); } catch (e) {}
     } catch (e) {
       postToParent({ type: 'error', message: 'load scene failed: ' + (e && e.message) });
     }
   }
 
   // 父 → iframe 消息
-  window.addEventListener('message', function (ev) {
+  window.addEventListener('message', async function (ev) {
     const d = ev.data;
     if (!d || d.target !== 'mn-excalidraw') return;
-    if (d.type === 'load') loadSceneJSON(d.json || '');
-    else if (d.type === 'request-save') postToParent({ type: 'scene', json: currentSceneJSON() });
+    if (d.type === 'load') {
+      loadSceneJSON(d.json || '');
+    } else if (d.type === 'request-save') {
+      postToParent({ type: 'scene', json: currentSceneJSON() });
+    } else if (d.type === 'set-theme') {
+      if (excalidrawAPI) {
+        try { excalidrawAPI.updateScene({ appState: { theme: d.dark ? 'dark' : 'light' } }); } catch (e) {}
+      }
+    } else if (d.type === 'request-export') {
+      const out = await exportFull(d.kind || 'png');
+      postToParent({ type: 'export', kind: d.kind || 'png', data: out });
+    } else if (d.type === 'refresh') {
+      if (excalidrawAPI) { try { excalidrawAPI.refresh(); } catch (e) {} }
+    }
   });
 
   function onChange() {
@@ -116,6 +185,11 @@
     saveTimer = setTimeout(function () {
       postToParent({ type: 'scene', json: currentSceneJSON() });
     }, 800);
+    clearTimeout(thumbTimer);
+    thumbTimer = setTimeout(async function () {
+      const b64 = await makeThumb();
+      if (b64) postToParent({ type: 'thumb', b64: b64 });
+    }, 1400);
   }
 
   function isDark() {
@@ -123,13 +197,19 @@
     catch (e) { return false; }
   }
 
+  // 窗口尺寸变化时刷新画布（容器从 0→有尺寸、或拖动分隔时）
+  window.addEventListener('resize', function () {
+    if (excalidrawAPI) { try { excalidrawAPI.refresh(); } catch (e) {} }
+  });
+
   const e = window.React.createElement;
   function App() {
     return e(Excalidraw, {
-      initialData: pendingScene ? safeParse(pendingScene) : null,
       excalidrawAPI: function (api) {
         excalidrawAPI = api;
         if (pendingScene) { loadSceneJSON(pendingScene); pendingScene = null; }
+        // 首帧后再刷新一次，确保拿到正确容器尺寸
+        setTimeout(function () { try { api.refresh(); } catch (e) {} }, 60);
         postToParent({ type: 'ready' });
       },
       onChange: onChange,
@@ -137,7 +217,6 @@
       langCode: 'zh-CN',
     });
   }
-  function safeParse(j) { try { return JSON.parse(j); } catch (e) { return null; } }
 
   window.ReactDOM.createRoot(document.getElementById('root')).render(e(App));
 })();

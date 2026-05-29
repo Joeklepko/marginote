@@ -11,6 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### 实验性
 
+- **Excalidraw 画图增强（step2）**：① 修复画板打开后无法编辑（容器高度塌陷 + canvas 尺寸缓存，改 absolute fill + 挂载后 refresh）；② 画板在工作目录以 `.excalidraw` 纯场景 JSON 双向同步（注入 `_mn` 元信息记归属，与 Obsidian Excalidraw 目录格式兼容），不再被包成 `.md`；zip 备份同样含 `.excalidraw`；③ 列表显示画板缩略图（PNG 存 IndexedDB 图片仓，note.thumb 引用），不再显示场景 JSON；④ 画板内「PNG / SVG」按钮导出整图到图片仓，引用 `![](img:id)` 复制到剪贴板可粘进任意笔记；⑤ 深色主题切换实时联动 iframe（免重载不丢改动）；⑥ 永久删除画板时清理缩略图。
+
 - **内置 Excalidraw 画图（step1 最小可用）**：侧栏「新建画板」创建一块手绘画板（存为 `type:'drawing'` 笔记，内容为 Excalidraw 场景 JSON），通过自托管 iframe + postMessage 与主程序交换数据，React/Excalidraw 全锁在 iframe 内。需先在 `shared/excalidraw/vendor` 运行 `bash fetch.sh` 下载约 3MB 资源（联网一次，之后离线可用）；未安装时画板页会显示安装提示而非白屏。桌面 exe 与 Chrome 插件双端一致。
 
 ### 优化

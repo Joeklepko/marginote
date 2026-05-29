@@ -102,6 +102,8 @@ function applyTheme(name) {
   if (window.mn?.platform?.desktop?.setWindowTheme) {
     window.mn.platform.desktop.setWindowTheme(preset.mode);
   }
+  // 同步画板 iframe 主题（打开画板时实时联动，免重载不丢未存改动）
+  try { if (typeof window.syncDrawingTheme === 'function') window.syncDrawingTheme(); } catch (e) {}
 }
 
 function applyCustomOverrides(c) {
