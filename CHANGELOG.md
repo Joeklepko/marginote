@@ -5,6 +5,41 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.2] - 2026-05-29
+
+工作目录（双向）+ 自动备份可定位 + 移除单向备份 + 桌面版历史版本弹窗修复 + UI 优化 + 构建配置调整。
+
+### 优化
+
+- **设置弹窗改矮改宽**：设置弹窗由 760px 宽 / 88vh 高调整为 920px 宽 / 68vh 高（max-height 78vh），不再又高又窄。
+- **工作目录显示绝对路径**：数据 · 备份 的「工作目录」去掉「（推荐）」字样；桌面 exe 下显示所选目录的完整绝对路径（Rust `cmd_workdir_pick` / `cmd_workdir_status` 改为返回绝对路径）。Chrome 扩展受 File System Access API 安全限制只能显示目录名（浏览器不暴露绝对路径）。
+- **大屏编辑区加宽**：24 寸 / 高分屏下右侧编辑区进一步加宽（≥1600px 1180px、≥1920px 1400px、≥2200px 1680px、新增 ≥2560px 1920px 档），并放宽 1920px 档的左右内边距。
+- **消除中栏列表编辑时闪烁**：以前每次自动保存都会整列 `innerHTML` 重建，触发每个笔记条目的 fadeIn 动画造成屏幕「一闪一闪」。改为编辑当前笔记时只原地更新该列表项的标题/预览/日期/标签（不重建元素、不重放动画）；仅当列表成员或顺序变化时才整列渲染。
+- **设置弹窗统一尺寸与排版**：设置弹窗改为固定高度（80vh）+ 内部滚动，切换「外观/AI/数据/导入导出/桌面」子页不再因高度差跳来跳去；并统一各子页正文 / 标签 / 列表的字体与字号。
+
+### 新功能
+
+- **工作目录（双向同步）**：设置 · 数据 新增「工作目录」。选择一个本地目录后，新增 / 修改的笔记与待办会以 `.md` 实时写入该目录（结构：`笔记本/文件夹/标题.md`，待办在 `待办/` 子目录，图片在 `_assets/`，笔记本/文件夹等元信息在 `_marginote/meta.json`）。把外部 `.md` 放进目录后点「扫描导入」即可出现在应用中（双向）；启动时也会自动从目录导入。卸载软件 / 扩展不会删除这些文件。
+  - 桌面 exe：走 Tauri 原生文件系统（新增 `cmd_workdir_*` 命令 + `tauri-plugin-dialog` 选目录），所选绝对路径持久化，重启免重新授权。
+  - Chrome / Edge 扩展：走 File System Access API（需 100+），目录句柄存 IndexedDB；重装扩展后重新选择同一目录即恢复。
+  - 新增 `mn.platform.fs` 平台抽象层，两端实现签名一致。
+- **自动备份可定位**：自动备份的 zip 现在写入工作目录的 `_backups/` 子目录（已设工作目录时），用户能直接找到备份文件；未设置工作目录时回退为浏览器下载。
+
+### 变更
+
+- **移除「本地文件夹同步（单向备份）」**：该功能只单向导出 `marginote.json` 且不读取散放的 `.md`，易与「工作目录」混淆；工作目录（双向）已完全覆盖其用途，故删除。原已导出的 `marginote.json` 文件仍保留在磁盘，不受影响。
+
+### 修复
+
+- **历史版本弹窗恢复双栏布局**：桌面 exe 下「历史版本」弹窗原本塌成单栏、看不到右侧版本内容，与 Chrome 插件「左侧版本列表 + 右侧版本预览」不一致。根因是 `openVersionModal()` 里一段 `isDesktopContext()` 专属降级逻辑主动隐藏了预览栏并把列表拉满宽；已移除该分支，桌面与插件走同一套双栏 DOM。
+- **弹窗尺寸固定**：弹窗改为固定高度（`82vh`）+ 内部滚动，切换不同长度的历史版本时窗口大小不再忽大忽小；整体宽度从 880px 提到 1040px。
+- **左栏文字样式与插件一致**：版本条目的字号 / 字重 / 选中高亮从内联 style 改为 class 规则。
+- **WebView2 兜底**：弹窗尺寸、两栏布局、列表文字全部用 `<style>` class（带 `!important`）承载，规避 WebView2(Tauri release) 偶发丢失 inline style 解析导致的布局塌陷；inline style 保留作 Chrome 主路径，数值一致互为兜底。
+
+### 构建
+
+- Windows exe 构建（`build-windows.yml`）触发分支由 `dev_exe` 改为 `dev`（远程已不再有 `dev_exe`）；仍只产出可下载 artifact，公开 Release 仅由 `v*` tag 触发。
+
 ## [1.2.1] - 2026-05-12
 
 相对 v1.2.0 的小版本修复 + 体验增强。

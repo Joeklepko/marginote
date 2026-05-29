@@ -1152,19 +1152,24 @@
   /* 大屏幕优化：24寸及以上显示器 */
   @media (min-width: 1600px) {
     .editor-content {
-      max-width: 1080px;
+      max-width: 1180px;
       padding: 32px 64px 80px;
     }
   }
   @media (min-width: 1920px) {
     .editor-content {
-      max-width: 1280px;
-      padding: 32px 80px 80px;
+      max-width: 1400px;
+      padding: 36px 72px 80px;
     }
   }
   @media (min-width: 2200px) {
     .editor-content {
-      max-width: 1480px;
+      max-width: 1680px;
+    }
+  }
+  @media (min-width: 2560px) {
+    .editor-content {
+      max-width: 1920px;
     }
   }
   .preview { min-height: calc(100vh - 260px); }
@@ -1538,9 +1543,10 @@
   /* 注意：layout 走 class（不再依赖 inline style），避免 WebView2 inline-style
      解析漏洞（已知 12b5cee 修过 textContent CSSOM 损坏，inline 解析也偶发失败） */
   .settings-modal {
-    max-width: 760px;
+    max-width: 920px;
     width: 92vw;
-    max-height: 88vh;
+    height: 68vh;
+    max-height: 78vh;
     display: flex;
     flex-direction: column;
     padding: 0 !important;
@@ -1648,6 +1654,25 @@
   @keyframes settings-fade {
     from { opacity: 0; transform: translateY(4px); }
     to { opacity: 1; transform: translateY(0); }
+  }
+  /* 统一各设置子页正文 / 标签 / 列表的字体与字号，切换子页时排版一致 */
+  .settings-pane > p:not(.settings-section-title) {
+    font-family: var(--font-ui);
+    font-size: 13px;
+    line-height: 1.6;
+    color: var(--ink-soft);
+    margin-bottom: 16px;
+  }
+  .settings-pane label:not(.settings-label-mono):not(.label) {
+    font-family: var(--font-ui);
+    font-size: 13px;
+    color: var(--ink-soft);
+  }
+  .settings-pane ul {
+    font-family: var(--font-ui);
+    font-size: 13px;
+    line-height: 1.8;
+    color: var(--ink-soft);
   }
   .settings-section-title {
     font-family: 'JetBrains Mono', monospace;
@@ -4144,19 +4169,17 @@
           <input type="number" id="storageAutoDays" min="0" max="365" step="1" value="0">
           <span class="settings-label-mono">天 (0=关闭)</span>
         </div>
-        <div class="settings-label-mono" style="margin-bottom: 16px;">上次备份：<span id="storageLastBackup">从未</span></div>
-        <p class="settings-section-title">本地文件夹同步</p>
-        <div class="storage-info" id="localSyncInfo" style="margin-bottom:8px;">未连接本地文件夹（数据仅存浏览器）</div>
-        <div class="storage-actions" style="grid-template-columns: 1fr 1fr 1fr;">
-          <button id="pickDirBtn">📁 选择文件夹</button>
-          <button id="syncDiskBtn">⬆ 立即同步</button>
-          <button id="restoreDiskBtn">⬇ 从本地恢复</button>
+        <div class="settings-label-mono" style="margin-bottom: 4px;">上次备份：<span id="storageLastBackup">从未</span></div>
+        <div class="settings-label-mono" style="margin-bottom: 16px;">备份 zip 保存到工作目录的 <code>_backups/</code> 子目录（需先在下方设置工作目录）；未设置时下载到浏览器默认下载目录。</div>
+        <p class="settings-section-title">工作目录</p>
+        <div class="storage-info" id="workDirInfo" style="margin-bottom:8px;">未启用（数据仅存本机应用内）</div>
+        <div class="storage-actions" style="grid-template-columns: 1fr 1fr 1fr 1fr;">
+          <button id="pickWorkDirBtn">📂 选择工作目录</button>
+          <button id="scanWorkDirBtn">🔄 扫描导入</button>
+          <button id="syncWorkDirBtn">⬆ 立即写出</button>
+          <button id="forgetWorkDirBtn">✕ 停用</button>
         </div>
-        <div class="storage-auto-row">
-          <label>变更后自动同步到本地（5 秒节流）</label>
-          <input type="checkbox" id="autoSyncToggle" style="width:18px;height:18px;cursor:pointer;accent-color:var(--accent);">
-        </div>
-        <div class="settings-label-mono" style="margin-bottom: 16px;">仅 Chrome/Edge 100+ 支持。绑定后笔记和图片实时同步到本地文件夹。重装扩展后再选同一文件夹即恢复。</div>
+        <div class="settings-label-mono" style="margin-bottom: 16px;">选择后，新增/修改的笔记与待办会以 .md 实时保存到该目录（笔记本/文件夹/标题.md，待办在「待办」子目录，图片在 _assets）。把外部 .md 放进目录后点「扫描导入」即可出现在应用中。卸载软件或扩展不会删除这些文件。扩展端需 Chrome/Edge 100+，重装后重新选择同一目录即可。</div>
         <p class="settings-section-title" style="display:flex;justify-content:space-between;align-items:center;">
           <span>错误日志 <span id="errorLogCount" style="color:var(--accent);">(0)</span></span>
           <button class="modal-btn" id="errorLogClearBtn" style="padding:4px 10px;font-size:11px;">清空</button>
@@ -4238,16 +4261,96 @@
 <div class="ai-menu" id="aiMenu"></div>
 
 <!-- 历史版本模态框 -->
+<!-- 整个弹窗的尺寸与两栏布局全部用 class 走 <style> CSS 解析路径，规避
+     WebView2(Tauri release) 偶发丢失 inline style 解析的问题：
+     - 丢 width/max-width → 回退到 .modal 基础样式 640px，桌面版宽度过窄；
+     - 丢 min/max-height  → 弹窗按内容高度伸缩，切换版本时窗口忽大忽小；
+     - 丢 .version-item 内联字号/字重 → 左栏文字样式与 Chrome 插件不一致。
+     inline style 仅作 Chrome 主路径兜底，数值与此处一致；!important 保证
+     inline 被丢弃时 class 规则仍生效。固定 height 让窗口尺寸恒定。 -->
+<style>
+  #versionModalBg .modal.version-modal {
+    max-width: 1040px !important;
+    width: 92vw !important;
+    height: 82vh !important;
+    max-height: 88vh !important;
+    display: flex !important;
+    flex-direction: column !important;
+  }
+  #versionModalBg .version-dual {
+    display: flex !important;
+    gap: 14px;
+    flex: 1 1 auto !important;
+    min-height: 0 !important;   /* 让子元素内部滚动而不是撑高弹窗 */
+    align-items: stretch;
+  }
+  #versionModalBg #versionList {
+    width: 280px !important;
+    flex: 0 0 280px !important;
+    overflow-y: auto;
+    border: 1px solid var(--rule);
+    border-radius: 6px;
+    padding: 6px;
+  }
+  #versionModalBg .version-preview-pane {
+    flex: 1 1 auto !important;
+    display: flex !important;
+    flex-direction: column;
+    min-width: 0;
+    min-height: 0;
+  }
+  #versionModalBg #versionPreviewContent {
+    flex: 1 1 auto !important;
+    min-height: 0;
+    overflow: auto;
+  }
+  /* 左栏版本条目文字样式 — 与 Chrome 插件一致，避免 WebView2 丢内联字号 */
+  #versionModalBg .version-item {
+    padding: 8px 10px;
+    border-radius: 6px;
+    cursor: pointer;
+    border: 1px solid transparent;
+    margin-bottom: 4px;
+  }
+  #versionModalBg .version-item:hover { background: var(--bg-warm); }
+  #versionModalBg .version-item.active {
+    background: color-mix(in srgb, var(--accent) 12%, transparent);
+    border-color: var(--accent);
+  }
+  #versionModalBg .version-item-time {
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--ink);
+  }
+  #versionModalBg .version-item-meta {
+    font-size: 11px;
+    color: var(--ink-mute);
+    margin-top: 2px;
+  }
+  #versionModalBg .version-item-tag {
+    background: var(--accent);
+    color: #fff;
+    padding: 1px 6px;
+    border-radius: 3px;
+    font-size: 10px;
+    margin-left: 6px;
+  }
+  #versionModalBg .version-item-auto {
+    color: var(--ink-mute);
+    font-size: 10px;
+    margin-left: 6px;
+  }
+</style>
 <div class="modal-bg" id="versionModalBg">
-  <div class="modal" style="max-width: 880px; width: 90vw; max-height: 88vh; display:flex; flex-direction:column;">
+  <div class="modal version-modal" style="max-width: 1040px; width: 92vw; height: 82vh; max-height: 88vh; display:flex; flex-direction:column;">
     <h3 style="margin-bottom:6px;">历史版本 <span id="versionNoteTitle" style="font-weight:normal;color:var(--ink-mute);font-size:13px;margin-left:6px;"></span></h3>
     <p style="color: var(--ink-soft); font-size: 12px; margin-bottom: 12px;">编辑保存自动记录，每篇最多保留 20 个自动版本（命名版本不淘汰）。</p>
-    <div style="display:flex; gap:14px; flex:1; min-height:380px; max-height:60vh;">
-      <div id="versionList" style="width:280px; overflow-y:auto; border:1px solid var(--rule); border-radius:6px; padding:6px;"></div>
-      <div style="flex:1; display:flex; flex-direction:column; min-width:0;">
+    <div class="version-dual" style="display:flex; gap:14px; flex:1; min-height:0;">
+      <div id="versionList" style="width:280px; flex:0 0 280px; overflow-y:auto; border:1px solid var(--rule); border-radius:6px; padding:6px;"></div>
+      <div class="version-preview-pane" style="flex:1; display:flex; flex-direction:column; min-width:0; min-height:0;">
         <div id="versionPreviewMeta" style="font-size:11px; color:var(--ink-mute); margin-bottom:6px; font-family:'JetBrains Mono',monospace;"></div>
         <div id="versionPreviewTitle" style="font-weight:600; margin-bottom:6px; word-break:break-word;"></div>
-        <pre id="versionPreviewContent" style="flex:1; overflow:auto; background:var(--paper); border:1px solid var(--rule); border-radius:6px; padding:10px; white-space:pre-wrap; word-break:break-word; font-family:'JetBrains Mono',monospace; font-size:12px; margin:0;"></pre>
+        <pre id="versionPreviewContent" style="flex:1; min-height:0; overflow:auto; background:var(--paper); border:1px solid var(--rule); border-radius:6px; padding:10px; white-space:pre-wrap; word-break:break-word; font-family:'JetBrains Mono',monospace; font-size:12px; margin:0;"></pre>
       </div>
     </div>
     <div class="modal-actions" style="margin-top: 14px;">

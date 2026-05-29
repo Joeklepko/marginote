@@ -7,6 +7,7 @@ mod commands;
 mod scheduler;
 mod storage;
 mod tray;
+mod workdir;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -43,6 +44,15 @@ pub fn run() {
             commands::cmd_unregister_hotkey,
             commands::cmd_get_app_paths,
             commands::cmd_set_window_theme,
+            workdir::cmd_workdir_pick,
+            workdir::cmd_workdir_status,
+            workdir::cmd_workdir_forget,
+            workdir::cmd_workdir_list,
+            workdir::cmd_workdir_read_text,
+            workdir::cmd_workdir_write_text,
+            workdir::cmd_workdir_read_binary,
+            workdir::cmd_workdir_write_binary,
+            workdir::cmd_workdir_remove,
         ])
         .setup(|app| {
             // 安装托盘

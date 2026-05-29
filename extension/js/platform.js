@@ -43,6 +43,26 @@
       setAutostart: () => Promise.resolve(),
       registerHotkey: () => Promise.resolve(),
       unregisterHotkey: () => Promise.resolve(),
+      getAppPaths: () => Promise.resolve(null),     // () → Promise<{data_dir, kv_file, webview_dir}|null>
+      setWindowTheme: () => Promise.resolve(),       // (mode: 'dark'|'light'|'system') → Promise<void>
+    },
+
+    // 工作目录文件系统（v1.3 → v1.4）。
+    // 扩展端用 File System Access API（句柄存 IndexedDB）；桌面端用 Tauri 原生
+    // 命令（绝对路径存 kv）。两端实现签名一致，业务代码只调 mn.platform.fs.*。
+    // relPath 一律用 '/' 分隔的相对路径，相对工作目录根。
+    fs: {
+      isAvailable: () => false,                 // () → bool：当前平台是否支持工作目录
+      pickDir: () => Promise.resolve(null),     // () → Promise<{name}|null>：弹选择器，持久化所选目录
+      hasDir: () => Promise.resolve(false),     // () → Promise<bool>：是否已绑定且可访问
+      dirName: () => Promise.resolve(null),     // () → Promise<string|null>：已绑定目录显示名
+      forget: () => Promise.resolve(),          // () → Promise<void>：解绑（不删磁盘文件）
+      list: () => Promise.resolve([]),          // () → Promise<{path, mtime, dir}[]>：递归列出全部条目
+      readText: () => Promise.resolve(null),    // (relPath) → Promise<string|null>
+      writeText: () => Promise.resolve(false),  // (relPath, text) → Promise<bool>
+      readBinary: () => Promise.resolve(null),  // (relPath) → Promise<base64|null>
+      writeBinary: () => Promise.resolve(false),// (relPath, base64) → Promise<bool>
+      remove: () => Promise.resolve(false),     // (relPath) → Promise<bool>
     },
   };
 

@@ -166,5 +166,53 @@
     },
   };
 
+  // ===== fs（工作目录：Tauri 原生文件系统）=====
+  // 选中的绝对路径由 Rust 持久化在 marginote.dat 的 workdir key。
+  // 路径有效则重启后无需重新授权（原生 fs 不像浏览器有句柄过期问题）。
+  platform.fs = {
+    isAvailable() { return true; },
+    async pickDir() {
+      try {
+        const name = await invoke('cmd_workdir_pick');
+        return name ? { name } : null;
+      } catch (e) { console.warn('workdir_pick fail', e); return null; }
+    },
+    async hasDir() {
+      try { return !!(await invoke('cmd_workdir_status')); }
+      catch (e) { return false; }
+    },
+    async dirName() {
+      try { return (await invoke('cmd_workdir_status')) || null; }
+      catch (e) { return null; }
+    },
+    async forget() {
+      try { await invoke('cmd_workdir_forget'); } catch (e) {}
+    },
+    async list() {
+      try { return (await invoke('cmd_workdir_list')) || []; }
+      catch (e) { return []; }
+    },
+    async readText(relPath) {
+      try { return await invoke('cmd_workdir_read_text', { rel: relPath }); }
+      catch (e) { return null; }
+    },
+    async writeText(relPath, text) {
+      try { await invoke('cmd_workdir_write_text', { rel: relPath, text }); return true; }
+      catch (e) { console.warn('workdir_write_text fail', e); return false; }
+    },
+    async readBinary(relPath) {
+      try { return await invoke('cmd_workdir_read_binary', { rel: relPath }); }
+      catch (e) { return null; }
+    },
+    async writeBinary(relPath, base64) {
+      try { await invoke('cmd_workdir_write_binary', { rel: relPath, b64: base64 }); return true; }
+      catch (e) { console.warn('workdir_write_binary fail', e); return false; }
+    },
+    async remove(relPath) {
+      try { await invoke('cmd_workdir_remove', { rel: relPath }); return true; }
+      catch (e) { return false; }
+    },
+  };
+
   if (window.mn._readyResolve) window.mn._readyResolve();
 })();
