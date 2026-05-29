@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 工作目录（双向）+ 自动备份可定位 + 移除单向备份 + 桌面版历史版本弹窗修复 + UI 优化 + 构建配置调整。
 
+### 实验性
+
+- **内置 Excalidraw 画图（step1 最小可用）**：侧栏「新建画板」创建一块手绘画板（存为 `type:'drawing'` 笔记，内容为 Excalidraw 场景 JSON），通过自托管 iframe + postMessage 与主程序交换数据，React/Excalidraw 全锁在 iframe 内。需先在 `shared/excalidraw/vendor` 运行 `bash fetch.sh` 下载约 3MB 资源（联网一次，之后离线可用）；未安装时画板页会显示安装提示而非白屏。桌面 exe 与 Chrome 插件双端一致。
+
 ### 优化
 
 - **设置弹窗改矮改宽**：设置弹窗由 760px 宽 / 88vh 高调整为 920px 宽 / 68vh 高（max-height 78vh），不再又高又窄。
