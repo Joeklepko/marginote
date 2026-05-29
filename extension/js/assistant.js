@@ -1057,6 +1057,7 @@ function bindAssistantUi() {
       lastRailId = rid;
     });
   })();
+
   // 聊天图片点击 → 全屏灯箱查看
   const chatBox = document.getElementById('assistantChat');
   if (chatBox) {
