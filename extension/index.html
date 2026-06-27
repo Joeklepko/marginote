@@ -660,6 +660,13 @@
   }
   .session-action-btn:hover { opacity: 1; color: var(--accent); }
   .session-action-btn svg { width: 14px; height: 14px; }
+  .inline-rename-input {
+    flex: 1; min-width: 0; font-size: 13px; padding: 1px 4px;
+    border: 1px solid var(--accent); border-radius: 4px;
+    background: var(--paper); color: var(--ink); outline: none;
+    font-family: inherit;
+  }
+  .rail-item .inline-rename-input { font-size: 12px; max-width: 100px; }
   /* AI 面板内嵌侧栏（旧版分组列表）在新版中由左侧栏承担，隐藏 */
   #assistantWrap .assistant-sidebar { display: none; }
   #assistantWrap .assistant-main { flex: 1; }

@@ -92,6 +92,33 @@ function saveAssistantGroups() {
   } catch {}
 }
 
+// 内联重命名（替代 prompt() 弹窗）
+function startInlineRename(container, nameSelector, currentName, onConfirm) {
+  const nameEl = container.querySelector(nameSelector);
+  if (!nameEl) return;
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.className = 'inline-rename-input';
+  input.value = currentName;
+  nameEl.style.display = 'none';
+  nameEl.parentNode.insertBefore(input, nameEl);
+  input.focus();
+  input.select();
+  let done = false;
+  function finish(val) {
+    if (done) return;
+    done = true;
+    input.remove();
+    nameEl.style.display = '';
+    if (val && val.trim()) onConfirm(val.trim());
+  }
+  input.addEventListener('blur', () => finish(input.value));
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); input.blur(); }
+    if (e.key === 'Escape') { e.preventDefault(); done = true; input.remove(); nameEl.style.display = ''; }
+  });
+}
+
 function createAssistantGroup(name) {
   const g = {
     id: uid(), name: String(name || '新分组').trim(), createdAt: Date.now(),
@@ -1271,8 +1298,8 @@ function renderAssistantRail() {
       const g = assistantGroups.find(x => x.id === gid);
       if (!g) return;
       if (action === 'edit-group') {
-        const newName = prompt('新名称：', g.name);
-        if (newName !== null && newName.trim()) renameAssistantGroup(gid, newName.trim());
+        const item = btn.closest('.rail-item');
+        startInlineRename(item, '.rail-item-label', g.name, (val) => renameAssistantGroup(gid, val));
       } else if (action === 'delete-group') {
         if (confirm('删除分组「' + g.name + '」？该分组下所有会话将一并删除。')) deleteAssistantGroup(gid);
       }
@@ -1331,8 +1358,8 @@ function renderAssistantSessions() {
       const sid = btn.closest('.ai-session-item')?.dataset.sid;
       const s = (g.sessions || []).find(x => x.id === sid);
       if (!s) return;
-      const newName = prompt('新名称：', s.name);
-      if (newName !== null && newName.trim()) renameAssistantSession(g.id, sid, newName.trim());
+      const item = btn.closest('.ai-session-item');
+      startInlineRename(item, '.session-name', s.name, (val) => renameAssistantSession(g.id, sid, val));
     });
   });
   listEl.querySelectorAll('.session-action-btn[data-action="delete"]').forEach(btn => {
@@ -1407,8 +1434,11 @@ function bindAssistantUi() {
   const newGroupBtn = document.getElementById('newAssistantGroupBtn');
   if (newGroupBtn) newGroupBtn.addEventListener('click', (e) => {
     e.stopPropagation();
-    const name = prompt('分组名称：', '');
-    if (name !== null) createAssistantGroup(name || '新分组');
+    const g = createAssistantGroup('新分组');
+    setTimeout(() => {
+      const item = document.querySelector(`.rail-item[data-ai-group="${g.id}"]`);
+      if (item) startInlineRename(item, '.rail-item-label', g.name, (val) => renameAssistantGroup(g.id, val));
+    }, 0);
   });
 
   // 新建会话（中侧栏）
@@ -1416,8 +1446,27 @@ function bindAssistantUi() {
   if (newSessionBtn) newSessionBtn.addEventListener('click', () => {
     const g = getActiveGroup();
     if (!g) return;
-    const name = prompt('会话名称：', '');
-    if (name !== null) createAssistantSession(g.id, name || '新会话');
+    const s = createAssistantSession(g.id, '新会话');
+    if (s) {
+      setTimeout(() => {
+        const item = document.querySelector(`.ai-session-item[data-sid="${s.id}"]`);
+        if (item) startInlineRename(item, '.session-name', s.name, (val) => renameAssistantSession(g.id, s.id, val));
+      }, 0);
+    }
+  });
+
+  // 新建对话（助手侧栏头部 "+新对话" 按钮）
+  const assistantNewGrpBtn = document.getElementById('assistantNewGroupBtn');
+  if (assistantNewGrpBtn) assistantNewGrpBtn.addEventListener('click', () => {
+    const g = getActiveGroup();
+    if (!g) return;
+    const s = createAssistantSession(g.id, '新会话');
+    if (s) {
+      setTimeout(() => {
+        const item = document.querySelector(`.ai-session-item[data-sid="${s.id}"]`);
+        if (item) startInlineRename(item, '.session-name', s.name, (val) => renameAssistantSession(g.id, s.id, val));
+      }, 0);
+    }
   });
 
   // 返回按钮（保留兼容）
