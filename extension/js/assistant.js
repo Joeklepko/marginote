@@ -410,14 +410,14 @@ function extractSnippet(content, query, maxLen = 200) {
 
 const ASSISTANT_TOOLS = {
   list_notebooks: {
-    desc: '列出所有笔记本（参数：无）',
+    desc: '列出笔记本。无参数',
     run: () => notebooks.map(nb => ({ id: nb.id, name: nb.name, color: nb.color }))
   },
   search_notes: {
-    desc: '搜索笔记（标题+内容）。参数：{query?: string, limit?: number(默认10)}。不传query返回全部笔记概览。',
+    desc: '搜索笔记。{query?, limit?(默认30)}',
     run: ({ query, limit }) => {
       const q = String(query || '').trim().toLowerCase();
-      const lim = Math.max(1, Math.min(50, parseInt(limit, 10) || 10));
+      const lim = Math.max(1, Math.min(100, parseInt(limit, 10) || 30));
       let list = notes.filter(n => !n.deleted);
       if (q) {
         const terms = q.split(/\s+/).filter(Boolean);
@@ -444,7 +444,7 @@ const ASSISTANT_TOOLS = {
     }
   },
   search_todos: {
-    desc: '搜索待办。参数：{query?: string, status?: "active"|"done"|"overdue"|"all", due?: "today"|"overdue"|"week", limit?: number}',
+    desc: '搜索待办。{query?, status?"active"|"done"|"overdue"|"all", due?"today"|"overdue"|"week", limit?}',
     run: ({ query, status, due, limit }) => {
       const q = String(query || '').trim().toLowerCase();
       const lim = Math.max(1, Math.min(50, parseInt(limit, 10) || 10));
@@ -463,7 +463,7 @@ const ASSISTANT_TOOLS = {
     }
   },
   create_note: {
-    desc: '新建笔记。参数：{title: string, content?: string, notebookName?: string}',
+    desc: '新建笔记。{title, content?, notebookName?}',
     run: ({ title, content, notebookName }) => {
       let nb = null;
       if (notebookName) {
@@ -482,7 +482,7 @@ const ASSISTANT_TOOLS = {
     }
   },
   create_todo: {
-    desc: '新建待办。参数：{text: string, dueAt?: ISO 8601 字符串, remindBeforeMin?: number}',
+    desc: '新建待办。{text, dueAt?:ISO8601, remindBeforeMin?}',
     run: ({ text, dueAt, remindBeforeMin }) => {
       if (!text) throw new Error('text 必填');
       let dueDate = null;
@@ -497,7 +497,7 @@ const ASSISTANT_TOOLS = {
     }
   },
   update_note: {
-    desc: '修改笔记（优先作用于当前附件笔记）。参数：{id?: string, title?: string, content?: string}。不传 id 时自动使用当前附件中的第一篇文章笔记。',
+    desc: '修改笔记。{id?, title?, content?}不传id用附件',
     run: ({ id, title, content }) => {
       if (!id && pendingAttachments.length) { const att = pendingAttachments.find(a => a.type === 'note'); if (att) id = att.id; }
       const n = notes.find(x => x.id === id);
@@ -512,7 +512,7 @@ const ASSISTANT_TOOLS = {
     }
   },
   update_todo: {
-    desc: '修改待办（优先作用于当前附件待办）。参数：{id?: string, text?: string, content?: string, done?: boolean, dueAt?: ISO 8601}',
+    desc: '修改待办。{id?, text?, content?, done?, dueAt?}不传id用附件',
     run: ({ id, text, content, done, dueAt }) => {
       if (!id && pendingAttachments.length) { const att = pendingAttachments.find(a => a.type === 'todo'); if (att) id = att.id; }
       const t = todos.find(x => x.id === id);
@@ -528,7 +528,7 @@ const ASSISTANT_TOOLS = {
     }
   },
   create_notebook: {
-    desc: '新建笔记本。参数：{name: string, color?: string(十六进制色值)}',
+    desc: '新建笔记本。{name, color?}',
     run: ({ name, color }) => {
       if (!name) throw new Error('name 必填');
       const existing = notebooks.find(x => x.name === name);
@@ -541,7 +541,7 @@ const ASSISTANT_TOOLS = {
     }
   },
   rename_notebook: {
-    desc: '重命名笔记本。参数：{notebookId?: string, notebookName?: string, newName: string, newColor?: string}',
+    desc: '重命名笔记本。{notebookId?|notebookName?, newName, newColor?}',
     run: ({ notebookId, notebookName, newName, newColor }) => {
       if (!newName) throw new Error('newName 必填');
       let nb = null;
@@ -557,7 +557,7 @@ const ASSISTANT_TOOLS = {
     }
   },
   delete_notebook: {
-    desc: '删除笔记本（其中的笔记移到默认笔记本）。参数：{notebookId?: string, notebookName?: string}',
+    desc: '删除笔记本（笔记移到默认本）。{notebookId?|notebookName?}',
     run: ({ notebookId, notebookName }) => {
       let nb = null;
       if (notebookId) nb = notebooks.find(x => x.id === notebookId);
@@ -574,7 +574,7 @@ const ASSISTANT_TOOLS = {
     }
   },
   move_note: {
-    desc: '移动笔记到另一个笔记本。参数：{noteId: string, notebookId?: string, notebookName?: string}。传 notebookId 或 notebookName 二选一。',
+    desc: '移动笔记。{noteId, notebookId?|notebookName?}',
     run: ({ noteId, notebookId, notebookName }) => {
       const n = notes.find(x => x.id === noteId && !x.deleted);
       if (!n) throw new Error('笔记未找到：' + (noteId || '(未指定)'));
@@ -590,7 +590,7 @@ const ASSISTANT_TOOLS = {
     }
   },
   delete_note: {
-    desc: '删除笔记（软删除）。参数：{id: string}',
+    desc: '删除笔记。{id}',
     run: ({ id }) => {
       const n = notes.find(x => x.id === id);
       if (!n) throw new Error('笔记未找到：' + (id || '(未指定)'));
@@ -602,7 +602,7 @@ const ASSISTANT_TOOLS = {
     }
   },
   optimize_text: {
-    desc: '调用 AI 按 instruction 改写 text。参数：{text: string, instruction: string}',
+    desc: 'AI改写文本。{text, instruction}',
     run: async ({ text, instruction }) => {
       if (!text || !instruction) throw new Error('text 与 instruction 必填');
       const out = await callAi([{ role: 'system', content: '你是中文写作助手。按用户的指令直接重写给定文本，仅输出最终结果，不解释。' }, { role: 'user', content: `指令：${instruction}\n\n原文：\n${text}` }], { stream: false });
@@ -610,7 +610,7 @@ const ASSISTANT_TOOLS = {
     }
   },
   get_note: {
-    desc: '获取笔记完整内容。参数：{id: string}',
+    desc: '获取笔记全文。{id}',
     run: ({ id }) => {
       const n = notes.find(x => x.id === id && !x.deleted);
       if (!n) throw new Error('笔记未找到：' + (id || '(未指定)'));
@@ -619,7 +619,7 @@ const ASSISTANT_TOOLS = {
     }
   },
   get_todo: {
-    desc: '获取待办完整内容。参数：{id: string}',
+    desc: '获取待办详情。{id}',
     run: ({ id }) => {
       const t = todos.find(x => x.id === id);
       if (!t) throw new Error('待办未找到：' + (id || '(未指定)'));
@@ -629,7 +629,7 @@ const ASSISTANT_TOOLS = {
 
   // ——— 记忆系统 ———
   save_memory: {
-    desc: '保存一条记忆（跨会话持久化）。参数：{key: string, value: string, category?: "preference"|"fact"|"context"|"other"}',
+    desc: '保存记忆。{key, value, category?"preference"|"fact"|"context"|"other"}',
     run: ({ key, value, category }) => {
       if (!key || !value) throw new Error('key 和 value 必填');
       const arr = loadMemories();
@@ -641,7 +641,7 @@ const ASSISTANT_TOOLS = {
     }
   },
   recall_memory: {
-    desc: '查找记忆。参数：{query?: string}。不传 query 返回全部记忆。',
+    desc: '查找记忆。{query?}不传返回全部',
     run: ({ query }) => {
       let arr = loadMemories();
       if (query) {
@@ -652,7 +652,7 @@ const ASSISTANT_TOOLS = {
     }
   },
   delete_memory: {
-    desc: '删除一条记忆。参数：{key: string}',
+    desc: '删除记忆。{key}',
     run: ({ key }) => {
       if (!key) throw new Error('key 必填');
       const arr = loadMemories();
@@ -665,7 +665,7 @@ const ASSISTANT_TOOLS = {
 
   // ——— 批量操作 ———
   batch_move_notes: {
-    desc: '批量移动笔记到指定笔记本。参数：{noteIds: string[], notebookId?: string, notebookName?: string}',
+    desc: '批量移动笔记。{noteIds[], notebookId?|notebookName?}',
     run: ({ noteIds, notebookId, notebookName }) => {
       if (!Array.isArray(noteIds) || !noteIds.length) throw new Error('noteIds 必填且不能为空');
       let nb = null;
@@ -684,7 +684,7 @@ const ASSISTANT_TOOLS = {
     }
   },
   batch_update_notes: {
-    desc: '批量更新笔记（加/删标签、加标题前缀）。参数：{noteIds: string[], addTags?: string[], removeTags?: string[], titlePrefix?: string}',
+    desc: '批量更新笔记。{noteIds[], addTags?[], removeTags?[], titlePrefix?}',
     run: ({ noteIds, addTags, removeTags, titlePrefix }) => {
       if (!Array.isArray(noteIds) || !noteIds.length) throw new Error('noteIds 必填');
       let success = 0, failed = 0;
@@ -701,7 +701,7 @@ const ASSISTANT_TOOLS = {
     }
   },
   batch_complete_todos: {
-    desc: '批量完成待办。参数：{todoIds: string[]}',
+    desc: '批量完成待办。{todoIds[]}',
     run: ({ todoIds }) => {
       if (!Array.isArray(todoIds) || !todoIds.length) throw new Error('todoIds 必填');
       let success = 0, failed = 0;
@@ -714,10 +714,25 @@ const ASSISTANT_TOOLS = {
       return { success, failed };
     }
   },
+  batch_delete_notes: {
+    desc: '批量删除笔记。{noteIds[]}',
+    run: ({ noteIds }) => {
+      if (!Array.isArray(noteIds) || !noteIds.length) throw new Error('noteIds 必填');
+      let success = 0, failed = 0;
+      const details = [];
+      for (const id of noteIds) {
+        const n = notes.find(x => x.id === id);
+        if (n && !n.deleted) { n.deleted = true; n.updatedAt = Date.now(); success++; details.push({ id, title: n.title || '(无标题)' }); }
+        else { failed++; }
+      }
+      saveData(); renderNotesList();
+      return { success, failed, details };
+    }
+  },
 
   // ——— 标签管理 ———
   add_tags: {
-    desc: '给笔记添加标签。参数：{noteId: string, tags: string[]}',
+    desc: '添加标签。{noteId, tags[]}',
     run: ({ noteId, tags }) => {
       const n = notes.find(x => x.id === noteId && !x.deleted);
       if (!n) throw new Error('笔记未找到');
@@ -730,7 +745,7 @@ const ASSISTANT_TOOLS = {
     }
   },
   remove_tags: {
-    desc: '移除笔记标签。参数：{noteId: string, tags: string[]}',
+    desc: '移除标签。{noteId, tags[]}',
     run: ({ noteId, tags }) => {
       const n = notes.find(x => x.id === noteId && !x.deleted);
       if (!n) throw new Error('笔记未找到');
@@ -742,7 +757,7 @@ const ASSISTANT_TOOLS = {
     }
   },
   list_tags: {
-    desc: '列出所有标签及使用数量（无参数）',
+    desc: '列出所有标签及数量。无参数',
     run: () => {
       const map = {};
       notes.filter(n => !n.deleted).forEach(n => (n.tags || []).forEach(t => { map[t] = (map[t] || 0) + 1; }));
@@ -752,7 +767,7 @@ const ASSISTANT_TOOLS = {
 
   // ——— 实用技能 ———
   daily_briefing: {
-    desc: '生成今日简报（无参数）：今日待办、过期待办、最近编辑的笔记、记忆提醒',
+    desc: '今日简报。无参数',
     run: () => {
       const now = new Date();
       const todayStart = new Date(); todayStart.setHours(0, 0, 0, 0);
@@ -773,7 +788,7 @@ const ASSISTANT_TOOLS = {
     }
   },
   note_stats: {
-    desc: '笔记统计信息（无参数）：各笔记本笔记数、标签分布、总字数',
+    desc: '笔记统计。无参数',
     run: () => {
       const active = notes.filter(n => !n.deleted);
       const byNb = {};
@@ -800,7 +815,7 @@ const ASSISTANT_TOOLS = {
     }
   },
   create_from_template: {
-    desc: '从模板创建笔记。参数：{template: "meeting"|"diary"|"reading"|"weekly", title?: string, notebookName?: string}',
+    desc: '模板创建笔记。{template:"meeting"|"diary"|"reading"|"weekly", title?, notebookName?}',
     run: ({ template, title, notebookName }) => {
       const templates = {
         meeting: { title: '会议纪要', content: `# 会议纪要\n\n**日期**：${new Date().toLocaleDateString('zh-CN')}\n**参会人**：\n**地点/方式**：\n\n## 议题\n\n1. \n\n## 讨论要点\n\n- \n\n## 决议事项\n\n- [ ] \n\n## 下一步行动\n\n- [ ] ` },
@@ -821,7 +836,7 @@ const ASSISTANT_TOOLS = {
     }
   },
   summarize_note: {
-    desc: '用 AI 总结笔记内容。参数：{id: string}',
+    desc: 'AI总结笔记。{id}',
     run: async ({ id }) => {
       const n = notes.find(x => x.id === id && !x.deleted);
       if (!n) throw new Error('笔记未找到');
@@ -836,7 +851,7 @@ const ASSISTANT_TOOLS = {
 
   // ——— 文件夹管理 ———
   create_folder: {
-    desc: '在笔记本内创建文件夹。参数：{name: string, notebookName?: string}',
+    desc: '创建文件夹。{name, notebookName?}',
     run: ({ name, notebookName }) => {
       if (!name) throw new Error('name 必填');
       let nb = notebookName ? notebooks.find(x => x.name === notebookName) : notebooks[0];
@@ -849,7 +864,7 @@ const ASSISTANT_TOOLS = {
     }
   },
   move_note_to_folder: {
-    desc: '移动笔记到文件夹。参数：{noteId: string, folderId?: string, folderName?: string}',
+    desc: '移动笔记到文件夹。{noteId, folderId?|folderName?}',
     run: ({ noteId, folderId, folderName }) => {
       const n = notes.find(x => x.id === noteId && !x.deleted);
       if (!n) throw new Error('笔记未找到');
@@ -884,12 +899,12 @@ function buildAssistantSystemPrompt() {
   const activeNotes = notes.filter(n => !n.deleted).sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
   let noteIndex = '';
   if (activeNotes.length) {
-    const top = activeNotes.slice(0, 50);
-    noteIndex = '\n\n【笔记概览】共 ' + activeNotes.length + ' 篇笔记（显示最近 ' + top.length + ' 篇）\n';
+    const top = activeNotes.slice(0, 30);
+    noteIndex = '\n\n【笔记概览】共 ' + activeNotes.length + ' 篇（近 ' + top.length + ' 篇）\n';
     noteIndex += top.map((n, i) => {
       const nb = notebooks.find(x => x.id === n.notebookId);
-      const summary = stripMarkdown(n.content).slice(0, 100);
-      return `${i + 1}. ${n.title || '(无标题)'}${nb ? ' [' + nb.name + ']' : ''} — ${summary || '(空)'}`;
+      const summary = stripMarkdown(n.content).slice(0, 60);
+      return `${i + 1}. ${n.title || '(无标题)'}${nb ? ' [' + nb.name + ']' : ''}${summary ? ' — ' + summary : ''}`;
     }).join('\n');
   }
 
@@ -920,68 +935,21 @@ function buildAssistantSystemPrompt() {
       top.map(m => `- [${catLabel[m.category] || '其他'}] ${m.key}：${m.value}`).join('\n');
   }
 
-  return `你是 Marginote 笔记应用内置的 AI 助手，帮用户管理笔记和待办。
+  return `你是 Marginote 笔记 AI 助手。当前：${now.toLocaleString('zh-CN')}
+笔记本${notebooks.length}个 笔记${activeNotes.length}篇 待办${todos.length}条${attachInfo}${noteIndex}${todoOverview}${memorySection}
 
-当前时间（用户本地时区）：${now.toString()}
-ISO：${now.toISOString()}
-笔记本数：${notebooks.length}，笔记数：${activeNotes.length}，待办数：${todos.length}${attachInfo}${noteIndex}${todoOverview}${memorySection}
-
-【可用工具】
+【工具】
 ${tools}
 
-【输出协议】
-每次回复必须是合法 JSON，仅输出 JSON：
-{"reply": "给用户的中文回复", "actions": [{"tool": "工具名", "args": { ... }}]}
-- reply：给用户看的消息（支持 Markdown 格式，可以用标题、列表、代码块、粗体等）
-- actions：工具调用数组，没有就给 []
-- 任务完成时 actions 设为空数组
+【协议】仅输出JSON：{"reply":"Markdown回复","actions":[{"tool":"名","args":{}}]}
+无工具调用时 actions 设 []。每次只调一个工具，多步分轮执行。
 
-【重要规则】
-- 用户询问笔记内容时：先 search_notes 找到相关笔记，再用 get_note 读取完整内容后回答
-- 用户询问今天的待办时：用 search_todos(status:"active", due:"today") 或直接参考上方待办概要
-- 用户询问具体待办详情时：用 get_todo 获取完整内容
-- 搜索无结果时，尝试换不同关键词或拆分关键词再搜一次
-- search_notes 不传 query 可以列出所有笔记
-- 回复中可以直接引用笔记的关键内容，帮用户快速获取信息
-- 整理笔记时：用 batch_move_notes 批量移动（比逐个 move_note 更高效）
-- 用 batch_update_notes 批量打标签或加标题前缀
-- 用户表达偏好或重要信息时，主动用 save_memory 保存（如"我喜欢…"/"记住…"/"我每周…"）
-- 每次只能调用一个工具，需要多步操作时分多轮执行
-- 回复使用 Markdown 格式，让内容更易读（列表、标题、粗体等）
-
-【示例】
-用户："帮我找一下用药相关的笔记"
-→ search_notes({query:"用药"}) → get_note({id:"..."}) → 把关键内容摘要回复给用户
-
-用户："我今天有哪些事情要做？"
-→ search_todos({status:"active", due:"today"}) → 罗列所有今日待办
-
-用户："帮我做个今日简报"
-→ daily_briefing() → 用 Markdown 格式整理今日待办、过期事项、最近笔记
-
-用户："交房租那个待办具体什么情况？"
-→ search_todos({query:"交房租"}) → get_todo({id:"..."}) → 回复完整详情
-
-用户："帮我整理一下笔记，按主题分类"
-→ search_notes() → create_notebook 创建分类笔记本 → batch_move_notes 批量移动
-
-用户："给所有旅游相关的笔记打上标签"
-→ search_notes({query:"旅游"}) → batch_update_notes({noteIds:[...], addTags:["旅游"]})
-
-用户："记住我每周五要交周报"
-→ save_memory({key:"周报", value:"每周五要交周报", category:"fact"}) → 可选：创建周五待办
-
-用户："用会议纪要模板新建一篇"
-→ create_from_template({template:"meeting"})
-
-用户："统计一下我的笔记情况"
-→ note_stats() → 用 Markdown 格式展示统计数据
-
-用户："总结一下这篇笔记的要点"
-→ summarize_note({id:"..."}) → 展示 AI 生成的要点摘要
-
-用户："帮我新建待办 查阅机票，明天15:00完成，提前2小时提醒"
-→ {"reply":"已创建待办","actions":[{"tool":"create_todo","args":{"text":"查阅机票","dueAt":"2026-05-08T15:00:00+08:00","remindBeforeMin":120}}]}`;
+【规则】
+- 查笔记内容：search_notes → get_note → 回答
+- 删除/移动多篇：search_notes({limit:50+}) → batch_delete_notes/batch_move_notes（一次传所有ID）
+- 搜索无果时换关键词重试
+- 用户表达偏好时主动 save_memory
+- 回复用 Markdown（标题/列表/粗体），简洁直接`;
 }
 
 // ===================== 渲染 =====================
@@ -1110,6 +1078,7 @@ function summarizeActionResult(name, result) {
   if (name === 'batch_move_notes') return `${result.success || 0} 篇笔记已移至「${result.notebookName || ''}」`;
   if (name === 'batch_update_notes') return `${result.success || 0} 篇笔记已更新`;
   if (name === 'batch_complete_todos') return `${result.success || 0} 条待办已完成`;
+  if (name === 'batch_delete_notes') return `${result.success || 0} 篇笔记已删除`;
   if (name === 'add_tags') return `笔记「${result.title || ''}」添加 ${result.added || 0} 个标签`;
   if (name === 'remove_tags') return `笔记「${result.title || ''}」移除 ${result.removed || 0} 个标签`;
   if (name === 'list_tags') return `${(result || []).length} 个标签`;

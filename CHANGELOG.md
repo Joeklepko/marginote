@@ -5,6 +5,27 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.3] - 2026-06-28
+
+AI 助手体验优化 + 批量删除 + prompt 精简 + 对话气泡美化。
+
+### 新功能
+
+- **批量删除笔记**：新增 `batch_delete_notes` 工具，AI 可一次删除多篇笔记（不再逐条删导致遗漏）
+- **搜索结果扩大**：`search_notes` 默认返回 30 条（原 10 条），最大支持 100 条，确保批量操作覆盖完整
+
+### 优化
+
+- **AI 对话气泡美化**：Bot 回复支持完整 Markdown 排版（标题分级、列表缩进、代码块高亮、引用块、表格边框、行内代码标签）；去掉 `pre-wrap` 强制保留空白
+- **系统提示词精简**：工具描述压缩 50%+、笔记概览从 50 篇/100字 缩减为 30 篇/60字、移除冗长示例段，适配 40K 上下文的本地模型
+- **prompt() 弹窗替换为内联编辑**：新建/重命名分组和会话不再弹出 `tauri.localhost` 对话框，改为列表内直接编辑（Enter 确认 / Escape 取消）
+- **"+新对话"按钮生效**：助手侧栏的 `assistantNewGroupBtn` 补上缺失的事件处理
+
+### 发布
+
+- Chrome 扩展：v1.2.3（自包含，下载后直接加载 `extension/` 目录）
+- Windows 桌面版：v1.2.3（Tauri + WebView2）
+
 ## [1.2.2] - 2026-05-29
 
 工作目录（双向）+ 自动备份可定位 + 移除单向备份 + 桌面版历史版本弹窗修复 + UI 优化 + 构建配置调整。
