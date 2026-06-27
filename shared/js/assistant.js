@@ -513,6 +513,39 @@ const ASSISTANT_TOOLS = {
       return { id: nb.id, name: nb.name, color: nb.color };
     }
   },
+  rename_notebook: {
+    desc: '重命名笔记本。参数：{notebookId?: string, notebookName?: string, newName: string, newColor?: string}',
+    run: ({ notebookId, notebookName, newName, newColor }) => {
+      if (!newName) throw new Error('newName 必填');
+      let nb = null;
+      if (notebookId) nb = notebooks.find(x => x.id === notebookId);
+      else if (notebookName) nb = notebooks.find(x => x.name === notebookName);
+      if (!nb) throw new Error('笔记本未找到：' + (notebookName || notebookId || '(未指定)'));
+      const oldName = nb.name;
+      nb.name = String(newName);
+      if (newColor) nb.color = String(newColor);
+      saveData();
+      renderNotebooks();
+      return { id: nb.id, oldName, newName: nb.name, color: nb.color };
+    }
+  },
+  delete_notebook: {
+    desc: '删除笔记本（其中的笔记移到默认笔记本）。参数：{notebookId?: string, notebookName?: string}',
+    run: ({ notebookId, notebookName }) => {
+      let nb = null;
+      if (notebookId) nb = notebooks.find(x => x.id === notebookId);
+      else if (notebookName) nb = notebooks.find(x => x.name === notebookName);
+      if (!nb) throw new Error('笔记本未找到');
+      if (notebooks.length <= 1) throw new Error('至少保留一个笔记本');
+      const defaultNb = notebooks.find(x => x.id !== nb.id);
+      const movedCount = notes.filter(n => n.notebookId === nb.id).length;
+      notes.forEach(n => { if (n.notebookId === nb.id) n.notebookId = defaultNb.id; });
+      folders = folders.filter(f => f.notebookId !== nb.id);
+      notebooks = notebooks.filter(x => x.id !== nb.id);
+      saveData(); renderNotebooks(); renderNotesList();
+      return { deleted: nb.name, movedNotesTo: defaultNb.name, movedCount };
+    }
+  },
   move_note: {
     desc: '移动笔记到另一个笔记本。参数：{noteId: string, notebookId?: string, notebookName?: string}。传 notebookId 或 notebookName 二选一。',
     run: ({ noteId, notebookId, notebookName }) => {
@@ -1037,6 +1070,8 @@ function summarizeActionResult(name, result) {
   if (name === 'search_notes') return `${(result || []).length} 篇笔记`;
   if (name === 'search_todos') return `${(result || []).length} 条待办`;
   if (name === 'create_notebook') return `笔记本「${result.name || ''}」${result.existed ? '已存在' : '已创建'}`;
+  if (name === 'rename_notebook') return `笔记本「${result.oldName || ''}」→「${result.newName || ''}」`;
+  if (name === 'delete_notebook') return `笔记本「${result.deleted || ''}」已删除，${result.movedCount || 0} 篇笔记移至「${result.movedNotesTo || ''}」`;
   if (name === 'move_note') return `笔记「${result.title || ''}」已移至「${result.notebookName || ''}」`;
   if (name === 'delete_note') return `笔记「${result.title || ''}」已删除`;
   if (name === 'get_note') return `笔记「${result.title || ''}」内容已获取`;
@@ -1392,6 +1427,65 @@ function bindAssistantUi() {
   // 清空当前会话
   const clearBtn = document.getElementById('assistantClearBtn');
   if (clearBtn) clearBtn.addEventListener('click', () => { if (confirm('清空当前会话历史？')) clearActiveSessionHistory(); });
+
+  // 记忆管理面板
+  const memBtn = document.getElementById('assistantMemoryBtn');
+  const memPanel = document.getElementById('assistantMemoryPanel');
+  const memChat = document.getElementById('assistantChat');
+  const memInputRow = document.getElementById('assistantInputRow');
+  const memAttachRow = document.getElementById('assistantAttachments');
+  if (memBtn && memPanel) {
+    function renderMemoryList() {
+      const list = document.getElementById('memoryList');
+      if (!list) return;
+      const arr = loadMemories();
+      const catLabel = { preference: '偏好', fact: '事实', context: '上下文', other: '其他' };
+      if (!arr.length) { list.innerHTML = '<div class="memory-empty">暂无记忆<br><span style="font-size:11px">和 AI 助手对话时说"记住…"即可自动保存</span></div>'; return; }
+      list.innerHTML = arr.map((m, i) => `<div class="memory-item" data-idx="${i}"><span class="mem-cat">${catLabel[m.category] || '其他'}</span><div class="mem-body"><div class="mem-key">${escapeHtml(m.key)}</div><div class="mem-val">${escapeHtml(m.value)}</div></div><button class="mem-del" data-key="${escapeHtml(m.key)}" title="删除">✕</button></div>`).join('');
+      list.querySelectorAll('.mem-del').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const key = btn.dataset.key;
+          const mArr = loadMemories().filter(x => x.key !== key);
+          saveMemories(mArr);
+          renderMemoryList();
+        });
+      });
+    }
+    memBtn.addEventListener('click', () => {
+      const showing = memPanel.style.display !== 'none';
+      if (showing) {
+        memPanel.style.display = 'none';
+        if (memChat) memChat.style.display = '';
+        if (memInputRow) memInputRow.style.display = '';
+        if (memAttachRow) memAttachRow.style.display = '';
+      } else {
+        memPanel.style.display = '';
+        if (memChat) memChat.style.display = 'none';
+        if (memInputRow) memInputRow.style.display = 'none';
+        if (memAttachRow) memAttachRow.style.display = 'none';
+        renderMemoryList();
+      }
+    });
+    const memClose = document.getElementById('memoryPanelClose');
+    if (memClose) memClose.addEventListener('click', () => memBtn.click());
+    const memAddBtn = document.getElementById('memoryAddBtn');
+    if (memAddBtn) memAddBtn.addEventListener('click', () => {
+      const keyEl = document.getElementById('memoryKeyInput');
+      const valEl = document.getElementById('memoryValueInput');
+      const catEl = document.getElementById('memoryCategoryInput');
+      const key = (keyEl?.value || '').trim();
+      const value = (valEl?.value || '').trim();
+      if (!key || !value) { if (typeof showToast === 'function') showToast('请填写关键词和内容'); return; }
+      const arr = loadMemories();
+      const idx = arr.findIndex(m => m.key === key);
+      const entry = { key, value, category: catEl?.value || 'other', createdAt: idx >= 0 ? arr[idx].createdAt : Date.now(), updatedAt: Date.now() };
+      if (idx >= 0) arr[idx] = entry; else arr.push(entry);
+      saveMemories(arr);
+      if (keyEl) keyEl.value = '';
+      if (valEl) valEl.value = '';
+      renderMemoryList();
+    });
+  }
 
   // 附件
   const attachBtn = document.getElementById('assistantAttachBtn');
