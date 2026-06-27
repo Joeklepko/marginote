@@ -40,25 +40,6 @@ jobs:
             tauri icon shared/icons/icon128.png -o desktop/src-tauri/icons
           }
 
-      - name: Fetch Excalidraw assets (bundle into exe)
-        shell: pwsh
-        run: |
-          $dir = "shared/excalidraw/vendor"
-          New-Item -ItemType Directory -Force -Path $dir | Out-Null
-          $react = "18.2.0"; $exc = "0.17.6"
-          $files = @{
-            "react.production.min.js"      = "https://unpkg.com/react@$react/umd/react.production.min.js";
-            "react-dom.production.min.js"  = "https://unpkg.com/react-dom@$react/umd/react-dom.production.min.js";
-            "excalidraw.production.min.js" = "https://unpkg.com/@excalidraw/excalidraw@$exc/dist/excalidraw.production.min.js";
-            "excalidraw.css"               = "https://unpkg.com/@excalidraw/excalidraw@$exc/dist/excalidraw.min.css";
-          }
-          foreach ($f in $files.Keys) {
-            Invoke-WebRequest -Uri $files[$f] -OutFile "$dir/$f" -UseBasicParsing
-          }
-          $sz = (Get-Item "$dir/excalidraw.production.min.js").Length
-          if ($sz -lt 100000) { throw "excalidraw bundle too small ($sz bytes) - download failed" }
-          Write-Host "Excalidraw assets fetched ($sz bytes)"
-
       - name: Build Tauri app
         working-directory: desktop
         run: tauri build
