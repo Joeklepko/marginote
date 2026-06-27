@@ -335,6 +335,46 @@ function renderAttachmentPickerContent() {
   });
 }
 
+// ===================== 辅助函数 =====================
+
+function stripMarkdown(text) {
+  if (!text) return '';
+  return text
+    .replace(/^#{1,6}\s+/gm, '')
+    .replace(/\*\*(.+?)\*\*/g, '$1')
+    .replace(/\*(.+?)\*/g, '$1')
+    .replace(/__(.+?)__/g, '$1')
+    .replace(/_(.+?)_/g, '$1')
+    .replace(/~~(.+?)~~/g, '$1')
+    .replace(/`{1,3}[^`]*`{1,3}/g, '')
+    .replace(/```[\s\S]*?```/g, '')
+    .replace(/!?\[([^\]]*)\]\([^)]*\)/g, '$1')
+    .replace(/^>\s+/gm, '')
+    .replace(/^[-*+]\s+/gm, '')
+    .replace(/^\d+\.\s+/gm, '')
+    .replace(/\|/g, ' ')
+    .replace(/[-]{3,}/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function extractSnippet(content, query, maxLen = 200) {
+  const plain = stripMarkdown(content);
+  if (!query) return plain.slice(0, maxLen).replace(/\s+/g, ' ');
+  const lower = plain.toLowerCase();
+  const terms = query.toLowerCase().split(/\s+/).filter(Boolean);
+  let bestIdx = -1;
+  for (const t of terms) {
+    const idx = lower.indexOf(t);
+    if (idx >= 0) { bestIdx = idx; break; }
+  }
+  if (bestIdx >= 0) {
+    const start = Math.max(0, bestIdx - 40);
+    return (start > 0 ? '...' : '') + plain.slice(start, start + maxLen).replace(/\s+/g, ' ');
+  }
+  return plain.slice(0, maxLen).replace(/\s+/g, ' ');
+}
+
 // ===================== 工具定义 =====================
 
 const ASSISTANT_TOOLS = {
@@ -343,31 +383,52 @@ const ASSISTANT_TOOLS = {
     run: () => notebooks.map(nb => ({ id: nb.id, name: nb.name, color: nb.color }))
   },
   search_notes: {
-    desc: '搜索笔记。参数：{query: string, limit?: number(默认10)}',
+    desc: '搜索笔记（标题+内容）。参数：{query?: string, limit?: number(默认10)}。不传query返回全部笔记概览。',
     run: ({ query, limit }) => {
       const q = String(query || '').trim().toLowerCase();
-      if (!q) return [];
-      const lim = Math.max(1, Math.min(20, parseInt(limit, 10) || 10));
-      return notes
-        .filter(n => !n.deleted)
-        .filter(n => (n.title || '').toLowerCase().includes(q) || (n.content || '').toLowerCase().includes(q))
+      const lim = Math.max(1, Math.min(50, parseInt(limit, 10) || 10));
+      let list = notes.filter(n => !n.deleted);
+      if (q) {
+        const terms = q.split(/\s+/).filter(Boolean);
+        list = list.filter(n => {
+          const title = (n.title || '').toLowerCase();
+          const content = (n.content || '').toLowerCase();
+          return terms.some(t => title.includes(t) || content.includes(t));
+        });
+        if (!list.length) {
+          list = notes.filter(n => !n.deleted).filter(n => {
+            const chars = q.replace(/\s+/g, '').split('');
+            const blob = ((n.title || '') + (n.content || '')).toLowerCase();
+            return chars.every(c => blob.includes(c));
+          });
+        }
+      }
+      return list
         .sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))
         .slice(0, lim)
-        .map(n => ({ id: n.id, title: n.title || '(无标题)', snippet: (n.content || '').slice(0, 120).replace(/\s+/g, ' '), notebookId: n.notebookId, updatedAt: n.updatedAt }));
+        .map(n => {
+          const nb = notebooks.find(x => x.id === n.notebookId);
+          return { id: n.id, title: n.title || '(无标题)', snippet: extractSnippet(n.content, q, 200), notebookName: nb?.name || '', tags: n.tags || [], updatedAt: n.updatedAt };
+        });
     }
   },
   search_todos: {
-    desc: '搜索待办。参数：{query?: string, status?: "active"|"done"|"overdue"|"all", limit?: number}',
-    run: ({ query, status, limit }) => {
+    desc: '搜索待办。参数：{query?: string, status?: "active"|"done"|"overdue"|"all", due?: "today"|"overdue"|"week", limit?: number}',
+    run: ({ query, status, due, limit }) => {
       const q = String(query || '').trim().toLowerCase();
-      const lim = Math.max(1, Math.min(20, parseInt(limit, 10) || 10));
+      const lim = Math.max(1, Math.min(50, parseInt(limit, 10) || 10));
       const now = Date.now();
+      const todayStart = new Date(); todayStart.setHours(0, 0, 0, 0);
+      const todayEnd = new Date(); todayEnd.setHours(23, 59, 59, 999);
       let list = todos.slice();
       if (status === 'active') list = list.filter(t => !t.done);
       else if (status === 'done') list = list.filter(t => t.done);
       else if (status === 'overdue') list = list.filter(t => !t.done && t.dueDate && t.dueDate < now);
-      if (q) list = list.filter(t => (t.text || '').toLowerCase().includes(q));
-      return list.sort((a, b) => (a.dueDate || Infinity) - (b.dueDate || Infinity)).slice(0, lim).map(t => ({ id: t.id, text: t.text, done: !!t.done, dueAt: t.dueDate ? new Date(t.dueDate).toISOString() : null, remindBeforeMin: t.remindBeforeMin || 0 }));
+      if (due === 'today') list = list.filter(t => t.dueDate && t.dueDate >= todayStart.getTime() && t.dueDate <= todayEnd.getTime());
+      else if (due === 'overdue') list = list.filter(t => !t.done && t.dueDate && t.dueDate < todayStart.getTime());
+      else if (due === 'week') { const weekEnd = todayEnd.getTime() + 6 * 86400000; list = list.filter(t => t.dueDate && t.dueDate >= todayStart.getTime() && t.dueDate <= weekEnd); }
+      if (q) list = list.filter(t => (t.text || '').toLowerCase().includes(q) || (t.content || '').toLowerCase().includes(q));
+      return list.sort((a, b) => (a.dueDate || Infinity) - (b.dueDate || Infinity)).slice(0, lim).map(t => ({ id: t.id, text: t.text, done: !!t.done, dueAt: t.dueDate ? new Date(t.dueDate).toISOString() : null, remindBeforeMin: t.remindBeforeMin || 0, contentPreview: (t.content || '').slice(0, 100) }));
     }
   },
   create_note: {
@@ -439,8 +500,25 @@ const ASSISTANT_TOOLS = {
     desc: '调用 AI 按 instruction 改写 text。参数：{text: string, instruction: string}',
     run: async ({ text, instruction }) => {
       if (!text || !instruction) throw new Error('text 与 instruction 必填');
-      const out = await callAi([{ role: 'system', content: '你是中文写作助手。按用户的指令直接重写给定文本，仅输出最终结果，不解释。' }, { role: 'user', content: `指令：${instruction}\n\n原文：\n${text}` }]);
+      const out = await callAi([{ role: 'system', content: '你是中文写作助手。按用户的指令直接重写给定文本，仅输出最终结果，不解释。' }, { role: 'user', content: `指令：${instruction}\n\n原文：\n${text}` }], { stream: false });
       return { result: out };
+    }
+  },
+  get_note: {
+    desc: '获取笔记完整内容。参数：{id: string}',
+    run: ({ id }) => {
+      const n = notes.find(x => x.id === id && !x.deleted);
+      if (!n) throw new Error('笔记未找到：' + (id || '(未指定)'));
+      const nb = notebooks.find(x => x.id === n.notebookId);
+      return { id: n.id, title: n.title || '(无标题)', content: n.content || '', notebookName: nb?.name || '', tags: n.tags || [], starred: !!n.starred, updatedAt: n.updatedAt };
+    }
+  },
+  get_todo: {
+    desc: '获取待办完整内容。参数：{id: string}',
+    run: ({ id }) => {
+      const t = todos.find(x => x.id === id);
+      if (!t) throw new Error('待办未找到：' + (id || '(未指定)'));
+      return { id: t.id, text: t.text, content: t.content || '', done: !!t.done, dueDate: t.dueDate ? new Date(t.dueDate).toISOString() : null, remindBeforeMin: t.remindBeforeMin || 0, createdAt: t.createdAt, completedAt: t.completedAt };
     }
   }
 };
@@ -462,11 +540,42 @@ function buildAssistantSystemPrompt() {
     if (imgCount) parts.push(`[图片附件: ${imgCount} 张（已作为 image_url 部分附在最后一条用户消息中，请直接读取并理解）]`);
     if (parts.length) { attachInfo = '\n\n【当前附件】\n' + parts.join('\n') + '\n【注意】修改附件内容时使用 update_note / update_todo，不传 id 时自动使用附件中的第一个对应类型。'; }
   }
+
+  const activeNotes = notes.filter(n => !n.deleted).sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+  let noteIndex = '';
+  if (activeNotes.length) {
+    const top = activeNotes.slice(0, 50);
+    noteIndex = '\n\n【笔记概览】共 ' + activeNotes.length + ' 篇笔记（显示最近 ' + top.length + ' 篇）\n';
+    noteIndex += top.map((n, i) => {
+      const nb = notebooks.find(x => x.id === n.notebookId);
+      const summary = stripMarkdown(n.content).slice(0, 100);
+      return `${i + 1}. ${n.title || '(无标题)'}${nb ? ' [' + nb.name + ']' : ''} — ${summary || '(空)'}`;
+    }).join('\n');
+  }
+
+  const activeTodos = todos.filter(t => !t.done);
+  const todayStart = new Date(); todayStart.setHours(0, 0, 0, 0);
+  const todayEnd = new Date(); todayEnd.setHours(23, 59, 59, 999);
+  const todayTodos = activeTodos.filter(t => t.dueDate && t.dueDate >= todayStart.getTime() && t.dueDate <= todayEnd.getTime());
+  const overdueTodos = activeTodos.filter(t => t.dueDate && t.dueDate < todayStart.getTime());
+  let todoOverview = '';
+  if (todos.length) {
+    todoOverview = '\n\n【待办概要】未完成：' + activeTodos.length + ' 条' +
+      (todayTodos.length ? '（今日截止 ' + todayTodos.length + ' 条）' : '') +
+      (overdueTodos.length ? '（已过期 ' + overdueTodos.length + ' 条）' : '');
+    if (todayTodos.length) {
+      todoOverview += '\n今日截止：\n' + todayTodos.map(t => '- ' + t.text + (t.dueDate ? '（截止 ' + new Date(t.dueDate).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }) + '）' : '')).join('\n');
+    }
+    if (overdueTodos.length) {
+      todoOverview += '\n已过期：\n' + overdueTodos.slice(0, 10).map(t => '- ' + t.text + (t.dueDate ? '（原定 ' + new Date(t.dueDate).toLocaleDateString('zh-CN') + '）' : '')).join('\n');
+    }
+  }
+
   return `你是 Marginote 笔记应用内置的 AI 助手，帮用户管理笔记和待办。
 
 当前时间（用户本地时区）：${now.toString()}
 ISO：${now.toISOString()}
-笔记本数：${notebooks.length}，笔记数：${notes.filter(n => !n.deleted).length}，待办数：${todos.length}${attachInfo}
+笔记本数：${notebooks.length}，笔记数：${activeNotes.length}，待办数：${todos.length}${attachInfo}${noteIndex}${todoOverview}
 
 【可用工具】
 ${tools}
@@ -478,10 +587,26 @@ ${tools}
 - actions：工具调用数组，没有就给 []
 - 任务完成时 actions 设为空数组
 
+【重要规则】
+- 用户询问笔记内容时：先 search_notes 找到相关笔记，再用 get_note 读取完整内容后回答
+- 用户询问今天的待办时：用 search_todos(status:"active", due:"today") 或直接参考上方待办概要
+- 用户询问具体待办详情时：用 get_todo 获取完整内容
+- 搜索无结果时，尝试换不同关键词或拆分关键词再搜一次
+- search_notes 不传 query 可以列出所有笔记
+- 回复中可以直接引用笔记的关键内容，帮用户快速获取信息
+
 【示例】
+用户："帮我找一下用药相关的笔记"
+→ search_notes({query:"用药"}) → get_note({id:"..."}) → 把关键内容摘要回复给用户
+
+用户："我今天有哪些事情要做？"
+→ search_todos({status:"active", due:"today"}) → 罗列所有今日待办
+
+用户："交房租那个待办具体什么情况？"
+→ search_todos({query:"交房租"}) → get_todo({id:"..."}) → 回复完整详情
+
 用户："帮我新建待办 查阅机票，明天15:00完成，提前2小时提醒"
-你输出：
-{"reply":"已创建待办","actions":[{"tool":"create_todo","args":{"text":"查阅机票","dueAt":"2026-05-08T15:00:00+08:00","remindBeforeMin":120}}]}`;
+→ {"reply":"已创建待办","actions":[{"tool":"create_todo","args":{"text":"查阅机票","dueAt":"2026-05-08T15:00:00+08:00","remindBeforeMin":120}}]}`;
 }
 
 // ===================== 渲染 =====================
@@ -593,6 +718,8 @@ function summarizeActionResult(name, result) {
   if (name === 'list_notebooks') return `${(result || []).length} 个笔记本`;
   if (name === 'search_notes') return `${(result || []).length} 篇笔记`;
   if (name === 'search_todos') return `${(result || []).length} 条待办`;
+  if (name === 'get_note') return `笔记「${result.title || ''}」内容已获取`;
+  if (name === 'get_todo') return `待办「${result.text || ''}」详情已获取`;
   if (name === 'optimize_text') return `已优化文本`;
   return '';
 }
@@ -689,7 +816,7 @@ async function runAssistantTurn(userInput) {
         ctx.push({ role: 'user', content: m.content });
       }
     }
-    else if (m.role === 'assistant') ctx.push({ role: 'assistant', content: m.content });
+    else if (m.role === 'assistant') ctx.push({ role: 'assistant', content: m.raw || m.content });
     else if (m.role === 'system') ctx.push({ role: 'user', content: '【工具结果】' + m.content });
   }
 
@@ -700,26 +827,9 @@ async function runAssistantTurn(userInput) {
       setAssistantTyping(true);
       let raw;
       try {
-        // 流式输出：边收到 token 边在 typing 气泡中显示提取出的 reply 文本，
-        // 完整结果出来后再走原有 parseAssistantReply 流程。
-        let liveBubble = null;
         raw = await callAi(ctx, {
           temperature: 0.3,
-          stream: true,
-          onDelta: (delta, full) => {
-            const box = document.getElementById('assistantChat');
-            if (!box) return;
-            if (!liveBubble) {
-              box.querySelectorAll('.assistant-typing-msg').forEach(el => el.remove());
-              const div = document.createElement('div');
-              div.className = 'assistant-msg bot assistant-typing-msg';
-              div.innerHTML = '<span class="role">AI</span><div class="bubble"></div>';
-              box.appendChild(div);
-              liveBubble = div.querySelector('.bubble');
-            }
-            liveBubble.textContent = _extractStreamingReply(full);
-            box.scrollTop = box.scrollHeight;
-          }
+          stream: false
         });
       } finally { setAssistantTyping(false); }
 
@@ -736,8 +846,10 @@ async function runAssistantTurn(userInput) {
           if (name === 'search_notes' && Array.isArray(result)) for (const r of result) searchResults.push({ kind: 'note', id: r.id, title: r.title, snippet: r.snippet, updatedAt: r.updatedAt });
           else if (name === 'search_todos' && Array.isArray(result)) for (const r of result) searchResults.push({ kind: 'todo', id: r.id, title: r.text, snippet: r.done ? '已完成' : '进行中', dueAt: r.dueAt });
           else if (name === 'list_notebooks' && Array.isArray(result)) for (const r of result) searchResults.push({ kind: 'notebook', id: r.id, title: r.name });
+          const resultStr = JSON.stringify(result).slice(0, 1500);
           ctx.push({ role: 'assistant', content: raw });
-          ctx.push({ role: 'user', content: '【工具结果】' + name + ': ' + JSON.stringify(result).slice(0, 1500) });
+          ctx.push({ role: 'user', content: '【工具结果】' + name + ': ' + resultStr });
+          pushAssistantMessage('system', name + ': ' + resultStr);
         } catch (e) {
           actionMeta.push({ tool: name, error: e.message || String(e) });
           ctx.push({ role: 'assistant', content: raw });
