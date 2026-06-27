@@ -496,6 +496,47 @@ const ASSISTANT_TOOLS = {
       return { id: t.id, text: t.text, done: !!t.done };
     }
   },
+  create_notebook: {
+    desc: '新建笔记本。参数：{name: string, color?: string(十六进制色值)}',
+    run: ({ name, color }) => {
+      if (!name) throw new Error('name 必填');
+      const existing = notebooks.find(x => x.name === name);
+      if (existing) return { id: existing.id, name: existing.name, color: existing.color, existed: true };
+      const nb = { id: uid(), name: String(name), color: String(color || '#525252'), createdAt: Date.now() };
+      notebooks.push(nb);
+      saveData();
+      renderNotebooks();
+      return { id: nb.id, name: nb.name, color: nb.color };
+    }
+  },
+  move_note: {
+    desc: '移动笔记到另一个笔记本。参数：{noteId: string, notebookId?: string, notebookName?: string}。传 notebookId 或 notebookName 二选一。',
+    run: ({ noteId, notebookId, notebookName }) => {
+      const n = notes.find(x => x.id === noteId && !x.deleted);
+      if (!n) throw new Error('笔记未找到：' + (noteId || '(未指定)'));
+      let targetNb = null;
+      if (notebookId) targetNb = notebooks.find(x => x.id === notebookId);
+      else if (notebookName) targetNb = notebooks.find(x => x.name === notebookName);
+      if (!targetNb) throw new Error('目标笔记本未找到：' + (notebookName || notebookId || '(未指定)'));
+      n.notebookId = targetNb.id;
+      n.updatedAt = Date.now();
+      saveData();
+      renderNotesList();
+      return { id: n.id, title: n.title || '(无标题)', notebookId: targetNb.id, notebookName: targetNb.name };
+    }
+  },
+  delete_note: {
+    desc: '删除笔记（软删除）。参数：{id: string}',
+    run: ({ id }) => {
+      const n = notes.find(x => x.id === id);
+      if (!n) throw new Error('笔记未找到：' + (id || '(未指定)'));
+      n.deleted = true;
+      n.updatedAt = Date.now();
+      saveData();
+      renderNotesList();
+      return { id: n.id, title: n.title || '(无标题)', deleted: true };
+    }
+  },
   optimize_text: {
     desc: '调用 AI 按 instruction 改写 text。参数：{text: string, instruction: string}',
     run: async ({ text, instruction }) => {
@@ -594,6 +635,8 @@ ${tools}
 - 搜索无结果时，尝试换不同关键词或拆分关键词再搜一次
 - search_notes 不传 query 可以列出所有笔记
 - 回复中可以直接引用笔记的关键内容，帮用户快速获取信息
+- 整理笔记时：先用 create_notebook 创建目标笔记本，再用 move_note 逐个移动笔记，用 update_note 修改标题
+- 每次只能调用一个工具，需要多步操作时分多轮执行
 
 【示例】
 用户："帮我找一下用药相关的笔记"
@@ -604,6 +647,12 @@ ${tools}
 
 用户："交房租那个待办具体什么情况？"
 → search_todos({query:"交房租"}) → get_todo({id:"..."}) → 回复完整详情
+
+用户："帮我整理一下笔记，没有标题的加上标题"
+→ search_notes() 列出所有笔记 → 对无标题笔记逐个 get_note 读内容 → update_note 添加标题
+
+用户："把旅游相关的笔记都移到旅游笔记本里"
+→ create_notebook({name:"旅游"}) → search_notes({query:"旅游"}) → 对每篇笔记 move_note 到旅游笔记本
 
 用户："帮我新建待办 查阅机票，明天15:00完成，提前2小时提醒"
 → {"reply":"已创建待办","actions":[{"tool":"create_todo","args":{"text":"查阅机票","dueAt":"2026-05-08T15:00:00+08:00","remindBeforeMin":120}}]}`;
@@ -650,7 +699,10 @@ function renderAssistantChat() {
 function renderAssistantMessage(m) {
   const role = m.role === 'user' ? 'user' : (m.role === 'system' ? 'system' : 'bot');
   const roleLabel = m.role === 'user' ? '我' : (m.role === 'system' ? '工具' : 'AI');
-  let html = `<div class="assistant-msg ${role}"><span class="role">${roleLabel}</span><div class="bubble">${escapeHtml(m.content || '')}</div>`;
+  const bubbleContent = role === 'bot' && m.content && typeof renderMarkdown === 'function'
+    ? renderMarkdown(m.content)
+    : escapeHtml(m.content || '');
+  let html = `<div class="assistant-msg ${role}"><span class="role">${roleLabel}</span><div class="bubble">${bubbleContent}</div>`;
   if (m.attachments && m.attachments.length) {
     html += '<div class="msg-attachments">';
     for (const a of m.attachments) {
@@ -718,6 +770,9 @@ function summarizeActionResult(name, result) {
   if (name === 'list_notebooks') return `${(result || []).length} 个笔记本`;
   if (name === 'search_notes') return `${(result || []).length} 篇笔记`;
   if (name === 'search_todos') return `${(result || []).length} 条待办`;
+  if (name === 'create_notebook') return `笔记本「${result.name || ''}」${result.existed ? '已存在' : '已创建'}`;
+  if (name === 'move_note') return `笔记「${result.title || ''}」已移至「${result.notebookName || ''}」`;
+  if (name === 'delete_note') return `笔记「${result.title || ''}」已删除`;
   if (name === 'get_note') return `笔记「${result.title || ''}」内容已获取`;
   if (name === 'get_todo') return `待办「${result.text || ''}」详情已获取`;
   if (name === 'optimize_text') return `已优化文本`;
