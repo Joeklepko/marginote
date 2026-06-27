@@ -1752,11 +1752,11 @@
   .assistant-msg {
     display: flex;
     flex-direction: column;
-    max-width: 88%;
+    max-width: 92%;
     font-size: 13.5px;
     line-height: 1.6;
   }
-  .assistant-msg.user { align-self: flex-end; }
+  .assistant-msg.user { align-self: flex-end; max-width: 80%; }
   .assistant-msg.bot, .assistant-msg.system { align-self: flex-start; }
   .assistant-msg .role {
     font-family: 'JetBrains Mono', monospace;
@@ -1768,18 +1768,64 @@
     padding: 0 2px;
   }
   .assistant-msg .bubble {
-    padding: 10px 14px;
+    padding: 12px 16px;
     border-radius: 12px;
     background: var(--paper);
     border: 1px solid var(--rule-soft);
     color: var(--ink);
     word-break: break-word;
-    white-space: pre-wrap;
   }
+  .assistant-msg.bot .bubble p { margin: 0 0 8px 0; }
+  .assistant-msg.bot .bubble p:last-child { margin-bottom: 0; }
+  .assistant-msg.bot .bubble h1, .assistant-msg.bot .bubble h2, .assistant-msg.bot .bubble h3,
+  .assistant-msg.bot .bubble h4, .assistant-msg.bot .bubble h5, .assistant-msg.bot .bubble h6 {
+    margin: 12px 0 6px 0; font-weight: 600; line-height: 1.3;
+  }
+  .assistant-msg.bot .bubble h1:first-child, .assistant-msg.bot .bubble h2:first-child,
+  .assistant-msg.bot .bubble h3:first-child { margin-top: 0; }
+  .assistant-msg.bot .bubble h1 { font-size: 1.2em; }
+  .assistant-msg.bot .bubble h2 { font-size: 1.1em; }
+  .assistant-msg.bot .bubble h3 { font-size: 1.05em; }
+  .assistant-msg.bot .bubble ul, .assistant-msg.bot .bubble ol {
+    margin: 6px 0; padding-left: 20px;
+  }
+  .assistant-msg.bot .bubble li { margin-bottom: 3px; }
+  .assistant-msg.bot .bubble li:last-child { margin-bottom: 0; }
+  .assistant-msg.bot .bubble blockquote {
+    margin: 8px 0; padding: 6px 12px; border-left: 3px solid var(--accent);
+    background: var(--bg-warm); border-radius: 0 6px 6px 0; color: var(--ink-soft);
+  }
+  .assistant-msg.bot .bubble pre {
+    margin: 8px 0; padding: 10px 12px; background: var(--bg-warm);
+    border: 1px solid var(--rule-soft); border-radius: 6px;
+    overflow-x: auto; font-size: 12px; line-height: 1.5;
+  }
+  .assistant-msg.bot .bubble code {
+    font-family: 'JetBrains Mono', 'Fira Code', monospace; font-size: 0.9em;
+  }
+  .assistant-msg.bot .bubble :not(pre) > code {
+    padding: 1px 5px; background: var(--bg-warm); border-radius: 3px;
+    border: 1px solid var(--rule-soft);
+  }
+  .assistant-msg.bot .bubble table {
+    border-collapse: collapse; margin: 8px 0; font-size: 12px; width: 100%;
+  }
+  .assistant-msg.bot .bubble th, .assistant-msg.bot .bubble td {
+    padding: 5px 8px; border: 1px solid var(--rule-soft); text-align: left;
+  }
+  .assistant-msg.bot .bubble th { background: var(--bg-warm); font-weight: 600; }
+  .assistant-msg.bot .bubble hr {
+    border: none; border-top: 1px solid var(--rule-soft); margin: 10px 0;
+  }
+  .assistant-msg.bot .bubble a { color: var(--accent); text-decoration: none; }
+  .assistant-msg.bot .bubble a:hover { text-decoration: underline; }
+  .assistant-msg.bot .bubble strong { font-weight: 600; }
+  .assistant-msg.bot .bubble em { font-style: italic; }
   .assistant-msg.user .bubble {
     background: #dbeafe;
     color: #1e3a5f;
     border-color: #93c5fd;
+    white-space: pre-wrap;
   }
   .assistant-msg.system .bubble {
     background: var(--bg-warm);
