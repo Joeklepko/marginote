@@ -4821,7 +4821,14 @@ async function workdirWriteAll(silent) {
       collectIds(n.content);
       await fs.writeText(rel, noteToMarkdown(n, { mode: 'inline' }));
     }
-    // 待办（统一放 待办/ 子目录）
+    // 删除已标记删除的笔记文件（防止下次导入时复活）
+    for (const n of notes.filter(x => x.deleted)) {
+      try {
+        if (n.type === 'drawing') { const p = drawingRelPath(n); await fs.remove(p); }
+        else { const p = noteRelPath(n); await fs.remove(p); }
+      } catch {}
+    }
+        // 待办（统一放 待办/ 子目录）
     const usedTodo = new Set();
     for (const t of todos) {
       let base = safeName(t.text || 'todo'); let rel = TODO_DIR + '/' + base; let n = 1;
@@ -4882,6 +4889,7 @@ async function workdirImportAll(silent) {
     }
     const imagesMeta = (meta.imagesMeta && typeof meta.imagesMeta === 'object') ? meta.imagesMeta : {};
 
+    const deletedIds = new Set((Array.isArray(meta.deletedNotes) ? meta.deletedNotes : []).map(n => n.id).filter(Boolean));
     const entries = await fs.list();
     const mdFiles = entries.filter(e => !e.dir && /\.(md|markdown)$/i.test(e.path) && !e.path.startsWith('_'));
     const drawFiles = entries.filter(e => !e.dir && /\.excalidraw$/i.test(e.path) && !e.path.startsWith('_'));
@@ -4930,7 +4938,9 @@ async function workdirImportAll(silent) {
       const folder = folderName ? ensureFolderByName(nb.id, folderName) : null;
       let body = ingestImageDataUrls(ingestAssetPathRefs(content));
       const id = fm.id || uid();
+      if (deletedIds.has(id)) continue;
       const existing = notes.find(n => n.id === id);
+      if (existing && existing.deleted) continue;
       const note = {
         id,
         notebookId: nb.id,
