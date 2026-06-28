@@ -4232,6 +4232,13 @@
             </div>
           </div>
           <div class="row">
+            <label>自定义请求头 (可选，JSON 格式)</label>
+            <input type="text" id="aiFormHeaders" placeholder='{"csb-token":"xxx"} 或留空'>
+            <div class="ai-form-hint">
+              部分私有部署需要额外 Header 鉴权，如 <code>{"csb-token":"xxx"}</code>
+            </div>
+          </div>
+          <div class="row">
             <label>系统提示词 (可选，作用于本模型)</label>
             <textarea id="aiFormSystem" placeholder="你是简洁实用的中文写作助手，输出保持 Markdown 格式。"></textarea>
           </div>
