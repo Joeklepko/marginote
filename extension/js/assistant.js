@@ -267,8 +267,8 @@ function renderPendingAttachments() {
   }
   el.innerHTML = pendingAttachments.map((a, i) => {
     if (a.type === 'image') {
-      return `<span class="attach-pill image" title="图片附件 — 点击移除" data-remove="${i}" style="display:inline-flex;align-items:center;gap:4px;">
-        <img src="${a.dataUrl}" style="width:20px;height:20px;object-fit:cover;border-radius:3px;vertical-align:middle">
+      return `<span class="attach-pill image" title="图片附件 — 点击移除" data-remove="${i}">
+        <span class="attach-type-badge" style="background:#fef3c7;color:#92400e;">IMG</span>
         ${escapeHtml((a.name || 'image').slice(0, 20))}
       </span>`;
     }
@@ -412,8 +412,11 @@ function extractSnippet(content, query, maxLen = 200) {
 
 const ASSISTANT_TOOLS = {
   list_notebooks: {
-    desc: '列出笔记本。无参数',
-    run: () => notebooks.map(nb => ({ id: nb.id, name: nb.name, color: nb.color }))
+    desc: '列出笔记本(含笔记数)。无参数',
+    run: () => notebooks.map(nb => {
+      const count = notes.filter(n => !n.deleted && n.notebookId === nb.id).length;
+      return { id: nb.id, name: nb.name, color: nb.color, noteCount: count };
+    })
   },
   search_notes: {
     desc: '搜索笔记。{query?, limit?(默认30)}',
@@ -1404,7 +1407,17 @@ function renderAssistantMessage(m) {
   const bubbleContent = role === 'bot' && m.content && typeof renderMarkdown === 'function'
     ? renderMarkdown(m.content)
     : escapeHtml(m.content || '');
-  let html = `<div class="assistant-msg ${role}"><span class="role">${roleLabel}</span><div class="bubble">${bubbleContent}</div>`;
+  let html = `<div class="assistant-msg ${role}"><span class="role">${roleLabel}</span><div class="bubble">`;
+  // 工具执行过程（新格式：折叠展示）
+  if (m.toolLog && m.toolLog.length) {
+    const okCount = m.toolLog.filter(t => t.ok).length;
+    const errCount = m.toolLog.length - okCount;
+    const summaryText = `执行过程 (${m.toolLog.length} 步${errCount ? '，' + errCount + ' 失败' : ''})`;
+    html += `<details class="tool-exec-log"><summary>${escapeHtml(summaryText)}</summary><div class="tool-steps">`;
+    for (const t of m.toolLog) { html += `<div class="tool-step ${t.ok ? 'ok' : 'err'}">${t.ok ? '✓' : '✗'} ${escapeHtml(t.tool)}: ${escapeHtml(t.summary || '')}</div>`; }
+    html += '</div></details>';
+  }
+  html += bubbleContent + '</div>';
   if (m.attachments && m.attachments.length) {
     html += '<div class="msg-attachments">';
     for (const a of m.attachments) {
@@ -1450,14 +1463,15 @@ function pushAssistantMessage(role, content, extra) {
   return m;
 }
 
-function setAssistantTyping(on) {
+function setAssistantTyping(on, stepInfo) {
   const box = document.getElementById('assistantChat');
   if (!box) return;
   box.querySelectorAll('.assistant-typing-msg').forEach(el => el.remove());
   if (on) {
     const div = document.createElement('div');
     div.className = 'assistant-msg bot assistant-typing-msg';
-    div.innerHTML = `<span class="role">AI</span><div class="bubble"><span class="assistant-typing"><span></span><span></span><span></span></span> <span style="color:var(--ink-mute);font-size:11px;">思考中…</span></div>`;
+    const info = stepInfo || '思考中…';
+    div.innerHTML = `<span class="role">AI</span><div class="bubble"><span class="assistant-typing"><span></span><span></span><span></span></span> <span style="color:var(--ink-mute);font-size:11px;">${info}</span></div>`;
     box.appendChild(div);
     box.scrollTop = box.scrollHeight;
   }
@@ -1659,44 +1673,60 @@ async function runAssistantTurn(userInput) {
   assistantBusy = true;
   try {
     let iter = 0;
-    while (iter++ < 20) {
-      setAssistantTyping(true);
+    const toolLog = [];
+    const allSearchResults = [];
+    let finalReply = '';
+
+    while (iter++ < 100) {
+      // 上下文压缩：系统提示 + 最近 8 条消息（≈4 轮工具交互）
+      if (ctx.length > 12) {
+        const sysMsg = ctx[0];
+        const recent = ctx.slice(-8);
+        ctx.length = 0;
+        ctx.push(sysMsg, { role: 'user', content: '（前序步骤已省略，继续完成任务，不要重复已做过的操作）' }, ...recent);
+      }
+
+      setAssistantTyping(true, toolLog.length ? `执行中 (${toolLog.length} 步)…` : '');
       let raw;
       try {
-        raw = await callAi(ctx, {
-          temperature: 0.3,
-          stream: false
-        });
+        raw = await callAi(ctx, { temperature: 0.3, stream: false });
       } finally { setAssistantTyping(false); }
 
       const parsed = parseAssistantReply(raw);
-      const actionMeta = [];
-      const searchResults = [];
+      let hasActions = false;
 
       for (const a of (parsed.actions || [])) {
+        hasActions = true;
         const name = a.tool || a.name;
         const args = a.args || a.arguments || {};
         try {
           const result = await runAssistantTool(name, args);
-          actionMeta.push({ tool: name, summary: summarizeActionResult(name, result) });
-          if (name === 'search_notes' && Array.isArray(result)) for (const r of result) searchResults.push({ kind: 'note', id: r.id, title: r.title, snippet: r.snippet, updatedAt: r.updatedAt });
-          else if (name === 'search_todos' && Array.isArray(result)) for (const r of result) searchResults.push({ kind: 'todo', id: r.id, title: r.text, snippet: r.done ? '已完成' : '进行中', dueAt: r.dueAt });
-          else if (name === 'list_notebooks' && Array.isArray(result)) for (const r of result) searchResults.push({ kind: 'notebook', id: r.id, title: r.name });
-          else if (name === 'research' && result && Array.isArray(result.sources)) for (const r of result.sources) searchResults.push({ kind: 'note', id: r.id, title: r.title, snippet: r.notebook ? `来自「${r.notebook}」` : '' });
-          const resultStr = JSON.stringify(result).slice(0, 1500);
-          ctx.push({ role: 'assistant', content: raw });
-          ctx.push({ role: 'user', content: '【工具结果】' + name + ': ' + resultStr });
-          pushAssistantMessage('system', name + ': ' + resultStr);
+          const summary = summarizeActionResult(name, result);
+          toolLog.push({ tool: name, summary, ok: true });
+          if (name === 'search_notes' && Array.isArray(result)) for (const r of result) allSearchResults.push({ kind: 'note', id: r.id, title: r.title, snippet: r.snippet, updatedAt: r.updatedAt });
+          else if (name === 'search_todos' && Array.isArray(result)) for (const r of result) allSearchResults.push({ kind: 'todo', id: r.id, title: r.text, snippet: r.done ? '已完成' : '进行中', dueAt: r.dueAt });
+          else if (name === 'list_notebooks' && Array.isArray(result)) for (const r of result) allSearchResults.push({ kind: 'notebook', id: r.id, title: r.name });
+          else if (name === 'research' && result && Array.isArray(result.sources)) for (const r of result.sources) allSearchResults.push({ kind: 'note', id: r.id, title: r.title, snippet: r.notebook ? `来自「${r.notebook}」` : '' });
+          // AI 上下文：精简格式（400 字上限，只保留工具名不保留完整回复）
+          const contextResult = JSON.stringify(result).slice(0, 400);
+          ctx.push({ role: 'assistant', content: JSON.stringify({ actions: [{ tool: name }] }) });
+          ctx.push({ role: 'user', content: '【结果】' + name + ': ' + contextResult });
+          setAssistantTyping(true, `执行中 (${toolLog.length} 步)…`);
         } catch (e) {
-          actionMeta.push({ tool: name, error: e.message || String(e) });
-          ctx.push({ role: 'assistant', content: raw });
-          ctx.push({ role: 'user', content: '【工具错误】' + name + ': ' + (e.message || e) });
+          toolLog.push({ tool: name, summary: e.message || String(e), ok: false });
+          ctx.push({ role: 'assistant', content: JSON.stringify({ actions: [{ tool: name }] }) });
+          ctx.push({ role: 'user', content: '【错误】' + name + ': ' + (e.message || e) });
         }
       }
 
-      pushAssistantMessage('assistant', parsed.reply || '', { actions: actionMeta.length ? actionMeta : undefined, searchResults: searchResults.length ? searchResults : undefined, raw });
-      if (!parsed.actions || !parsed.actions.length) break;
+      finalReply = parsed.reply || finalReply;
+      if (!hasActions) break;
     }
+
+    pushAssistantMessage('assistant', finalReply, {
+      toolLog: toolLog.length ? toolLog : undefined,
+      searchResults: allSearchResults.length ? allSearchResults : undefined
+    });
   } catch (e) {
     pushAssistantMessage('assistant', '出错：' + (e.message || String(e)));
     if (typeof logError === 'function') logError(e, 'assistant');
@@ -1710,60 +1740,66 @@ async function runAssistantTurn(userInput) {
 
 function renderAssistantRail() {
   const el = document.getElementById('assistantGroupListRail');
-  if (!el) return;
-  el.innerHTML = assistantGroups.map(g => {
-    const isActive = assistantInAiView && g.id === assistantActiveGroupId;
-    const sessionCount = (g.sessions || []).length;
-    return `<div class="ai-group-item ${isActive ? 'active' : ''}" data-ai-group="${escapeHtml(g.id)}" role="button" tabindex="0">
-      <svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M21 12c0 4.4-4 8-9 8a9.4 9.4 0 01-3.5-.7L3 21l1.5-4.3A8.3 8.3 0 013 12c0-4.4 4-8 9-8s9 3.6 9 8z"/></svg>
-      <span class="group-name" title="${escapeHtml(g.name)}">${escapeHtml(g.name)}</span>
-      <span style="font-size:11px;color:var(--ink-mute)">${sessionCount}</span>
-    </div>`;
-  }).join('');
-
-  el.querySelectorAll('.ai-group-item[data-ai-group]').forEach(item => {
-    item.addEventListener('click', () => {
-      const gid = item.dataset.aiGroup;
-      if (assistantInAiView && gid === assistantActiveGroupId) return;
-      enterAiView(gid);
-    });
-    item.addEventListener('contextmenu', (e) => {
-      e.preventDefault();
-      const gid = item.dataset.aiGroup;
-      const g = assistantGroups.find(x => x.id === gid);
-      if (!g) return;
-      const action = prompt('输入 rename 重命名，delete 删除：');
-      if (action === 'rename' || action === '重命名') {
-        startInlineRename(item, '.group-name', g.name, (val) => renameAssistantGroup(gid, val));
-      } else if (action === 'delete' || action === '删除') {
-        if (confirm('删除分组「' + g.name + '」？')) deleteAssistantGroup(gid);
-      }
-    });
-  });
+  if (el) el.innerHTML = '';
 }
 
-// ===================== 中侧栏：会话列表渲染 =====================
+// ===================== 中侧栏：分组+会话树形渲染 =====================
 
 function renderAssistantSessions() {
   const titleEl = document.getElementById('aiSessionsTitle');
   const listEl = document.getElementById('aiSessionsList');
   if (!listEl) return;
-  const g = getActiveGroup();
-  if (titleEl) titleEl.textContent = g?.name || 'AI 分组';
-  if (!g) { listEl.innerHTML = ''; return; }
-  listEl.innerHTML = (g.sessions || []).map(s => {
-    const isActive = s.id === assistantActiveSessionId;
-    const msgCount = (s.messages || []).length;
-    return `<div class="ai-session-item ${isActive ? 'active' : ''}" data-sid="${escapeHtml(s.id)}">
-      <span class="session-name" title="${escapeHtml(s.name)}">${escapeHtml(s.name)}</span>
-      <span class="session-meta">${msgCount}</span>
-      <span class="session-actions">
-        <button class="session-action-btn" data-action="rename" title="重命名"><svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path stroke-linecap="round" stroke-linejoin="round" d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></button>
-        <button class="session-action-btn" data-action="delete" title="删除"><svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.87 12.14A2 2 0 0116.14 21H7.86a2 2 0 01-1.99-1.86L5 7m5 4v6m4-6v6M3 7h18M9 7V4a1 1 0 011-1h4a1 1 0 011 1v3"/></svg></button>
-      </span>
+  if (titleEl) titleEl.textContent = 'AI 助手';
+
+  listEl.innerHTML = assistantGroups.map(g => {
+    const isActiveGroup = assistantInAiView && g.id === assistantActiveGroupId;
+    const sessionCount = (g.sessions || []).length;
+    const chevronD = isActiveGroup ? 'M19 9l-7 7-7-7' : 'M9 5l7 7-7 7';
+    const sessionsHtml = isActiveGroup ? (g.sessions || []).map(s => {
+      const isActive = s.id === assistantActiveSessionId;
+      const msgCount = (s.messages || []).length;
+      return `<div class="ai-session-item ${isActive ? 'active' : ''}" data-sid="${escapeHtml(s.id)}" data-gid="${escapeHtml(g.id)}">
+        <span class="session-name" title="${escapeHtml(s.name)}">${escapeHtml(s.name)}</span>
+        <span class="session-meta">${msgCount}</span>
+        <span class="session-actions">
+          <button class="session-action-btn" data-action="rename" title="重命名"><svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path stroke-linecap="round" stroke-linejoin="round" d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></button>
+          <button class="session-action-btn" data-action="delete" title="删除"><svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.87 12.14A2 2 0 0116.14 21H7.86a2 2 0 01-1.99-1.86L5 7m5 4v6m4-6v6M3 7h18M9 7V4a1 1 0 011-1h4a1 1 0 011 1v3"/></svg></button>
+        </span>
+      </div>`;
+    }).join('') : '';
+
+    return `<div class="ai-group-section">
+      <div class="ai-group-header ${isActiveGroup ? 'active' : ''}" data-ai-group="${escapeHtml(g.id)}">
+        <svg class="group-chevron" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="${chevronD}"/></svg>
+        <span class="group-name" title="${escapeHtml(g.name)}">${escapeHtml(g.name)}</span>
+        <span class="group-count">${sessionCount}</span>
+      </div>
+      ${sessionsHtml ? '<div class="ai-group-sessions">' + sessionsHtml + '</div>' : ''}
     </div>`;
   }).join('');
 
+  // --- 分组 header 点击/右键 ---
+  listEl.querySelectorAll('.ai-group-header').forEach(header => {
+    header.addEventListener('click', () => {
+      const gid = header.dataset.aiGroup;
+      if (assistantInAiView && gid === assistantActiveGroupId) return;
+      enterAiView(gid);
+    });
+    header.addEventListener('contextmenu', (e) => {
+      e.preventDefault();
+      const gid = header.dataset.aiGroup;
+      const g = assistantGroups.find(x => x.id === gid);
+      if (!g) return;
+      const action = prompt('输入 rename 重命名，delete 删除：');
+      if (action === 'rename' || action === '重命名') {
+        startInlineRename(header, '.group-name', g.name, (val) => renameAssistantGroup(gid, val));
+      } else if (action === 'delete' || action === '删除') {
+        if (confirm('删除分组「' + g.name + '」？')) deleteAssistantGroup(gid);
+      }
+    });
+  });
+
+  // --- 会话点击/操作 ---
   listEl.querySelectorAll('.ai-session-item').forEach(it => {
     it.addEventListener('click', (e) => {
       if (e.target.closest('.session-action-btn')) return;
@@ -1779,36 +1815,45 @@ function renderAssistantSessions() {
   listEl.querySelectorAll('.session-action-btn[data-action="rename"]').forEach(btn => {
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
-      const sid = btn.closest('.ai-session-item')?.dataset.sid;
-      const s = (g.sessions || []).find(x => x.id === sid);
+      const sessionItem = btn.closest('.ai-session-item');
+      const sid = sessionItem?.dataset.sid;
+      const gid = sessionItem?.dataset.gid;
+      const g = assistantGroups.find(x => x.id === gid);
+      const s = g && (g.sessions || []).find(x => x.id === sid);
       if (!s) return;
-      const item = btn.closest('.ai-session-item');
-      startInlineRename(item, '.session-name', s.name, (val) => renameAssistantSession(g.id, sid, val));
+      startInlineRename(sessionItem, '.session-name', s.name, (val) => renameAssistantSession(g.id, sid, val));
     });
   });
   listEl.querySelectorAll('.session-action-btn[data-action="delete"]').forEach(btn => {
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
-      const sid = btn.closest('.ai-session-item')?.dataset.sid;
-      if (!sid) return;
-      if (confirm('删除该会话？')) deleteAssistantSession(g.id, sid);
+      const sessionItem = btn.closest('.ai-session-item');
+      const sid = sessionItem?.dataset.sid;
+      const gid = sessionItem?.dataset.gid;
+      if (!sid || !gid) return;
+      if (confirm('删除该会话？')) deleteAssistantSession(gid, sid);
     });
   });
 
-  // v1.2.1 拖拽排序：AI 会话
+  // 拖拽排序
   if (typeof window.enableDragReorder === 'function') {
-    listEl.querySelectorAll('.ai-session-item').forEach(it => { it.dataset.dragKey = it.dataset.sid; });
-    window.enableDragReorder(listEl, '.ai-session-item', (src, dst) => {
-      if (window.reorderArrayById(g.sessions || [], src, dst)) {
-        saveAssistantGroups();
-        renderAssistantSessions();
-      }
+    listEl.querySelectorAll('.ai-group-sessions').forEach(container => {
+      const gid = container.previousElementSibling?.dataset?.aiGroup;
+      const g = gid && assistantGroups.find(x => x.id === gid);
+      if (!g) return;
+      container.querySelectorAll('.ai-session-item').forEach(it => { it.dataset.dragKey = it.dataset.sid; });
+      window.enableDragReorder(container, '.ai-session-item', (src, dst) => {
+        if (window.reorderArrayById(g.sessions || [], src, dst)) {
+          saveAssistantGroups();
+          renderAssistantSessions();
+        }
+      });
     });
   }
 }
 
-// 兼容旧名（runAssistantTurn 等其它代码若引用）
-function renderAssistantGroups() { renderAssistantRail(); if (assistantInAiView) renderAssistantSessions(); }
+// 兼容旧名
+function renderAssistantGroups() { renderAssistantRail(); renderAssistantSessions(); }
 
 // ===================== 进入/退出 AI 视图 =====================
 
@@ -1821,7 +1866,7 @@ function enterAiView(groupId) {
   }
   assistantInAiView = true;
   const app = document.getElementById('app');
-  if (app) app.classList.add('ai-view');
+  if (app) { app.classList.add('ai-view'); app.classList.remove('sidebar-collapsed'); }
   const editor = document.querySelector('.editor');
   if (editor) editor.classList.add('assistant-active');
   renderAssistantRail();
