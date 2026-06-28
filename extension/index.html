@@ -1734,9 +1734,12 @@
     gap: 12px;
     background: var(--bg);
   }
-  .assistant-memory-panel {
-    flex: 1; overflow-y: auto; padding: 16px 20px; background: var(--bg); display: flex; flex-direction: column; gap: 10px;
-  }
+  .ai-memory-section { border-top: 1px solid var(--rule-soft); flex-shrink: 0; }
+  .ai-memory-toggle { display: flex; justify-content: space-between; align-items: center; padding: 10px 16px; cursor: pointer; font-size: 13px; font-weight: 500; color: var(--ink-soft); user-select: none; }
+  .ai-memory-toggle:hover { color: var(--ink); }
+  .ai-memory-toggle .chevron { width: 14px; height: 14px; transition: transform .2s; }
+  .ai-memory-toggle.open .chevron { transform: rotate(180deg); }
+  .ai-memory-body { max-height: 280px; overflow-y: auto; padding: 8px 12px 12px; display: flex; flex-direction: column; gap: 8px; }
   .memory-panel-header {
     display: flex; justify-content: space-between; align-items: center; padding-bottom: 8px; border-bottom: 1px solid var(--rule-soft);
   }
@@ -3787,6 +3790,26 @@
         </button>
       </div>
       <div class="ai-sessions-list" id="aiSessionsList"></div>
+      <div class="ai-memory-section">
+        <div class="ai-memory-toggle" id="aiMemoryToggle">
+          <span>记忆 (<span id="memoryCount">0</span>)</span>
+          <svg class="chevron" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7"/></svg>
+        </div>
+        <div class="ai-memory-body" id="aiMemoryBody" style="display:none">
+          <div class="memory-list" id="memoryList"></div>
+          <div class="memory-add-row">
+            <input id="memoryKeyInput" placeholder="关键词" style="flex:1;min-width:0;padding:4px 8px;border:1px solid var(--rule-soft);border-radius:4px;background:var(--bg);color:var(--ink);font-size:12px">
+            <input id="memoryValueInput" placeholder="内容" style="flex:2;min-width:0;padding:4px 8px;border:1px solid var(--rule-soft);border-radius:4px;background:var(--bg);color:var(--ink);font-size:12px">
+            <select id="memoryCategoryInput" style="padding:4px;border:1px solid var(--rule-soft);border-radius:4px;background:var(--bg);color:var(--ink);font-size:12px">
+              <option value="preference">偏好</option>
+              <option value="fact">事实</option>
+              <option value="context">上下文</option>
+              <option value="other">其他</option>
+            </select>
+            <button id="memoryAddBtn" style="padding:4px 10px;border:1px solid var(--accent);border-radius:4px;background:var(--accent);color:#fff;cursor:pointer;font-size:12px;white-space:nowrap">添加</button>
+          </div>
+        </div>
+      </div>
     </div>
   </aside>
 
@@ -4020,7 +4043,6 @@
         </button>
         <span class="assistant-title">AI 助手</span>
         <div class="assistant-header-actions">
-          <button id="assistantMemoryBtn" title="记忆管理">记忆</button>
           <button id="assistantClearBtn">清空</button>
         </div>
       </div>
@@ -4036,24 +4058,6 @@
         </div>
         <div class="assistant-main">
           <div class="assistant-chat" id="assistantChat"></div>
-          <div class="assistant-memory-panel" id="assistantMemoryPanel" style="display:none">
-            <div class="memory-panel-header">
-              <span style="font-weight:600;font-size:13px">记忆管理</span>
-              <button id="memoryPanelClose" style="background:none;border:none;cursor:pointer;color:var(--ink-mute);font-size:16px" title="关闭">✕</button>
-            </div>
-            <div class="memory-list" id="memoryList"></div>
-            <div class="memory-add-row">
-              <input id="memoryKeyInput" placeholder="关键词（如：周报提醒）" style="flex:1;min-width:0;padding:4px 8px;border:1px solid var(--rule-soft);border-radius:4px;background:var(--bg);color:var(--ink);font-size:12px">
-              <input id="memoryValueInput" placeholder="内容（如：每周五下午交周报）" style="flex:2;min-width:0;padding:4px 8px;border:1px solid var(--rule-soft);border-radius:4px;background:var(--bg);color:var(--ink);font-size:12px">
-              <select id="memoryCategoryInput" style="padding:4px;border:1px solid var(--rule-soft);border-radius:4px;background:var(--bg);color:var(--ink);font-size:12px">
-                <option value="preference">偏好</option>
-                <option value="fact">事实</option>
-                <option value="context">上下文</option>
-                <option value="other">其他</option>
-              </select>
-              <button id="memoryAddBtn" style="padding:4px 10px;border:1px solid var(--accent);border-radius:4px;background:var(--accent);color:#fff;cursor:pointer;font-size:12px;white-space:nowrap">添加</button>
-            </div>
-          </div>
           <div class="assistant-attach-row" id="assistantAttachments"></div>
           <div class="assistant-input-row" id="assistantInputRow">
             <button class="assistant-attach-btn" id="assistantAttachBtn" title="附加笔记 / 待办">

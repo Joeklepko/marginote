@@ -16,6 +16,8 @@ let assistantActiveGroupId = null;
 let assistantActiveSessionId = null;
 let assistantBusy = false;
 let assistantInAiView = false;
+let recordingMode = false;
+let recordingBuffer = [];
 
 // ===================== 分组/会话管理 =====================
 
@@ -1300,6 +1302,43 @@ function _extractStreamingReply(s) {
 
 async function runAssistantTurn(userInput) {
   if (assistantBusy) { showToast('AI 正在思考中...'); return; }
+
+  const trimmed = userInput.trim();
+  const inputEl = document.getElementById('assistantInput');
+
+  // --- 录制模式 ---
+  if (/^开始记录/.test(trimmed)) {
+    recordingMode = true;
+    recordingBuffer = [];
+    pushAssistantMessage('user', userInput);
+    pushAssistantMessage('assistant', '已开始记录模式\n后续你说的内容会暂存，说**"结束记录"**时我会自动整理成笔记或待办。');
+    if (inputEl) inputEl.placeholder = '录制中... 说"结束记录"来整理';
+    renderAssistantChat();
+    return;
+  }
+  if (/^结束记录/.test(trimmed) && recordingMode) {
+    recordingMode = false;
+    if (inputEl) inputEl.placeholder = '例如：帮我新建待办「查阅机票」，明天 15:00 完成';
+    const captured = [...recordingBuffer];
+    recordingBuffer = [];
+    if (!captured.length) {
+      pushAssistantMessage('user', userInput);
+      pushAssistantMessage('assistant', '记录已结束，但没有暂存的内容。');
+      renderAssistantChat();
+      return;
+    }
+    pushAssistantMessage('user', userInput);
+    renderAssistantChat();
+    const combined = captured.map((m, i) => `${i + 1}. ${m}`).join('\n');
+    userInput = `以下是我刚才的记录内容（共${captured.length}条），请整理成一篇笔记保存（标题自动生成），如果内容中有明确的待办事项也一并创建待办：\n\n${combined}`;
+  } else if (recordingMode) {
+    recordingBuffer.push(trimmed);
+    pushAssistantMessage('user', userInput);
+    pushAssistantMessage('assistant', `已记录第 ${recordingBuffer.length} 条。继续说，或说"结束记录"整理。`);
+    renderAssistantChat();
+    return;
+  }
+
   if (!getActiveProvider()) { showToast('请先在「设置 → AI」中配置模型'); openSettingsModal('ai'); return; }
 
   // 持久化到会话历史里的附件快照不写 dataUrl（避免 localStorage 膨胀 + 渲染缺字段崩溃）
@@ -1308,7 +1347,7 @@ async function runAssistantTurn(userInput) {
         ? { type: 'image', title: a.name || '图片' }
         : { type: a.type, id: a.id, title: a.title })
     : undefined;
-  pushAssistantMessage('user', userInput, attachSnapshot ? { attachments: attachSnapshot } : undefined);
+  if (!/^结束记录/.test(trimmed)) pushAssistantMessage('user', userInput, attachSnapshot ? { attachments: attachSnapshot } : undefined);
 
   const sysPrompt = buildAssistantSystemPrompt();
   const ctx = [{ role: 'system', content: sysPrompt }];
@@ -1622,64 +1661,55 @@ function bindAssistantUi() {
   const clearBtn = document.getElementById('assistantClearBtn');
   if (clearBtn) clearBtn.addEventListener('click', () => { if (confirm('清空当前会话历史？')) clearActiveSessionHistory(); });
 
-  // 记忆管理面板
-  const memBtn = document.getElementById('assistantMemoryBtn');
-  const memPanel = document.getElementById('assistantMemoryPanel');
-  const memChat = document.getElementById('assistantChat');
-  const memInputRow = document.getElementById('assistantInputRow');
-  const memAttachRow = document.getElementById('assistantAttachments');
-  if (memBtn && memPanel) {
-    function renderMemoryList() {
-      const list = document.getElementById('memoryList');
-      if (!list) return;
-      const arr = loadMemories();
-      const catLabel = { preference: '偏好', fact: '事实', context: '上下文', other: '其他' };
-      if (!arr.length) { list.innerHTML = '<div class="memory-empty">暂无记忆<br><span style="font-size:11px">和 AI 助手对话时说"记住…"即可自动保存</span></div>'; return; }
-      list.innerHTML = arr.map((m, i) => `<div class="memory-item" data-idx="${i}"><span class="mem-cat">${catLabel[m.category] || '其他'}</span><div class="mem-body"><div class="mem-key">${escapeHtml(m.key)}</div><div class="mem-val">${escapeHtml(m.value)}</div></div><button class="mem-del" data-key="${escapeHtml(m.key)}" title="删除">✕</button></div>`).join('');
-      list.querySelectorAll('.mem-del').forEach(btn => {
-        btn.addEventListener('click', () => {
-          const key = btn.dataset.key;
-          const mArr = loadMemories().filter(x => x.key !== key);
-          saveMemories(mArr);
-          renderMemoryList();
-        });
-      });
-    }
-    memBtn.addEventListener('click', () => {
-      const showing = memPanel.style.display !== 'none';
-      if (showing) {
-        memPanel.style.display = 'none';
-        if (memChat) memChat.style.display = '';
-        if (memInputRow) memInputRow.style.display = '';
-        if (memAttachRow) memAttachRow.style.display = '';
-      } else {
-        memPanel.style.display = '';
-        if (memChat) memChat.style.display = 'none';
-        if (memInputRow) memInputRow.style.display = 'none';
-        if (memAttachRow) memAttachRow.style.display = 'none';
+  // 记忆管理面板（左侧栏折叠区）
+  const memToggle = document.getElementById('aiMemoryToggle');
+  const memBody = document.getElementById('aiMemoryBody');
+  function renderMemoryList() {
+    const list = document.getElementById('memoryList');
+    if (!list) return;
+    const arr = loadMemories();
+    const countEl = document.getElementById('memoryCount');
+    if (countEl) countEl.textContent = arr.length;
+    const catLabel = { preference: '偏好', fact: '事实', context: '上下文', other: '其他' };
+    if (!arr.length) { list.innerHTML = '<div class="memory-empty">暂无记忆<br><span style="font-size:11px">和 AI 对话时说"记住…"即可保存</span></div>'; return; }
+    list.innerHTML = arr.map((m, i) => `<div class="memory-item" data-idx="${i}"><span class="mem-cat">${catLabel[m.category] || '其他'}</span><div class="mem-body"><div class="mem-key">${escapeHtml(m.key)}</div><div class="mem-val">${escapeHtml(m.value)}</div></div><button class="mem-del" data-key="${escapeHtml(m.key)}" title="删除">✕</button></div>`).join('');
+    list.querySelectorAll('.mem-del').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const key = btn.dataset.key;
+        const mArr = loadMemories().filter(x => x.key !== key);
+        saveMemories(mArr);
         renderMemoryList();
-      }
-    });
-    const memClose = document.getElementById('memoryPanelClose');
-    if (memClose) memClose.addEventListener('click', () => memBtn.click());
-    const memAddBtn = document.getElementById('memoryAddBtn');
-    if (memAddBtn) memAddBtn.addEventListener('click', () => {
-      const keyEl = document.getElementById('memoryKeyInput');
-      const valEl = document.getElementById('memoryValueInput');
-      const catEl = document.getElementById('memoryCategoryInput');
-      const key = (keyEl?.value || '').trim();
-      const value = (valEl?.value || '').trim();
-      if (!key || !value) { if (typeof showToast === 'function') showToast('请填写关键词和内容'); return; }
-      const arr = loadMemories();
-      const idx = arr.findIndex(m => m.key === key);
-      const entry = { key, value, category: catEl?.value || 'other', createdAt: idx >= 0 ? arr[idx].createdAt : Date.now(), updatedAt: Date.now() };
-      if (idx >= 0) arr[idx] = entry; else arr.push(entry);
-      saveMemories(arr);
-      if (keyEl) keyEl.value = '';
-      if (valEl) valEl.value = '';
-      renderMemoryList();
+      });
     });
   }
+  if (memToggle && memBody) {
+    memToggle.addEventListener('click', () => {
+      const open = memBody.style.display !== 'none';
+      memBody.style.display = open ? 'none' : '';
+      memToggle.classList.toggle('open', !open);
+      if (!open) renderMemoryList();
+    });
+  }
+  const memAddBtn = document.getElementById('memoryAddBtn');
+  if (memAddBtn) memAddBtn.addEventListener('click', () => {
+    const keyEl = document.getElementById('memoryKeyInput');
+    const valEl = document.getElementById('memoryValueInput');
+    const catEl = document.getElementById('memoryCategoryInput');
+    const key = (keyEl?.value || '').trim();
+    const value = (valEl?.value || '').trim();
+    if (!key || !value) { if (typeof showToast === 'function') showToast('请填写关键词和内容'); return; }
+    const arr = loadMemories();
+    const idx = arr.findIndex(m => m.key === key);
+    const entry = { key, value, category: catEl?.value || 'other', createdAt: idx >= 0 ? arr[idx].createdAt : Date.now(), updatedAt: Date.now() };
+    if (idx >= 0) arr[idx] = entry; else arr.push(entry);
+    saveMemories(arr);
+    if (keyEl) keyEl.value = '';
+    if (valEl) valEl.value = '';
+    renderMemoryList();
+  });
+  // 初始化记忆计数
+  const initCount = document.getElementById('memoryCount');
+  if (initCount) initCount.textContent = loadMemories().length;
 
   // 附件
   const attachBtn = document.getElementById('assistantAttachBtn');
