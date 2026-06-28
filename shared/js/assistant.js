@@ -1001,6 +1001,30 @@ const ASSISTANT_TOOLS = {
       if (tag) pool = pool.filter(n => (n.tags || []).includes(tag));
       return { count: pool.length, notebookName: notebookName || '全部', tag: tag || null };
     }
+  },
+  research: {
+    desc: '跨笔记研究总结。{query, limit?(默认5)}搜索多篇笔记提取关键信息+出处',
+    run: async ({ query, limit }) => {
+      if (!query) throw new Error('query 必填');
+      const max = Math.min(limit || 5, 10);
+      const results = ASSISTANT_TOOLS.search_notes.run({ query, limit: max });
+      if (!results.length) return { found: 0, summary: '未找到相关笔记', sources: [] };
+      const sources = [];
+      let combined = '';
+      for (const r of results) {
+        const n = notes.find(x => x.id === r.id);
+        if (!n) continue;
+        const content = (n.content || '').slice(0, 2000);
+        const nb = notebooks.find(x => x.id === n.notebookId);
+        sources.push({ id: n.id, title: n.title || '(无标题)', notebook: nb?.name });
+        combined += `\n\n【${n.title || '无标题'}】\n${content}`;
+      }
+      const summary = await callAi([
+        { role: 'system', content: '你是研究助手。根据以下多篇笔记内容，针对用户的查询提取关键信息并总结。用Markdown格式：先总结要点，再分条列出关键信息。简洁直接。' },
+        { role: 'user', content: `查询：${query}\n\n相关笔记：${combined.slice(0, 8000)}` }
+      ], { stream: false });
+      return { found: sources.length, summary, sources };
+    }
   }
 };
 
@@ -1072,6 +1096,7 @@ ${tools}
 - 笔记概览仅供定位，用户问具体内容时必须 search_notes 搜索
 - 查笔记内容：search_notes → 根据snippet回答；仅snippet不足时才 get_note
 - 用户说"帮我找XX笔记" → find_note（一步拿到全文）
+- 用户问"帮我查/总结/研究XX" → research（跨笔记搜索+AI总结+出处）
 - 用户问"我的待办" → list_todos
 - 用户说"帮我记/快速记" → quick_note
 - 完成待办 → complete_todo（支持模糊匹配text）
@@ -1230,6 +1255,7 @@ function summarizeActionResult(name, result) {
   if (name === 'auto_title_notes') return `${result.success || 0} 篇无标题笔记已自动命名`;
   if (name === 'list_recent_notes') return `${(result || []).length} 篇最近笔记`;
   if (name === 'count_notes') return `${result.notebookName || ''}共 ${result.count || 0} 篇笔记`;
+  if (name === 'research') return `从 ${result.found || 0} 篇笔记中提取了关键信息`;
   return '';
 }
 
@@ -1355,6 +1381,7 @@ async function runAssistantTurn(userInput) {
           if (name === 'search_notes' && Array.isArray(result)) for (const r of result) searchResults.push({ kind: 'note', id: r.id, title: r.title, snippet: r.snippet, updatedAt: r.updatedAt });
           else if (name === 'search_todos' && Array.isArray(result)) for (const r of result) searchResults.push({ kind: 'todo', id: r.id, title: r.text, snippet: r.done ? '已完成' : '进行中', dueAt: r.dueAt });
           else if (name === 'list_notebooks' && Array.isArray(result)) for (const r of result) searchResults.push({ kind: 'notebook', id: r.id, title: r.name });
+          else if (name === 'research' && result && Array.isArray(result.sources)) for (const r of result.sources) searchResults.push({ kind: 'note', id: r.id, title: r.title, snippet: r.notebook ? `来自「${r.notebook}」` : '' });
           const resultStr = JSON.stringify(result).slice(0, 1500);
           ctx.push({ role: 'assistant', content: raw });
           ctx.push({ role: 'user', content: '【工具结果】' + name + ': ' + resultStr });
@@ -1540,6 +1567,13 @@ function hideAssistantPanel() { exitAiView(); }
 function bindAssistantUi() {
   loadAssistantGroups();
   renderAssistantRail();
+
+  // AI 入口按钮（底部栏）
+  const aiBtn = document.getElementById('aiEntryBtn');
+  if (aiBtn) aiBtn.addEventListener('click', () => {
+    if (assistantInAiView) { exitAiView(); }
+    else { showAssistantPanel(); }
+  });
 
   // 新建分组（左侧栏）
   const newGroupBtn = document.getElementById('newAssistantGroupBtn');
