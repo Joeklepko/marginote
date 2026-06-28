@@ -1346,7 +1346,7 @@ function buildAssistantSystemPrompt() {
     memorySection = '\n记忆(' + memArr.length + '条):\n' + top.map(m => `${m.key}:${m.value}`).join('; ');
   }
 
-  return `你是Marginote笔记AI助手。你已拥有用户全部数据权限，直接用工具操作。
+  return `你是Marginote笔记AI助手,可直接搜索/创建/修改/删除用户的本地笔记和待办。用户问任何关于笔记内容的问题都必须用search_notes或find_note搜索,绝不能说"无法访问"。
 时间:${now.toLocaleString('zh-CN')} 笔记本${notebooks.length} 笔记${activeNotes.length} 待办${todos.length}${attachInfo}${noteIndex}${todoOverview}${memorySection}
 
 ${tools}
@@ -1655,7 +1655,7 @@ async function runAssistantTurn(userInput) {
   const sysPrompt = buildAssistantSystemPrompt();
   const ctx = [{ role: 'system', content: sysPrompt }];
   const s = getActiveSession();
-  const recent = (s?.messages || []).slice(-12);
+  const recent = (s?.messages || []).slice(-8);
   const provider = getActiveProvider();
   const mm = !!(provider && provider.multimodal);
   // 如果有图片附件但未开启多模态，提醒用户
@@ -1693,8 +1693,15 @@ async function runAssistantTurn(userInput) {
         ctx.push({ role: 'user', content: m.content });
       }
     }
-    else if (m.role === 'assistant') ctx.push({ role: 'assistant', content: m.raw || m.content });
-    else if (m.role === 'system') ctx.push({ role: 'user', content: '【工具结果】' + m.content });
+    else if (m.role === 'assistant') {
+      // 历史回复截断：只保留前 300 字 + 工具执行摘要
+      let ctxContent = (m.content || '').slice(0, 300);
+      if (m.toolLog && m.toolLog.length) {
+        ctxContent = '[执行了' + m.toolLog.length + '步:' + m.toolLog.map(t => t.tool + (t.ok ? '✓' : '✗')).join(',') + '] ' + ctxContent;
+      }
+      ctx.push({ role: 'assistant', content: ctxContent });
+    }
+    else if (m.role === 'system') ctx.push({ role: 'user', content: '【工具结果】' + (m.content || '').slice(0, 300) });
   }
 
   assistantBusy = true;
