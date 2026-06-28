@@ -1537,6 +1537,33 @@ function summarizeActionResult(name, result) {
   return '';
 }
 
+// 为 AI 上下文生成精简摘要（去掉 id/color 等模型不需要的字段，保留关键信息）
+function compressForContext(name, result) {
+  try {
+    if (name === 'list_notebooks' && Array.isArray(result))
+      return result.map(nb => `${nb.name}(${nb.noteCount ?? '?'}篇)`).join(', ');
+    if ((name === 'search_notes' || name === 'list_recent_notes' || name === 'list_starred') && Array.isArray(result))
+      return result.map(n => `「${n.title || '无标题'}」`).join(', ');
+    if ((name === 'search_todos' || name === 'list_todos') && Array.isArray(result))
+      return result.map(t => `${t.done ? '✓' : '○'}${(t.text || '').slice(0, 30)}`).join('; ');
+    if (name === 'get_note' && result)
+      return `「${result.title || ''}」nb:${result.notebookName || ''} tags:${(result.tags || []).join(',')} content:${(result.content || '').slice(0, 300)}`;
+    if (name === 'get_todo' && result)
+      return `${result.done ? '✓' : '○'}「${result.text || ''}」due:${result.dueAt || ''} note:${result.note || ''}`;
+    if (name === 'list_tags' && Array.isArray(result))
+      return result.map(t => `${t.tag}(${t.count})`).join(', ');
+    if (name === 'export_note' && result)
+      return `「${result.title || ''}」\n${(result.markdown || '').slice(0, 500)}`;
+    if (name === 'research' && result)
+      return `found:${result.found} summary:${(result.summary || '').slice(0, 400)}`;
+    if (name === 'daily_briefing' && result)
+      return (result.briefing || '').slice(0, 500);
+    if (name === 'note_stats' && result)
+      return JSON.stringify(result);
+  } catch {}
+  return JSON.stringify(result).slice(0, 500);
+}
+
 // 流式中从未完成 JSON 中提取 "reply": "...部分..." 的可见字符
 // 若找不到 JSON reply 字段则回退到显示纯净文本（避免推理模型前端空白）
 function _extractStreamingReply(s) {
@@ -1707,8 +1734,8 @@ async function runAssistantTurn(userInput) {
           else if (name === 'search_todos' && Array.isArray(result)) for (const r of result) allSearchResults.push({ kind: 'todo', id: r.id, title: r.text, snippet: r.done ? '已完成' : '进行中', dueAt: r.dueAt });
           else if (name === 'list_notebooks' && Array.isArray(result)) for (const r of result) allSearchResults.push({ kind: 'notebook', id: r.id, title: r.name });
           else if (name === 'research' && result && Array.isArray(result.sources)) for (const r of result.sources) allSearchResults.push({ kind: 'note', id: r.id, title: r.title, snippet: r.notebook ? `来自「${r.notebook}」` : '' });
-          // AI 上下文：精简格式（400 字上限，只保留工具名不保留完整回复）
-          const contextResult = JSON.stringify(result).slice(0, 400);
+          // AI 上下文：智能压缩（按工具类型保留关键信息）
+          const contextResult = compressForContext(name, result);
           ctx.push({ role: 'assistant', content: JSON.stringify({ actions: [{ tool: name }] }) });
           ctx.push({ role: 'user', content: '【结果】' + name + ': ' + contextResult });
           setAssistantTyping(true, `执行中 (${toolLog.length} 步)…`);
