@@ -8,6 +8,42 @@
 """
 import json, sys, time, re, urllib.request, urllib.error
 
+def parse_response(raw):
+    """解析 AI 响应，兼容标准 JSON 和 SSE 格式"""
+    raw = raw.strip()
+    if not raw:
+        return ''
+    # SSE 格式：data: {...}\ndata: {...}\n...
+    if raw.startswith('data: '):
+        combined = ''
+        for line in raw.split('\n'):
+            line = line.strip()
+            if line.startswith('data: ') and line != 'data: [DONE]':
+                try:
+                    chunk = json.loads(line[6:])
+                    delta = (chunk.get('choices', [{}])[0].get('delta', {}).get('content', '')
+                             or chunk.get('choices', [{}])[0].get('message', {}).get('content', ''))
+                    combined += delta
+                except json.JSONDecodeError:
+                    pass
+        return combined.strip()
+    # 标准 JSON
+    try:
+        data = json.loads(raw)
+        content = data.get('choices', [{}])[0].get('message', {}).get('content', '')
+        if content:
+            return content
+        delta = data.get('choices', [{}])[0].get('delta', {}).get('content', '')
+        if delta:
+            return delta
+        if data.get('response'):
+            return str(data['response'])
+        if data.get('result'):
+            return str(data['result'])
+        return ''
+    except json.JSONDecodeError:
+        return raw if len(raw) > 5 else ''
+
 def ask(prompt, default=''):
     val = input(f'{prompt} [{default}]: ' if default else f'{prompt}: ').strip()
     return val or default
@@ -48,12 +84,17 @@ def try_size(url, model, api_key, headers, size_k, timeout=60):
     try:
         t0 = time.time()
         with urllib.request.urlopen(req, timeout=timeout) as resp:
-            data = json.loads(resp.read().decode())
+            raw = resp.read().decode(errors='replace')
             elapsed = time.time() - t0
-            content = data.get('choices', [{}])[0].get('message', {}).get('content', '')
+            if DEBUG:
+                print(f'\n  [DEBUG] status={resp.status} len={len(raw)}')
+                print(f'  [DEBUG] body={raw[:300]}')
+            content = parse_response(raw)
             return {'ok': bool(content), 'elapsed': elapsed}
     except urllib.error.HTTPError as e:
         err_body = e.read().decode(errors='replace')
+        if DEBUG:
+            print(f'\n  [DEBUG] HTTP {e.code} body={err_body[:300]}')
         # 尝试从错误消息中提取精确上下文限制
         m = re.search(r'maximum[^0-9]*(\d{3,})', err_body, re.I)
         if not m:
@@ -64,6 +105,8 @@ def try_size(url, model, api_key, headers, size_k, timeout=60):
         return {'ok': False, 'error': f'HTTP {e.code}', 'detail': err_body[:300], 'limit': limit}
     except Exception as e:
         return {'ok': False, 'error': str(e), 'limit': None}
+
+DEBUG = '--debug' in sys.argv
 
 def main():
     print('=== 模型上下文窗口大小测试 ===\n')
@@ -92,9 +135,10 @@ def main():
     print('验证连接 (1K)...', end=' ', flush=True)
     r = try_size(endpoint, model, api_key, extra_headers, 1)
     if not r['ok']:
-        print(f'❌ 失败: {r.get("error", "未知错误")}')
+        print(f'❌ 失败: {r.get("error", "响应为空或无法解析")}')
         if r.get('detail'):
             print(f'  详情: {r["detail"]}')
+        print(f'\n  提示: 加 --debug 参数可查看原始响应')
         sys.exit(1)
     print(f'✓ ({r["elapsed"]:.1f}s)')
 
