@@ -684,13 +684,14 @@ const ASSISTANT_TOOLS = {
     }
   },
   batch_update_notes: {
-    desc: '批量更新笔记。{noteIds[], addTags?[], removeTags?[], titlePrefix?}',
-    run: ({ noteIds, addTags, removeTags, titlePrefix }) => {
+    desc: '批量更新笔记。{noteIds[], addTags?[], removeTags?[], titlePrefix?, titles?:{"noteId":"新标题"}}',
+    run: ({ noteIds, addTags, removeTags, titlePrefix, titles }) => {
       if (!Array.isArray(noteIds) || !noteIds.length) throw new Error('noteIds 必填');
       let success = 0, failed = 0;
       for (const id of noteIds) {
         const n = notes.find(x => x.id === id && !x.deleted);
         if (!n) { failed++; continue; }
+        if (titles && typeof titles === 'object' && titles[id]) n.title = String(titles[id]).trim();
         if (Array.isArray(addTags)) { if (!n.tags) n.tags = []; for (const t of addTags) if (!n.tags.includes(t)) n.tags.push(t); }
         if (Array.isArray(removeTags)) { n.tags = (n.tags || []).filter(t => !removeTags.includes(t)); }
         if (titlePrefix && n.title && !n.title.startsWith(titlePrefix)) n.title = titlePrefix + n.title;
@@ -945,10 +946,13 @@ ${tools}
 无工具调用时 actions 设 []。每次只调一个工具，多步分轮执行。
 
 【规则】
-- 查笔记内容：search_notes → get_note → 回答
+- 笔记概览仅供定位，用户问具体内容时必须 search_notes 搜索
+- 查笔记内容：search_notes → 根据snippet回答；仅snippet不足时才 get_note
 - 删除/移动多篇：search_notes({limit:50+}) → batch_delete_notes/batch_move_notes（一次传所有ID）
+- 批量改标题：search_notes → batch_update_notes({noteIds, titles:{"id1":"标题1","id2":"标题2"}})，不要逐篇 get_note
 - 搜索无果时换关键词重试
 - 用户表达偏好时主动 save_memory
+- 珍惜每轮工具调用，避免重复搜索相同关键词
 - 回复用 Markdown（标题/列表/粗体），简洁直接`;
 }
 
@@ -1190,7 +1194,7 @@ async function runAssistantTurn(userInput) {
   assistantBusy = true;
   try {
     let iter = 0;
-    while (iter++ < 12) {
+    while (iter++ < 20) {
       setAssistantTyping(true);
       let raw;
       try {
