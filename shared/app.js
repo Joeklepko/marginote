@@ -2929,7 +2929,7 @@ async function testModelContextSize() {
         return { ok:true };
       }
       const ctrl = new AbortController();
-      const tm = setTimeout(() => ctrl.abort(), sK > 64 ? 60000 : 30000);
+      const tm = setTimeout(() => ctrl.abort(), sK > 128 ? 120000 : sK > 64 ? 60000 : 30000);
       const res = await fetch(url, { method:'POST', headers:hdrs, body:bodyStr, signal:ctrl.signal });
       clearTimeout(tm);
       if (!res.ok) { const t = await res.text().catch(()=>''); const m = t.match(/maximum[^0-9]*(\d{3,})/i) || t.match(/max[_ ]tokens?[^0-9]*(\d{4,})/i); return m ? { ok:false, limit:Math.floor(parseInt(m[1])/1000) } : { ok:false }; }
@@ -2941,7 +2941,7 @@ async function testModelContextSize() {
     statusEl.textContent = '\u9a8c\u8bc1\u8fde\u63a5\u2026';
     const r0 = await tryK(1);
     if (!r0.ok) { statusEl.textContent = '\u274c \u8fde\u63a5\u5931\u8d25\uff0c\u8bf7\u68c0\u67e5\u914d\u7f6e'; btn.disabled = false; return; }
-    const sizes = [2,4,8,16,32,64,128,256];
+    const sizes = [2,4,8,16,32,64,128,256,512,1024];
     let last = 1, prog = '1K\u2713 ';
     for (const sK of sizes) {
       prog += sK + 'K\u2026'; statusEl.textContent = prog;
