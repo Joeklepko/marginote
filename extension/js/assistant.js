@@ -605,13 +605,20 @@ const ASSISTANT_TOOLS = {
   },
   delete_note: {
     desc: '删除笔记。{id}',
-    run: ({ id }) => {
+    run: async ({ id }) => {
       const n = notes.find(x => x.id === id);
       if (!n) throw new Error('笔记未找到：' + (id || '(未指定)'));
       n.deleted = true;
       n.updatedAt = Date.now();
       saveData();
       renderNotesList();
+      try {
+        const fs = typeof fsApi === 'function' ? fsApi() : null;
+        if (fs && await fs.hasDir()) {
+          const p = n.type === 'drawing' ? drawingRelPath(n) : noteRelPath(n);
+          await fs.remove(p);
+        }
+      } catch {}
       return { id: n.id, title: n.title || '(无标题)', deleted: true };
     }
   },
@@ -731,16 +738,26 @@ const ASSISTANT_TOOLS = {
   },
   batch_delete_notes: {
     desc: '批量删除笔记。{noteIds[]}',
-    run: ({ noteIds }) => {
+    run: async ({ noteIds }) => {
       if (!Array.isArray(noteIds) || !noteIds.length) throw new Error('noteIds 必填');
       let success = 0, failed = 0;
       const details = [];
+      const deleted = [];
       for (const id of noteIds) {
         const n = notes.find(x => x.id === id);
-        if (n && !n.deleted) { n.deleted = true; n.updatedAt = Date.now(); success++; details.push({ id, title: n.title || '(无标题)' }); }
+        if (n && !n.deleted) { n.deleted = true; n.updatedAt = Date.now(); success++; details.push({ id, title: n.title || '(无标题)' }); deleted.push(n); }
         else { failed++; }
       }
       saveData(); renderNotesList();
+      try {
+        const fs = typeof fsApi === 'function' ? fsApi() : null;
+        if (fs && await fs.hasDir()) {
+          for (const n of deleted) {
+            const p = n.type === 'drawing' ? drawingRelPath(n) : noteRelPath(n);
+            try { await fs.remove(p); } catch {}
+          }
+        }
+      } catch {}
       return { success, failed, details };
     }
   },
@@ -1321,7 +1338,7 @@ function buildAssistantSystemPrompt() {
   const activeNotes = notes.filter(n => !n.deleted).sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
   let noteIndex = '';
   if (activeNotes.length) {
-    const top = activeNotes.slice(0, _ctxLimit(20, 80, 300));
+    const top = activeNotes.slice(0, _ctxLimit(20, 300, 300));
     noteIndex = '\n\n笔记(' + activeNotes.length + '篇,近' + top.length + '篇):\n';
     noteIndex += top.map((n, i) => {
       const nb = notebooks.find(x => x.id === n.notebookId);
