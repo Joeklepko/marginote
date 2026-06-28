@@ -1348,7 +1348,8 @@ function buildAssistantSystemPrompt() {
 
   return `你是Marginote笔记应用的内置AI助手,直接运行在用户设备本地。你可以搜索、读取、创建、修改、删除用户的所有笔记和待办事项。
 
-严禁说"无法访问笔记"、"没有权限"、"无法搜索"之类的话——你就是笔记应用本身的一部分,拥有全部数据操作能力。用户提到笔记相关的任何问题,必须先调用工具搜索,再根据结果回答。
+核心原则:用户的笔记和待办是你的唯一知识库。用户问你任何问题,你都必须先用search_notes搜索相关笔记,根据搜索结果回答。绝不能凭自己的知识直接回答——先搜索,搜到了用笔记内容回答,搜不到再告诉用户"未找到相关笔记"。
+严禁说"无法访问笔记"、"没有权限"、"无法搜索"之类的话——你就是笔记应用本身的一部分。
 
 当前状态:${now.toLocaleString('zh-CN')} | 笔记本${notebooks.length}个 | 笔记${activeNotes.length}篇 | 待办${todos.length}条${attachInfo}${noteIndex}${todoOverview}${memorySection}
 
@@ -1356,13 +1357,16 @@ function buildAssistantSystemPrompt() {
 ${tools}
 回复格式(严格JSON):
 {"reply":"你的回复(Markdown)","actions":[{"tool":"工具名","args":{参数}}]}
-不需要工具时actions为空数组[]。每次最多调用1个工具,多步操作分多轮完成。
+不需要工具时actions为空数组[]。每次最多调用1个工具,多步操作分多轮完成。reply必须完整,不要截断。
 
-示例——用户说"帮我找下用药相关的笔记":
-{"reply":"正在搜索用药相关笔记…","actions":[{"tool":"search_notes","args":{"query":"用药","limit":20}}]}
+示例——用户说"用药上线时间是啥时候":
+{"reply":"正在搜索相关笔记…","actions":[{"tool":"search_notes","args":{"query":"用药 上线时间","limit":20}}]}
+
+示例——搜索结果返回后:
+{"reply":"根据笔记记录,用药功能计划在7月15日上线。\\n\\n> 来源:《产品路线图》笔记","actions":[]}
 
 规则:
-- 用户问笔记内容→必须先search_notes或find_note搜索,绝不凭空回答
+- 任何问题→先search_notes搜索,根据笔记内容回答,不要编造
 - 找笔记→find_note(一步全文) | 查/总结/研究→research | 待办→list_todos
 - 快速记→quick_note | 完成待办→complete_todo(模糊匹配) | 翻译→translate
 - 批量操作:先search_notes({limit:50+})再batch_*(一次传所有ID)
@@ -1382,7 +1386,17 @@ function parseAssistantReply(raw) {
   const last = s.lastIndexOf('}');
   if (first >= 0 && last > first) s = s.slice(first, last + 1);
   try { const obj = JSON.parse(s); return { reply: typeof obj.reply === 'string' ? obj.reply : '', actions: Array.isArray(obj.actions) ? obj.actions : [] }; }
-  catch { return { reply: raw, actions: [] }; }
+  catch {
+    const m = raw.match(/"reply"\s*:\s*"([\s\S]*?)(?:"\s*[,}]|$)/);
+    if (m) {
+      let reply = m[1].replace(/\\n/g, '\n').replace(/\\"/g, '"').replace(/\\\\/g, '\\');
+      const am = raw.match(/"actions"\s*:\s*(\[[\s\S]*?\])/);
+      let actions = [];
+      if (am) { try { actions = JSON.parse(am[1]); } catch {} }
+      return { reply, actions };
+    }
+    return { reply: raw, actions: [] };
+  }
 }
 
 async function runAssistantTool(name, args) {
@@ -1734,7 +1748,7 @@ async function runAssistantTurn(userInput) {
       setAssistantTyping(true, toolLog.length ? `执行中 (${toolLog.length} 步)…` : '');
       let raw;
       try {
-        raw = await callAi(ctx, { temperature: 0.3, stream: false });
+        raw = await callAi(ctx, { temperature: 0.3, max_tokens: 4096, stream: false });
       } finally { setAssistantTyping(false); }
 
       const parsed = parseAssistantReply(raw);

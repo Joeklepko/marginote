@@ -3057,6 +3057,7 @@ async function callAi(messages, opts) {
     temperature: opts?.temperature ?? p.temperature ?? 0.7,
     stream: false
   };
+  if (opts?.max_tokens) body.max_tokens = opts.max_tokens;
   const url = resolveAiUrl(p);
   const hdrs = { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + (p.apiKey || '') };
   if (p.customHeaders && typeof p.customHeaders === 'object') Object.assign(hdrs, p.customHeaders);
