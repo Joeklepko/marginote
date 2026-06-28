@@ -3519,9 +3519,7 @@ async function init() {
   document.getElementById('settingsBtn').addEventListener('click', () => openSettingsModal('appearance'));
   document.getElementById('settingsModalClose').addEventListener('click', closeSettingsModal);
   document.getElementById('settingsModalCloseX').addEventListener('click', closeSettingsModal);
-  document.getElementById('settingsModalBg').addEventListener('click', e => {
-    if (e.target.id === 'settingsModalBg') closeSettingsModal();
-  });
+  // settingsModalBg click-to-close removed
   document.querySelectorAll('#settingsTabs .settings-tab').forEach(btn => {
     btn.addEventListener('click', () => setSettingsTab(btn.dataset.tab));
   });

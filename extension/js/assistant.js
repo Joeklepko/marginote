@@ -1655,7 +1655,7 @@ async function runAssistantTurn(userInput) {
   const sysPrompt = buildAssistantSystemPrompt();
   const ctx = [{ role: 'system', content: sysPrompt }];
   const s = getActiveSession();
-  const recent = (s?.messages || []).slice(-8);
+  const recent = (s?.messages || []).slice(-20);
   const provider = getActiveProvider();
   const mm = !!(provider && provider.multimodal);
   // 如果有图片附件但未开启多模态，提醒用户
@@ -1694,14 +1694,13 @@ async function runAssistantTurn(userInput) {
       }
     }
     else if (m.role === 'assistant') {
-      // 历史回复截断：只保留前 300 字 + 工具执行摘要
-      let ctxContent = (m.content || '').slice(0, 300);
+      let ctxContent = m.content || '';
       if (m.toolLog && m.toolLog.length) {
         ctxContent = '[执行了' + m.toolLog.length + '步:' + m.toolLog.map(t => t.tool + (t.ok ? '✓' : '✗')).join(',') + '] ' + ctxContent;
       }
       ctx.push({ role: 'assistant', content: ctxContent });
     }
-    else if (m.role === 'system') ctx.push({ role: 'user', content: '【工具结果】' + (m.content || '').slice(0, 300) });
+    else if (m.role === 'system') ctx.push({ role: 'user', content: '【工具结果】' + m.content });
   }
 
   assistantBusy = true;
@@ -1712,10 +1711,10 @@ async function runAssistantTurn(userInput) {
     let finalReply = '';
 
     while (iter++ < 100) {
-      // 上下文压缩：系统提示 + 最近 8 条消息（≈4 轮工具交互）
-      if (ctx.length > 12) {
+      // 上下文压缩：防止极长任务溢出（保留系统提示 + 最近 30 条）
+      if (ctx.length > 40) {
         const sysMsg = ctx[0];
-        const recent = ctx.slice(-8);
+        const recent = ctx.slice(-30);
         ctx.length = 0;
         ctx.push(sysMsg, { role: 'user', content: '（前序步骤已省略，继续完成任务，不要重复已做过的操作）' }, ...recent);
       }
