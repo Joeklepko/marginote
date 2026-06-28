@@ -2911,22 +2911,25 @@ async function testModelContextSize() {
   const isHttpNL = /^http:\/\//i.test(url) && !/^http:\/\/(localhost|127\.0\.0\.1)/i.test(url);
   const usePF = isHttpNL && window.mn?.platform?.fetch;
   if (usePF) { try { await window.mn.ready; } catch {} }
-  function genPad(sK) {
+  function genPad(sK, code) {
     const lines = []; let len = 0; const tgt = sK * 4000;
     for (let i = 0; len < tgt; i++) {
       const l = 'Line ' + String(i).padStart(5,'0') + ': The quick brown fox jumps over the lazy dog and five boxing wizards jump quickly.\n';
       lines.push(l); len += l.length;
     }
+    lines.push('\n===VERIFICATION===\nThe secret code is: ' + code + '\n===END===\n');
     return lines.join('');
   }
   async function tryK(sK) {
-    const msgs = [{ role:'system', content:'Reply with exactly one word: OK' },{ role:'user', content:'Ignore padding below. Reply ONLY: OK\n\n' + genPad(sK) }];
-    const bodyStr = JSON.stringify({ model, messages: msgs, temperature:0, max_tokens:5, stream:false });
+    const code = String(1000 + Math.floor(Math.random() * 9000));
+    const msgs = [{ role:'system', content:'You are a helpful assistant. Follow instructions exactly.' },{ role:'user', content:'Below is a long text. At the END there is a ===VERIFICATION=== section with a secret code. Read the ENTIRE text and reply with ONLY the 4-digit code.\n\n' + genPad(sK, code) }];
+    const bodyStr = JSON.stringify({ model, messages: msgs, temperature:0, max_tokens:20, stream:false });
     try {
       if (usePF) {
         const res = await mn.platform.fetch(url, { method:'POST', headers:hdrs, body:bodyStr }, null);
         if (!res.ok) { const b = res.body || res.error || ''; const m = b.match(/maximum[^0-9]*(\d{3,})/i) || b.match(/max[_ ]tokens?[^0-9]*(\d{4,})/i); return m ? { ok:false, limit:Math.floor(parseInt(m[1])/1000) } : { ok:false }; }
-        return { ok:true };
+        const reply = typeof res.body === 'string' ? res.body : '';
+        return { ok: reply.includes(code) };
       }
       const ctrl = new AbortController();
       const tm = setTimeout(() => ctrl.abort(), sK > 128 ? 120000 : sK > 64 ? 60000 : 30000);
@@ -2934,7 +2937,8 @@ async function testModelContextSize() {
       clearTimeout(tm);
       if (!res.ok) { const t = await res.text().catch(()=>''); const m = t.match(/maximum[^0-9]*(\d{3,})/i) || t.match(/max[_ ]tokens?[^0-9]*(\d{4,})/i); return m ? { ok:false, limit:Math.floor(parseInt(m[1])/1000) } : { ok:false }; }
       const d = await res.json();
-      return { ok:!!(d?.choices?.[0]?.message?.content) };
+      const reply = d?.choices?.[0]?.message?.content || '';
+      return { ok: reply.includes(code) };
     } catch { return { ok:false }; }
   }
   try {
