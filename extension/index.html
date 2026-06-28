@@ -1621,6 +1621,9 @@
     padding: 0 4px;
     border-radius: 3px;
   }
+  .ctx-test-btn { font-size:11px; padding:2px 8px; margin-left:6px; background:var(--accent); color:#fff; border:none; border-radius:4px; cursor:pointer; vertical-align:middle; }
+  .ctx-test-btn:disabled { opacity:.5; cursor:not-allowed; }
+  .ctx-test-status { display:block; font-size:11px; color:var(--ink-soft); margin-top:2px; min-height:14px; word-break:break-all; }
   .settings-header {
     display: flex;
     align-items: center;
@@ -4285,10 +4288,18 @@
             <label>系统提示词 (可选，作用于本模型)</label>
             <textarea id="aiFormSystem" placeholder="你是简洁实用的中文写作助手，输出保持 Markdown 格式。"></textarea>
           </div>
-          <div class="row">
-            <label>温度 Temperature (0-2，默认 0.7)</label>
-            <input type="number" id="aiFormTemp" min="0" max="2" step="0.1" placeholder="0.7">
+          <div class="row split">
+            <div>
+              <label>温度 Temperature (0-2)</label>
+              <input type="number" id="aiFormTemp" min="0" max="2" step="0.1" placeholder="0.7">
+            </div>
+            <div>
+              <label>上下文大小 (K) <button type="button" class="ctx-test-btn" id="aiContextTestBtn">一键测试</button></label>
+              <input type="number" id="aiFormContextSize" min="0" max="2048" step="1" placeholder="0 = 自动">
+              <span class="ctx-test-status" id="aiContextTestStatus"></span>
+            </div>
           </div>
+          <div class="ai-form-hint" style="margin-top:-4px">上下文越大，AI 记住的对话越多。0 = 按 10K 保守策略；填 128 表示 128K 上下文。</div>
           <div class="row">
             <label style="display:flex; align-items:center; gap:8px; cursor:pointer; margin:0;">
               <input type="checkbox" id="aiFormMultimodal" style="margin:0; width:14px; height:14px; flex-shrink:0; accent-color:var(--accent);">

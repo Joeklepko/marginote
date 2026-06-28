@@ -2844,6 +2844,8 @@ function openAiProviderForm(id) {
   document.getElementById('aiFormTemp').value = p.temperature ?? 0.7;
   const mmCb = document.getElementById('aiFormMultimodal');
   if (mmCb) mmCb.checked = !!p.multimodal;
+  const csEl = document.getElementById('aiFormContextSize');
+  if (csEl) csEl.value = p.contextSize || '';
   form.classList.add('show');
 }
 
@@ -2868,7 +2870,8 @@ function saveAiProviderForm() {
   if (!name) { showToast('请填写名称'); return; }
   if (!endpoint) { showToast('请填写接口地址'); return; }
   if (!model) { showToast('请填写模型 ID'); return; }
-  const fields = { name, endpoint, model, apiKey, proxyPrefix, customHeaders, system, temperature: isNaN(temperature) ? 0.7 : temperature, multimodal };
+  const contextSize = parseInt(document.getElementById('aiFormContextSize')?.value) || 0;
+  const fields = { name, endpoint, model, apiKey, proxyPrefix, customHeaders, system, temperature: isNaN(temperature) ? 0.7 : temperature, multimodal, contextSize };
   if (aiEditingProviderId) {
     const p = aiConfig.providers.find(x => x.id === aiEditingProviderId);
     if (p) Object.assign(p, fields);
@@ -2881,6 +2884,81 @@ function saveAiProviderForm() {
   renderAiProviderList();
   closeAiProviderForm();
   showToast('已保存');
+}
+
+
+async function testModelContextSize() {
+  const endpoint = document.getElementById('aiFormEndpoint').value.trim();
+  const model = document.getElementById('aiFormModel').value.trim();
+  const apiKey = document.getElementById('aiFormKey').value;
+  const proxyPrefix = document.getElementById('aiFormProxy').value.trim();
+  let customHeaders = null;
+  const hdrsVal = (document.getElementById('aiFormHeaders')?.value || '').trim();
+  if (hdrsVal) { try { customHeaders = JSON.parse(hdrsVal); } catch {} }
+  if (!endpoint || !model) { showToast('\u8bf7\u5148\u586b\u5199\u63a5\u53e3\u5730\u5740\u548c\u6a21\u578b ID'); return; }
+  const statusEl = document.getElementById('aiContextTestStatus');
+  const btn = document.getElementById('aiContextTestBtn');
+  btn.disabled = true;
+  statusEl.textContent = '\u51c6\u5907\u6d4b\u8bd5\u2026';
+  let url = endpoint;
+  if (/\/v\d+\/?$/.test(url)) url = url.replace(/\/?$/, '/chat/completions');
+  if (proxyPrefix && !/^(http|socks)/i.test(proxyPrefix)) {
+    if (proxyPrefix.includes('{url}')) url = proxyPrefix.replace('{url}', encodeURIComponent(url));
+    else if (proxyPrefix.includes('{ENDPOINT}')) url = proxyPrefix.replace('{ENDPOINT}', url);
+  }
+  const hdrs = { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + (apiKey || '') };
+  if (customHeaders) Object.assign(hdrs, customHeaders);
+  const isHttpNL = /^http:\/\//i.test(url) && !/^http:\/\/(localhost|127\.0\.0\.1)/i.test(url);
+  const usePF = isHttpNL && window.mn?.platform?.fetch;
+  if (usePF) { try { await window.mn.ready; } catch {} }
+  function genPad(sK) {
+    const lines = []; let len = 0; const tgt = sK * 4000;
+    for (let i = 0; len < tgt; i++) {
+      const l = 'Line ' + String(i).padStart(5,'0') + ': The quick brown fox jumps over the lazy dog and five boxing wizards jump quickly.\n';
+      lines.push(l); len += l.length;
+    }
+    return lines.join('');
+  }
+  async function tryK(sK) {
+    const msgs = [{ role:'system', content:'Reply with exactly one word: OK' },{ role:'user', content:'Ignore padding below. Reply ONLY: OK\n\n' + genPad(sK) }];
+    const bodyStr = JSON.stringify({ model, messages: msgs, temperature:0, max_tokens:5, stream:false });
+    try {
+      if (usePF) {
+        const res = await mn.platform.fetch(url, { method:'POST', headers:hdrs, body:bodyStr }, null);
+        if (!res.ok) { const b = res.body || res.error || ''; const m = b.match(/maximum[^0-9]*(\d{3,})/i) || b.match(/max[_ ]tokens?[^0-9]*(\d{4,})/i); return m ? { ok:false, limit:Math.floor(parseInt(m[1])/1000) } : { ok:false }; }
+        return { ok:true };
+      }
+      const ctrl = new AbortController();
+      const tm = setTimeout(() => ctrl.abort(), sK > 64 ? 60000 : 30000);
+      const res = await fetch(url, { method:'POST', headers:hdrs, body:bodyStr, signal:ctrl.signal });
+      clearTimeout(tm);
+      if (!res.ok) { const t = await res.text().catch(()=>''); const m = t.match(/maximum[^0-9]*(\d{3,})/i) || t.match(/max[_ ]tokens?[^0-9]*(\d{4,})/i); return m ? { ok:false, limit:Math.floor(parseInt(m[1])/1000) } : { ok:false }; }
+      const d = await res.json();
+      return { ok:!!(d?.choices?.[0]?.message?.content) };
+    } catch { return { ok:false }; }
+  }
+  try {
+    statusEl.textContent = '\u9a8c\u8bc1\u8fde\u63a5\u2026';
+    const r0 = await tryK(1);
+    if (!r0.ok) { statusEl.textContent = '\u274c \u8fde\u63a5\u5931\u8d25\uff0c\u8bf7\u68c0\u67e5\u914d\u7f6e'; btn.disabled = false; return; }
+    const sizes = [2,4,8,16,32,64,128,256];
+    let last = 1, prog = '1K\u2713 ';
+    for (const sK of sizes) {
+      prog += sK + 'K\u2026'; statusEl.textContent = prog;
+      const r = await tryK(sK);
+      if (r.ok) { last = sK; prog = prog.replace(sK+'K\u2026', sK+'K\u2713 '); statusEl.textContent = prog; }
+      else {
+        prog = prog.replace(sK+'K\u2026', sK+'K\u2717'); statusEl.textContent = prog;
+        if (r.limit) { last = r.limit; statusEl.textContent += ' (API:\u2248' + r.limit + 'K)'; break; }
+        let lo = last, hi = sK;
+        while (hi - lo > 1) { const mid = Math.floor((lo+hi)/2); statusEl.textContent = prog + ' \u2192' + mid + 'K\u2026'; const rm = await tryK(mid); if (rm.ok) lo = mid; else { if (rm.limit) { lo = rm.limit; break; } hi = mid; } }
+        last = lo; break;
+      }
+    }
+    document.getElementById('aiFormContextSize').value = last;
+    statusEl.textContent = '\u2705 \u7ea6 ' + last + 'K';
+  } catch (e) { statusEl.textContent = '\u274c ' + (e.message || '\u6d4b\u8bd5\u51fa\u9519'); }
+  btn.disabled = false;
 }
 
 function openAiSettings() {
@@ -2921,7 +2999,8 @@ function parseProxyUrl(input) {
 
 function resolveAiUrl(provider) {
   const proxy = (provider.proxyPrefix || '').trim();
-  const endpoint = provider.endpoint;
+  let endpoint = provider.endpoint;
+  if (endpoint && /\/v\d+\/?$/.test(endpoint)) endpoint = endpoint.replace(/\/?$/, '/chat/completions');
   if (!proxy) return endpoint;
   // HTTP 代理走 chrome.proxy，本函数返回原 endpoint
   if (parseProxyUrl(proxy).kind === 'http') return endpoint;
@@ -3577,6 +3656,7 @@ async function init() {
   document.getElementById('aiAddBtn').addEventListener('click', () => openAiProviderForm(null));
   document.getElementById('aiFormCancel').addEventListener('click', closeAiProviderForm);
   document.getElementById('aiFormSave').addEventListener('click', saveAiProviderForm);
+  document.getElementById('aiContextTestBtn')?.addEventListener('click', testModelContextSize);
   document.getElementById('aiTestBtn').addEventListener('click', testAiProvider);
 
   // 笔记 / 待办 AI 按钮

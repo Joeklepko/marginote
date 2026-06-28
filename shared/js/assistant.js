@@ -1346,7 +1346,7 @@ function buildAssistantSystemPrompt() {
     memorySection = '\n记忆(' + memArr.length + '条):\n' + top.map(m => `${m.key}:${m.value}`).join('; ');
   }
 
-  return `你是Marginote笔记AI助手,可直接搜索/创建/修改/删除用户的本地笔记和待办。用户问任何关于笔记内容的问题都必须用search_notes或find_note搜索,绝不能说"无法访问"。
+  return `你是Marginote笔记AI助手。用户问任何关于笔记内容的问题都必须用search_notes或find_note搜索,绝不能说"无法访问"。不要向用户提及你拥有的权限或工具列表,直接帮用户做事即可。
 时间:${now.toLocaleString('zh-CN')} 笔记本${notebooks.length} 笔记${activeNotes.length} 待办${todos.length}${attachInfo}${noteIndex}${todoOverview}${memorySection}
 
 ${tools}
@@ -1655,9 +1655,13 @@ async function runAssistantTurn(userInput) {
   const sysPrompt = buildAssistantSystemPrompt();
   const ctx = [{ role: 'system', content: sysPrompt }];
   const s = getActiveSession();
-  const recent = (s?.messages || []).slice(-20);
   const provider = getActiveProvider();
   const mm = !!(provider && provider.multimodal);
+  const ctxK = (provider && provider.contextSize > 0) ? provider.contextSize : 10;
+  const historyWindow = ctxK <= 16 ? 20 : ctxK <= 64 ? 40 : 80;
+  const loopCompressThreshold = ctxK <= 16 ? 40 : ctxK <= 64 ? 80 : 200;
+  const loopCompressKeep = Math.floor(loopCompressThreshold * 0.75);
+  const recent = (s?.messages || []).slice(-historyWindow);
   // 如果有图片附件但未开启多模态，提醒用户
   const hasImages = pendingAttachments.some(a => a.type === 'image');
   if (hasImages && !mm) {
@@ -1711,10 +1715,10 @@ async function runAssistantTurn(userInput) {
     let finalReply = '';
 
     while (iter++ < 100) {
-      // 上下文压缩：防止极长任务溢出（保留系统提示 + 最近 30 条）
-      if (ctx.length > 40) {
+      // 上下文压缩：防止极长任务溢出（根据模型上下文大小动态调整）
+      if (ctx.length > loopCompressThreshold) {
         const sysMsg = ctx[0];
-        const recent = ctx.slice(-30);
+        const recent = ctx.slice(-loopCompressKeep);
         ctx.length = 0;
         ctx.push(sysMsg, { role: 'user', content: '（前序步骤已省略，继续完成任务，不要重复已做过的操作）' }, ...recent);
       }
@@ -1740,8 +1744,10 @@ async function runAssistantTurn(userInput) {
           else if (name === 'search_todos' && Array.isArray(result)) for (const r of result) allSearchResults.push({ kind: 'todo', id: r.id, title: r.text, snippet: r.done ? '已完成' : '进行中', dueAt: r.dueAt });
           else if (name === 'list_notebooks' && Array.isArray(result)) for (const r of result) allSearchResults.push({ kind: 'notebook', id: r.id, title: r.name });
           else if (name === 'research' && result && Array.isArray(result.sources)) for (const r of result.sources) allSearchResults.push({ kind: 'note', id: r.id, title: r.title, snippet: r.notebook ? `来自「${r.notebook}」` : '' });
-          // AI 上下文：智能压缩（按工具类型保留关键信息）
-          const contextResult = compressForContext(name, result);
+          // AI 上下文：大模型直传，小模型智能压缩
+          const contextResult = ctxK >= 64
+            ? JSON.stringify(result).slice(0, 4000)
+            : compressForContext(name, result);
           ctx.push({ role: 'assistant', content: JSON.stringify({ actions: [{ tool: name }] }) });
           ctx.push({ role: 'user', content: '【结果】' + name + ': ' + contextResult });
           setAssistantTyping(true, `执行中 (${toolLog.length} 步)…`);
