@@ -453,7 +453,7 @@ const ASSISTANT_TOOLS = {
         .slice(0, lim)
         .map(n => {
           const nb = notebooks.find(x => x.id === n.notebookId);
-          return { id: n.id, title: n.title || '(无标题)', snippet: extractSnippet(n.content, q, 200), notebookName: nb?.name || '', tags: n.tags || [], updatedAt: n.updatedAt };
+          return { id: n.id, title: n.title || '(无标题)', snippet: extractSnippet(n.content, q, _ctxLimit(200, 400, 800)), notebookName: nb?.name || '', tags: n.tags || [], updatedAt: n.updatedAt };
         });
     }
   },
@@ -461,7 +461,7 @@ const ASSISTANT_TOOLS = {
     desc: '搜索待办。{query?, status?"active"|"done"|"overdue"|"all", due?"today"|"overdue"|"week", limit?}',
     run: ({ query, status, due, limit }) => {
       const q = String(query || '').trim().toLowerCase();
-      const lim = Math.max(1, Math.min(100, parseInt(limit, 10) || 10));
+      const lim = Math.max(1, Math.min(200, parseInt(limit, 10) || _ctxLimit(10, 30, 50)));
       const now = Date.now();
       const todayStart = new Date(); todayStart.setHours(0, 0, 0, 0);
       const todayEnd = new Date(); todayEnd.setHours(23, 59, 59, 999);
@@ -473,7 +473,7 @@ const ASSISTANT_TOOLS = {
       else if (due === 'overdue') list = list.filter(t => !t.done && t.dueDate && t.dueDate < todayStart.getTime());
       else if (due === 'week') { const weekEnd = todayEnd.getTime() + 6 * 86400000; list = list.filter(t => t.dueDate && t.dueDate >= todayStart.getTime() && t.dueDate <= weekEnd); }
       if (q) list = list.filter(t => (t.text || '').toLowerCase().includes(q) || (t.content || '').toLowerCase().includes(q));
-      return list.sort((a, b) => (a.dueDate || Infinity) - (b.dueDate || Infinity)).slice(0, lim).map(t => ({ id: t.id, text: t.text, done: !!t.done, dueAt: t.dueDate ? new Date(t.dueDate).toISOString() : null, remindBeforeMin: t.remindBeforeMin || 0, contentPreview: (t.content || '').slice(0, 100) }));
+      return list.sort((a, b) => (a.dueDate || Infinity) - (b.dueDate || Infinity)).slice(0, lim).map(t => ({ id: t.id, text: t.text, done: !!t.done, dueAt: t.dueDate ? new Date(t.dueDate).toISOString() : null, remindBeforeMin: t.remindBeforeMin || 0, contentPreview: (t.content || '').slice(0, _ctxLimit(100, 200, 500)) }));
     }
   },
   create_note: {
@@ -807,8 +807,8 @@ const ASSISTANT_TOOLS = {
       const activeTodos = todos.filter(t => !t.done);
       const todayTodos = activeTodos.filter(t => t.dueDate && t.dueDate >= todayStart.getTime() && t.dueDate <= todayEnd.getTime());
       const overdueTodos = activeTodos.filter(t => t.dueDate && t.dueDate < todayStart.getTime());
-      const recentNotes = notes.filter(n => !n.deleted).sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0)).slice(0, 5).map(n => ({ id: n.id, title: n.title || '(无标题)', updatedAt: n.updatedAt }));
-      const memories = loadMemories().slice(-5).map(m => ({ key: m.key, value: m.value, category: m.category }));
+      const recentNotes = notes.filter(n => !n.deleted).sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0)).slice(0, _ctxLimit(5, 15, 30)).map(n => ({ id: n.id, title: n.title || '(无标题)', updatedAt: n.updatedAt }));
+      const memories = loadMemories().slice(-_ctxLimit(5, 15, 30)).map(m => ({ key: m.key, value: m.value, category: m.category }));
       return {
         date: now.toLocaleDateString('zh-CN'),
         todayTodos: todayTodos.map(t => ({ id: t.id, text: t.text, dueAt: t.dueDate ? new Date(t.dueDate).toISOString() : null })),
@@ -837,7 +837,7 @@ const ASSISTANT_TOOLS = {
         totalNotes: active.length,
         totalCharacters: totalChars,
         byNotebook: Object.entries(byNb).map(([name, count]) => ({ name, count })),
-        topTags: Object.entries(tagMap).sort((a, b) => b[1] - a[1]).slice(0, 10).map(([tag, count]) => ({ tag, count })),
+        topTags: Object.entries(tagMap).sort((a, b) => b[1] - a[1]).slice(0, _ctxLimit(10, 30, 50)).map(([tag, count]) => ({ tag, count })),
         mostRecent: sorted[0] ? { title: sorted[0].title, updatedAt: sorted[0].updatedAt } : null,
         leastRecent: sorted.length > 1 ? { title: sorted[sorted.length - 1].title, updatedAt: sorted[sorted.length - 1].updatedAt } : null,
         totalTodos: todos.length,
@@ -915,7 +915,7 @@ const ASSISTANT_TOOLS = {
     run: ({ status } = {}) => {
       const st = status || 'active';
       let pool = st === 'all' ? todos : st === 'done' ? todos.filter(t => t.done) : todos.filter(t => !t.done);
-      return pool.slice(0, 50).map(t => ({ id: t.id, text: t.text, done: t.done, dueAt: t.dueDate ? new Date(t.dueDate).toISOString() : null, content: (t.content || '').slice(0, 100) }));
+      return pool.slice(0, _ctxLimit(50, 100, 200)).map(t => ({ id: t.id, text: t.text, done: t.done, dueAt: t.dueDate ? new Date(t.dueDate).toISOString() : null, content: (t.content || '').slice(0, _ctxLimit(100, 200, 500)) }));
     }
   },
   complete_todo: {
@@ -998,7 +998,7 @@ const ASSISTANT_TOOLS = {
     run: ({ notebookName, limit } = {}) => {
       let pool = notes.filter(n => !n.deleted && (!n.title || !n.title.trim()));
       if (notebookName) { const nb = notebooks.find(x => x.name === notebookName); if (nb) pool = pool.filter(n => n.notebookId === nb.id); }
-      const max = Math.min(limit || 50, 100);
+      const max = Math.min(limit || _ctxLimit(50, 100, 200), 300);
       pool = pool.slice(0, max);
       let success = 0;
       const titled = [];
@@ -1017,10 +1017,10 @@ const ASSISTANT_TOOLS = {
   list_recent_notes: {
     desc: '最近更新的笔记。{limit?(默认10)}',
     run: ({ limit } = {}) => {
-      const max = Math.min(limit || _ctxLimit(10, 20, 50), 100);
+      const max = Math.min(limit || _ctxLimit(10, 20, 50), _ctxLimit(100, 200, 500));
       return notes.filter(n => !n.deleted).sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0)).slice(0, max).map(n => {
         const nb = notebooks.find(x => x.id === n.notebookId);
-        return { id: n.id, title: n.title || '(无标题)', notebook: nb?.name, snippet: stripMarkdown(n.content).slice(0, 80), updatedAt: n.updatedAt };
+        return { id: n.id, title: n.title || '(无标题)', notebook: nb?.name, snippet: stripMarkdown(n.content).slice(0, _ctxLimit(80, 200, 400)), updatedAt: n.updatedAt };
       });
     }
   },
@@ -1037,7 +1037,7 @@ const ASSISTANT_TOOLS = {
     desc: '跨笔记研究总结。{query, limit?(默认5)}搜索多篇笔记提取关键信息+出处',
     run: async ({ query, limit }) => {
       if (!query) throw new Error('query 必填');
-      const max = Math.min(limit || _ctxLimit(5, 10, 20), 30);
+      const max = Math.min(limit || _ctxLimit(5, 10, 20), _ctxLimit(30, 50, 100));
       const results = ASSISTANT_TOOLS.search_notes.run({ query, limit: max });
       if (!results.length) return { found: 0, summary: '未找到相关笔记', sources: [] };
       const sources = [];
@@ -1157,7 +1157,7 @@ const ASSISTANT_TOOLS = {
   list_starred: {
     desc: '列出收藏笔记。无参数',
     run: () => {
-      return notes.filter(n => !n.deleted && n.starred).sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0)).slice(0, 30).map(n => {
+      return notes.filter(n => !n.deleted && n.starred).sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0)).slice(0, _ctxLimit(30, 80, 200)).map(n => {
         const nb = notebooks.find(x => x.id === n.notebookId);
         return { id: n.id, title: n.title || '(无标题)', notebook: nb?.name, updatedAt: n.updatedAt };
       });
@@ -1240,11 +1240,12 @@ async function runSubAgent(step, stepIndex, totalSteps) {
     .map(([n, t]) => `${n}:${t.desc}`)
     .join('\n');
 
+  const activeNotes = notes.filter(n => !n.deleted);
   const sysPrompt = `你是Marginote子任务执行器。直接执行指定任务，不要询问。
-笔记本${notebooks.length} 笔记${notes.filter(n=>!n.deleted).length} 待办${todos.length}
+笔记本${notebooks.length} 笔记${activeNotes.length} 待办${todos.length}
 工具:\n${subTools}
 协议:仅输出JSON{"reply":"结果","actions":[{"tool":"名","args":{}}]}
-无工具时actions=[]。每次1个工具。`;
+无工具时actions=[]。每次1个工具。任何问题先search_notes搜索。`;
 
   const ctx = [
     { role: 'system', content: sysPrompt },
@@ -1706,8 +1707,8 @@ async function runAssistantTurn(userInput) {
   const provider = getActiveProvider();
   const mm = !!(provider && provider.multimodal);
   const ctxK = (provider && provider.contextSize > 0) ? provider.contextSize : 10;
-  const historyWindow = ctxK <= 16 ? 20 : ctxK <= 64 ? 40 : ctxK <= 128 ? 80 : 150;
-  const loopCompressThreshold = ctxK <= 16 ? 40 : ctxK <= 64 ? 80 : ctxK <= 128 ? 200 : 400;
+  const historyWindow = ctxK <= 16 ? 20 : ctxK <= 64 ? 60 : ctxK <= 128 ? 100 : 200;
+  const loopCompressThreshold = ctxK <= 16 ? 40 : ctxK <= 64 ? 120 : ctxK <= 128 ? 250 : 500;
   const loopCompressKeep = Math.floor(loopCompressThreshold * 0.75);
   const recent = (s?.messages || []).slice(-historyWindow);
   // 如果有图片附件但未开启多模态，提醒用户
