@@ -2927,24 +2927,29 @@ async function testModelContextSize() {
     try {
       if (usePF) {
         const res = await mn.platform.fetch(url, { method:'POST', headers:hdrs, body:bodyStr }, null);
-        if (!res.ok) { const b = res.body || res.error || ''; const m = b.match(/maximum[^0-9]*(\d{3,})/i) || b.match(/max[_ ]tokens?[^0-9]*(\d{4,})/i); return m ? { ok:false, limit:Math.floor(parseInt(m[1])/1000) } : { ok:false }; }
-        const reply = typeof res.body === 'string' ? res.body : '';
+        if (!res.ok) return { ok:false, err:'HTTP '+(res.status||res.error||'err') };
+        let reply = '';
+        const rb = typeof res.body === 'string' ? res.body : '';
+        if (rb.trimStart().startsWith('data:')) { for (const ln of rb.split('\n')) { const l = ln.trim(); if (l.startsWith('data:') && !l.includes('[DONE]')) { try { const c = JSON.parse(l.slice(l.indexOf('{'))); reply += c?.choices?.[0]?.delta?.content || c?.choices?.[0]?.message?.content || ''; } catch {} } } }
+        else { try { const j = JSON.parse(rb); reply = j?.choices?.[0]?.message?.content || ''; } catch { reply = rb; } }
         return { ok: reply.includes(code) };
       }
       const ctrl = new AbortController();
       const tm = setTimeout(() => ctrl.abort(), sK > 128 ? 120000 : sK > 64 ? 60000 : 30000);
       const res = await fetch(url, { method:'POST', headers:hdrs, body:bodyStr, signal:ctrl.signal });
       clearTimeout(tm);
-      if (!res.ok) { const t = await res.text().catch(()=>''); const m = t.match(/maximum[^0-9]*(\d{3,})/i) || t.match(/max[_ ]tokens?[^0-9]*(\d{4,})/i); return m ? { ok:false, limit:Math.floor(parseInt(m[1])/1000) } : { ok:false }; }
-      const d = await res.json();
-      const reply = d?.choices?.[0]?.message?.content || '';
+      if (!res.ok) return { ok:false, err:'HTTP '+res.status };
+      const raw = await res.text();
+      let reply = '';
+      if (raw.trimStart().startsWith('data:')) { for (const ln of raw.split('\n')) { const l = ln.trim(); if (l.startsWith('data:') && !l.includes('[DONE]')) { try { const c = JSON.parse(l.slice(l.indexOf('{'))); reply += c?.choices?.[0]?.delta?.content || c?.choices?.[0]?.message?.content || ''; } catch {} } } }
+      else { try { const j = JSON.parse(raw); reply = j?.choices?.[0]?.message?.content || ''; } catch { reply = raw; } }
       return { ok: reply.includes(code) };
-    } catch { return { ok:false }; }
+    } catch(e) { return { ok:false, err:e.message||String(e) }; }
   }
   try {
     statusEl.textContent = '\u9a8c\u8bc1\u8fde\u63a5\u2026';
     const r0 = await tryK(1);
-    if (!r0.ok) { statusEl.textContent = '\u274c \u8fde\u63a5\u5931\u8d25\uff0c\u8bf7\u68c0\u67e5\u914d\u7f6e'; btn.disabled = false; return; }
+    if (!r0.ok) { statusEl.textContent = '\u274c ' + (r0.err || '\u8fde\u63a5\u5931\u8d25\uff0c\u8bf7\u68c0\u67e5\u914d\u7f6e'); btn.disabled = false; return; }
     const sizes = [2,4,8,16,32,64,128,256,512,1024];
     let last = 1, prog = '1K\u2713 ';
     for (const sK of sizes) {
@@ -2953,9 +2958,8 @@ async function testModelContextSize() {
       if (r.ok) { last = sK; prog = prog.replace(sK+'K\u2026', sK+'K\u2713 '); statusEl.textContent = prog; }
       else {
         prog = prog.replace(sK+'K\u2026', sK+'K\u2717'); statusEl.textContent = prog;
-        if (r.limit) { last = r.limit; statusEl.textContent += ' (API:\u2248' + r.limit + 'K)'; break; }
         let lo = last, hi = sK;
-        while (hi - lo > 1) { const mid = Math.floor((lo+hi)/2); statusEl.textContent = prog + ' \u2192' + mid + 'K\u2026'; const rm = await tryK(mid); if (rm.ok) lo = mid; else { if (rm.limit) { lo = rm.limit; break; } hi = mid; } }
+        while (hi - lo > 1) { const mid = Math.floor((lo+hi)/2); statusEl.textContent = prog + ' \u2192' + mid + 'K\u2026'; const rm = await tryK(mid); if (rm.ok) lo = mid; else hi = mid; }
         last = lo; break;
       }
     }

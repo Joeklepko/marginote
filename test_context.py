@@ -105,13 +105,9 @@ def try_size(url, model, api_key, headers, size_k, timeout=60, debug=False):
         err_body = e.read().decode(errors='replace')
         if debug:
             print(f'\n  [DEBUG] HTTP {e.code} body={err_body[:300]}')
-        m = (re.search(r'maximum[^0-9]*(\d{3,})', err_body, re.I)
-             or re.search(r'max[_ ]?tokens?[^0-9]*(\d{4,})', err_body, re.I)
-             or re.search(r'context[_ ]?length[^0-9]*(\d{4,})', err_body, re.I))
-        limit = int(m.group(1)) // 1000 if m else None
-        return {'ok': False, 'error': f'HTTP {e.code}', 'detail': err_body[:300], 'limit': limit}
+        return {'ok': False, 'error': f'HTTP {e.code}', 'detail': err_body[:300]}
     except Exception as e:
-        return {'ok': False, 'error': str(e), 'limit': None}
+        return {'ok': False, 'error': str(e)}
 
 def main():
     debug = '--debug' in sys.argv
@@ -171,11 +167,6 @@ def main():
             else:
                 print(f'✗ 验证码错误 (期望={r.get("expected")}, 回复="{r.get("got", "")}")')
 
-            if r.get('limit'):
-                last_success = r['limit']
-                print(f'\n  API 报告上下文限制: ~{last_success}K tokens')
-                break
-
             # 二分查找
             lo, hi = last_success, size_k
             print(f'\n  二分查找 {lo}K ~ {size_k}K...')
@@ -192,10 +183,6 @@ def main():
                         print(f'✗ {rm["error"]}')
                     else:
                         print(f'✗ (回复="{rm.get("got", "")}")')
-                    if rm.get('limit'):
-                        lo = rm['limit']
-                        print(f'  API 报告: ~{lo}K tokens')
-                        break
             last_success = lo
             break
     else:
