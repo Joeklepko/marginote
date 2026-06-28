@@ -1085,7 +1085,8 @@ function buildAssistantSystemPrompt() {
       top.map(m => `- [${catLabel[m.category] || '其他'}] ${m.key}：${m.value}`).join('\n');
   }
 
-  return `你是 Marginote 笔记 AI 助手。当前：${now.toLocaleString('zh-CN')}
+  return `你是 Marginote 笔记 AI 助手。你已拥有用户全部笔记和待办的访问权限，直接使用工具操作即可，无需请求授权。
+当前：${now.toLocaleString('zh-CN')}
 笔记本${notebooks.length}个 笔记${activeNotes.length}篇 待办${todos.length}条${attachInfo}${noteIndex}${todoOverview}${memorySection}
 
 【工具】
@@ -1452,47 +1453,32 @@ function renderAssistantRail() {
   el.innerHTML = assistantGroups.map(g => {
     const isActive = assistantInAiView && g.id === assistantActiveGroupId;
     const sessionCount = (g.sessions || []).length;
-    return `<div class="rail-item ${isActive ? 'active' : ''}" data-view="ai:${escapeHtml(g.id)}" data-ai-group="${escapeHtml(g.id)}" role="button" tabindex="0">
-      <svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24" style="width:14px;height:14px;flex-shrink:0"><path stroke-linecap="round" stroke-linejoin="round" d="M21 12c0 4.4-4 8-9 8a9.4 9.4 0 01-3.5-.7L3 21l1.5-4.3A8.3 8.3 0 013 12c0-4.4 4-8 9-8s9 3.6 9 8z"/></svg>
-      <span class="rail-item-label" title="${escapeHtml(g.name)}">${escapeHtml(g.name)}</span>
-      <span class="rail-item-count">${sessionCount}</span>
-      <span class="nb-actions">
-        <button data-action="edit-group" data-gid="${escapeHtml(g.id)}" title="重命名">
-          <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7M18.5 2.5a2.121 2.121 0 113 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
-        </button>
-        <button data-action="delete-group" data-gid="${escapeHtml(g.id)}" title="删除">
-          <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.87 12.14A2 2 0 0116.14 21H7.86a2 2 0 01-1.99-1.86L5 7M3 7h18M9 7V4a1 1 0 011-1h4a1 1 0 011 1v3"/></svg>
-        </button>
-      </span>
+    return `<div class="ai-group-item ${isActive ? 'active' : ''}" data-ai-group="${escapeHtml(g.id)}" role="button" tabindex="0">
+      <svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M21 12c0 4.4-4 8-9 8a9.4 9.4 0 01-3.5-.7L3 21l1.5-4.3A8.3 8.3 0 013 12c0-4.4 4-8 9-8s9 3.6 9 8z"/></svg>
+      <span class="group-name" title="${escapeHtml(g.name)}">${escapeHtml(g.name)}</span>
+      <span style="font-size:11px;color:var(--ink-mute)">${sessionCount}</span>
     </div>`;
   }).join('');
 
-  el.querySelectorAll('.rail-item[data-ai-group] button[data-action]').forEach(btn => {
-    btn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      const action = btn.dataset.action;
-      const gid = btn.dataset.gid;
+  el.querySelectorAll('.ai-group-item[data-ai-group]').forEach(item => {
+    item.addEventListener('click', () => {
+      const gid = item.dataset.aiGroup;
+      if (assistantInAiView && gid === assistantActiveGroupId) return;
+      enterAiView(gid);
+    });
+    item.addEventListener('contextmenu', (e) => {
+      e.preventDefault();
+      const gid = item.dataset.aiGroup;
       const g = assistantGroups.find(x => x.id === gid);
       if (!g) return;
-      if (action === 'edit-group') {
-        const item = btn.closest('.rail-item');
-        startInlineRename(item, '.rail-item-label', g.name, (val) => renameAssistantGroup(gid, val));
-      } else if (action === 'delete-group') {
-        if (confirm('删除分组「' + g.name + '」？该分组下所有会话将一并删除。')) deleteAssistantGroup(gid);
+      const action = prompt('输入 rename 重命名，delete 删除：');
+      if (action === 'rename' || action === '重命名') {
+        startInlineRename(item, '.group-name', g.name, (val) => renameAssistantGroup(gid, val));
+      } else if (action === 'delete' || action === '删除') {
+        if (confirm('删除分组「' + g.name + '」？')) deleteAssistantGroup(gid);
       }
     });
   });
-
-  // v1.2.1 拖拽排序：AI 分组
-  if (typeof window.enableDragReorder === 'function') {
-    el.querySelectorAll('.rail-item[data-ai-group]').forEach(it => { it.dataset.dragKey = it.dataset.aiGroup; });
-    window.enableDragReorder(el, '.rail-item[data-ai-group]', (src, dst) => {
-      if (window.reorderArrayById(assistantGroups, src, dst)) {
-        saveAssistantGroups();
-        renderAssistantRail();
-      }
-    });
-  }
 }
 
 // ===================== 中侧栏：会话列表渲染 =====================
@@ -1614,14 +1600,14 @@ function bindAssistantUi() {
     else { showAssistantPanel(); }
   });
 
-  // 新建分组（左侧栏）
+  // 新建分组
   const newGroupBtn = document.getElementById('newAssistantGroupBtn');
   if (newGroupBtn) newGroupBtn.addEventListener('click', (e) => {
     e.stopPropagation();
     const g = createAssistantGroup('新分组');
     setTimeout(() => {
-      const item = document.querySelector(`.rail-item[data-ai-group="${g.id}"]`);
-      if (item) startInlineRename(item, '.rail-item-label', g.name, (val) => renameAssistantGroup(g.id, val));
+      const item = document.querySelector(`.ai-group-item[data-ai-group="${g.id}"]`);
+      if (item) startInlineRename(item, '.group-name', g.name, (val) => renameAssistantGroup(g.id, val));
     }, 0);
   });
 

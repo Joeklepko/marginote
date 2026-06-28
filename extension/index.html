@@ -626,9 +626,13 @@
     background: transparent;
     border-left-color: transparent;
   }
-  #sectionAssistant { display: none; }
-  .app.ai-view #sectionAssistant { display: block; }
   .app.ai-view #aiEntryBtn { color: var(--accent); }
+  .ai-group-list { padding: 0 12px 8px; display: flex; flex-direction: column; gap: 2px; }
+  .ai-group-item { display: flex; align-items: center; gap: 8px; padding: 6px 10px; border-radius: 6px; cursor: pointer; font-size: 13px; color: var(--ink-soft); border: none; background: none; width: 100%; text-align: left; }
+  .ai-group-item:hover { background: var(--bg-soft); color: var(--ink); }
+  .ai-group-item.active { background: var(--accent-pale, #e8f0fe); color: var(--accent); font-weight: 600; }
+  .ai-group-item svg { width: 14px; height: 14px; flex-shrink: 0; }
+  .ai-group-item .group-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .ai-sessions-head {
     padding: 16px 20px 12px;
     border-bottom: 1px solid var(--rule);
@@ -3648,24 +3652,6 @@
       <div class="section-body rail-notebooks" id="notebooksList"></div>
     </div>
 
-    <div class="rail-section" id="sectionAssistant">
-      <div class="rail-section-title" data-toggle="sectionAssistant">
-        <span class="section-left">
-          <svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M21 12c0 4.4-4 8-9 8a9.4 9.4 0 01-3.5-.7L3 21l1.5-4.3A8.3 8.3 0 013 12c0-4.4 4-8 9-8s9 3.6 9 8z"/><path stroke-linecap="round" stroke-linejoin="round" d="M9 11h.01M12 11h.01M15 11h.01"/></svg>
-          AI 助手
-        </span>
-        <span class="section-right">
-          <button class="add-btn" id="newAssistantGroupBtn" title="新建分组">
-            <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
-              <path stroke-linecap="round" d="M12 5v14M5 12h14"/>
-            </svg>
-          </button>
-          <svg class="chevron" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7"/></svg>
-        </span>
-      </div>
-      <div class="section-body rail-assistant-groups" id="assistantGroupListRail"></div>
-    </div>
-
     <div class="rail-foot">
       <button class="theme-toggle rail-item" id="settingsBtn" title="设置">
         <svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
@@ -3783,12 +3769,19 @@
     <!-- AI 助手会话面板（仅在 ai-view 时可见） -->
     <div id="aiSessionsPanel">
       <div class="ai-sessions-head">
-        <h2 class="ai-sessions-title" id="aiSessionsTitle">AI 分组</h2>
-        <button class="ai-sessions-new-btn" id="newAssistantSessionBtn" title="新建会话">
-          <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" d="M12 5v14M5 12h14"/></svg>
-          新会话
-        </button>
+        <h2 class="ai-sessions-title" id="aiSessionsTitle">AI 助手</h2>
+        <div style="display:flex;gap:4px">
+          <button class="ai-sessions-new-btn" id="newAssistantGroupBtn" title="新建分组">
+            <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" d="M12 5v14M5 12h14"/></svg>
+            新分组
+          </button>
+          <button class="ai-sessions-new-btn" id="newAssistantSessionBtn" title="新建会话">
+            <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" d="M12 5v14M5 12h14"/></svg>
+            新会话
+          </button>
+        </div>
       </div>
+      <div class="ai-group-list" id="assistantGroupListRail"></div>
       <div class="ai-sessions-list" id="aiSessionsList"></div>
       <div class="ai-memory-section">
         <div class="ai-memory-toggle" id="aiMemoryToggle">
