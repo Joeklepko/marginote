@@ -878,6 +878,129 @@ const ASSISTANT_TOOLS = {
       n.updatedAt = Date.now(); saveData(); renderNotesList();
       return { id: n.id, title: n.title, folderId: f.id, folderName: f.name };
     }
+  },
+  list_todos: {
+    desc: '列出待办。{status?"active"|"done"|"all"}默认active',
+    run: ({ status } = {}) => {
+      const st = status || 'active';
+      let pool = st === 'all' ? todos : st === 'done' ? todos.filter(t => t.done) : todos.filter(t => !t.done);
+      return pool.slice(0, 50).map(t => ({ id: t.id, text: t.text, done: t.done, dueAt: t.dueDate ? new Date(t.dueDate).toISOString() : null, content: (t.content || '').slice(0, 100) }));
+    }
+  },
+  complete_todo: {
+    desc: '完成待办。{id?或text?模糊匹配}',
+    run: ({ id, text }) => {
+      let t;
+      if (id) t = todos.find(x => x.id === id);
+      else if (text) t = todos.filter(x => !x.done).find(x => x.text.includes(text));
+      if (!t) throw new Error('未找到待办');
+      t.done = true; t.updatedAt = Date.now();
+      saveData(); if (typeof renderTodos === 'function') renderTodos();
+      return { id: t.id, text: t.text };
+    }
+  },
+  delete_todo: {
+    desc: '删除待办。{id?或text?模糊匹配}',
+    run: ({ id, text }) => {
+      let idx = -1;
+      if (id) idx = todos.findIndex(x => x.id === id);
+      else if (text) idx = todos.findIndex(x => x.text.includes(text));
+      if (idx < 0) throw new Error('未找到待办');
+      const removed = todos.splice(idx, 1)[0];
+      saveData(); if (typeof renderTodos === 'function') renderTodos();
+      return { id: removed.id, text: removed.text };
+    }
+  },
+  batch_delete_todos: {
+    desc: '批量删除待办。{todoIds[]}',
+    run: ({ todoIds }) => {
+      if (!Array.isArray(todoIds) || !todoIds.length) throw new Error('todoIds 必填');
+      let success = 0, failed = 0;
+      for (const id of todoIds) {
+        const idx = todos.findIndex(x => x.id === id);
+        if (idx < 0) { failed++; continue; }
+        todos.splice(idx, 1); success++;
+      }
+      saveData(); if (typeof renderTodos === 'function') renderTodos();
+      return { success, failed };
+    }
+  },
+  find_note: {
+    desc: '搜索并返回笔记全文。{query}一步完成搜索+获取',
+    run: ({ query }) => {
+      if (!query) throw new Error('query 必填');
+      const results = ASSISTANT_TOOLS.search_notes.run({ query, limit: 5 });
+      if (!results.length) return { found: false, message: '未找到匹配笔记' };
+      const best = results[0];
+      const full = notes.find(n => n.id === best.id);
+      if (!full) return { found: false, message: '笔记已删除' };
+      const nb = notebooks.find(x => x.id === full.notebookId);
+      return { found: true, id: full.id, title: full.title, content: (full.content || '').slice(0, 3000), notebook: nb?.name, tags: full.tags, updatedAt: full.updatedAt, otherResults: results.slice(1).map(r => ({ id: r.id, title: r.title })) };
+    }
+  },
+  quick_note: {
+    desc: '快速记笔记。{text, notebookName?}自动提取标题',
+    run: ({ text, notebookName }) => {
+      if (!text || !text.trim()) throw new Error('text 必填');
+      const lines = text.trim().split('\n');
+      const title = lines[0].slice(0, 50).trim();
+      const content = lines.length > 1 ? lines.slice(1).join('\n').trim() : text.trim();
+      let nbId = notebooks[0]?.id;
+      if (notebookName) { const nb = notebooks.find(x => x.name === notebookName); if (nb) nbId = nb.id; }
+      const n = { id: uid(), notebookId: nbId, folderId: null, title, content, tags: [], starred: false, deleted: false, createdAt: Date.now(), updatedAt: Date.now() };
+      notes.push(n); saveData(); renderNotesList();
+      return { id: n.id, title: n.title };
+    }
+  },
+  quick_todo: {
+    desc: '快速建待办。{text, dueAt?:ISO8601}',
+    run: ({ text, dueAt }) => {
+      if (!text || !text.trim()) throw new Error('text 必填');
+      const t = { id: uid(), text: text.trim(), content: '', done: false, createdAt: Date.now(), updatedAt: Date.now() };
+      if (dueAt) { t.dueDate = new Date(dueAt).getTime(); }
+      todos.push(t); saveData(); if (typeof renderTodos === 'function') renderTodos();
+      return { id: t.id, text: t.text, dueAt: t.dueDate ? new Date(t.dueDate).toISOString() : null };
+    }
+  },
+  auto_title_notes: {
+    desc: '自动给无标题笔记生成标题。{notebookName?, limit?(默认50)}',
+    run: ({ notebookName, limit } = {}) => {
+      let pool = notes.filter(n => !n.deleted && (!n.title || !n.title.trim()));
+      if (notebookName) { const nb = notebooks.find(x => x.name === notebookName); if (nb) pool = pool.filter(n => n.notebookId === nb.id); }
+      const max = Math.min(limit || 50, 100);
+      pool = pool.slice(0, max);
+      let success = 0;
+      const titled = [];
+      for (const n of pool) {
+        const text = stripMarkdown(n.content || '').trim();
+        if (!text) continue;
+        const newTitle = text.slice(0, 30).replace(/\n.*/s, '').trim();
+        if (!newTitle) continue;
+        n.title = newTitle; n.updatedAt = Date.now();
+        titled.push({ id: n.id, title: newTitle }); success++;
+      }
+      if (success) { saveData(); renderNotesList(); }
+      return { success, titled };
+    }
+  },
+  list_recent_notes: {
+    desc: '最近更新的笔记。{limit?(默认10)}',
+    run: ({ limit } = {}) => {
+      const max = Math.min(limit || 10, 30);
+      return notes.filter(n => !n.deleted).sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0)).slice(0, max).map(n => {
+        const nb = notebooks.find(x => x.id === n.notebookId);
+        return { id: n.id, title: n.title || '(无标题)', notebook: nb?.name, snippet: stripMarkdown(n.content).slice(0, 80), updatedAt: n.updatedAt };
+      });
+    }
+  },
+  count_notes: {
+    desc: '统计笔记数量。{notebookName?, tag?}',
+    run: ({ notebookName, tag } = {}) => {
+      let pool = notes.filter(n => !n.deleted);
+      if (notebookName) { const nb = notebooks.find(x => x.name === notebookName); if (nb) pool = pool.filter(n => n.notebookId === nb.id); }
+      if (tag) pool = pool.filter(n => (n.tags || []).includes(tag));
+      return { count: pool.length, notebookName: notebookName || '全部', tag: tag || null };
+    }
   }
 };
 
@@ -948,8 +1071,13 @@ ${tools}
 【规则】
 - 笔记概览仅供定位，用户问具体内容时必须 search_notes 搜索
 - 查笔记内容：search_notes → 根据snippet回答；仅snippet不足时才 get_note
+- 用户说"帮我找XX笔记" → find_note（一步拿到全文）
+- 用户问"我的待办" → list_todos
+- 用户说"帮我记/快速记" → quick_note
+- 完成待办 → complete_todo（支持模糊匹配text）
+- 给无标题笔记加标题 → auto_title_notes（一步批量完成）
 - 删除/移动多篇：search_notes({limit:50+}) → batch_delete_notes/batch_move_notes（一次传所有ID）
-- 批量改标题：search_notes → batch_update_notes({noteIds, titles:{"id1":"标题1","id2":"标题2"}})，不要逐篇 get_note
+- 批量改标题：search_notes → batch_update_notes({noteIds, titles:{"id1":"标题1","id2":"标题2"}})
 - 搜索无果时换关键词重试
 - 用户表达偏好时主动 save_memory
 - 珍惜每轮工具调用，避免重复搜索相同关键词
@@ -1092,6 +1220,16 @@ function summarizeActionResult(name, result) {
   if (name === 'summarize_note') return `笔记「${result.title || ''}」摘要已生成`;
   if (name === 'create_folder') return `文件夹「${result.name || ''}」${result.existed ? '已存在' : '已创建'}`;
   if (name === 'move_note_to_folder') return `笔记「${result.title || ''}」已移入「${result.folderName || ''}」`;
+  if (name === 'list_todos') return `${(result || []).length} 条待办`;
+  if (name === 'complete_todo') return `待办「${result.text || ''}」已完成`;
+  if (name === 'delete_todo') return `待办「${result.text || ''}」已删除`;
+  if (name === 'batch_delete_todos') return `${result.success || 0} 条待办已删除`;
+  if (name === 'find_note') return result.found ? `找到笔记「${result.title || ''}」` : '未找到匹配笔记';
+  if (name === 'quick_note') return `快速笔记「${result.title || ''}」已创建`;
+  if (name === 'quick_todo') return `待办「${result.text || ''}」已创建`;
+  if (name === 'auto_title_notes') return `${result.success || 0} 篇无标题笔记已自动命名`;
+  if (name === 'list_recent_notes') return `${(result || []).length} 篇最近笔记`;
+  if (name === 'count_notes') return `${result.notebookName || ''}共 ${result.count || 0} 篇笔记`;
   return '';
 }
 
