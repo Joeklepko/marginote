@@ -3305,7 +3305,16 @@
     padding: 8px 14px; border-bottom: 1px solid var(--rule-soft);
     flex-shrink: 0; background: var(--bg);
   }
-  .assistant-title { font-size: 14px; font-weight: 600; color: var(--ink); flex: 1; }
+  .assistant-title { font-size: 14px; font-weight: 600; color: var(--ink); }
+  .assistant-model-select {
+    flex: 1; min-width: 0; max-width: 200px;
+    padding: 3px 6px; font-size: 12px; border: 1px solid var(--rule);
+    background: var(--paper); border-radius: 4px; cursor: pointer;
+    color: var(--ink); outline: none; transition: border-color 0.15s;
+    text-overflow: ellipsis;
+  }
+  .assistant-model-select:hover { border-color: var(--ink-soft); }
+  .assistant-model-select:focus { border-color: var(--accent); }
   .assistant-topbar .assistant-back-btn {
     width: 28px; height: 28px; border: 1px solid var(--rule);
     background: var(--paper); border-radius: 6px; cursor: pointer;
@@ -4035,6 +4044,7 @@
           <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M15 18l-6-6 6-6"/></svg>
         </button>
         <span class="assistant-title">AI 助手</span>
+        <select id="assistantModelSelect" class="assistant-model-select" title="切换模型"></select>
         <div class="assistant-header-actions">
           <button id="assistantClearBtn">清空</button>
         </div>

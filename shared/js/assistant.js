@@ -1309,11 +1309,12 @@ function buildAssistantSystemPrompt() {
   const activeNotes = notes.filter(n => !n.deleted).sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
   let noteIndex = '';
   if (activeNotes.length) {
-    const top = activeNotes.slice(0, 15);
+    const top = activeNotes.slice(0, 20);
     noteIndex = '\n\n笔记(' + activeNotes.length + '篇,近' + top.length + '篇):\n';
     noteIndex += top.map((n, i) => {
       const nb = notebooks.find(x => x.id === n.notebookId);
-      return `${i + 1}.${n.title || '无标题'}${nb ? '[' + nb.name + ']' : ''}`;
+      const summary = stripMarkdown(n.content).slice(0, 40);
+      return `${i + 1}.${n.title || '无标题'}${nb ? '[' + nb.name + ']' : ''}${summary ? '—' + summary : ''}`;
     }).join('\n');
   }
 
@@ -1324,9 +1325,15 @@ function buildAssistantSystemPrompt() {
   const overdueTodos = activeTodos.filter(t => t.dueDate && t.dueDate < todayStart.getTime());
   let todoOverview = '';
   if (todos.length) {
-    todoOverview = '\n待办:未完成' + activeTodos.length + '条';
+    todoOverview = '\n\n待办:未完成' + activeTodos.length + '条';
     if (todayTodos.length) todoOverview += ',今日' + todayTodos.length + '条';
     if (overdueTodos.length) todoOverview += ',过期' + overdueTodos.length + '条';
+    if (todayTodos.length) {
+      todoOverview += '\n今日:' + todayTodos.slice(0, 8).map(t => t.text + (t.dueDate ? '(' + new Date(t.dueDate).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }) + ')' : '')).join('; ');
+    }
+    if (overdueTodos.length) {
+      todoOverview += '\n过期:' + overdueTodos.slice(0, 5).map(t => t.text).join('; ');
+    }
   }
 
   const memArr = loadMemories();
@@ -1344,11 +1351,13 @@ ${tools}
 无工具时actions=[]。每次1个工具,多步分轮。
 
 规则:
-- 找笔记→find_note | 查/总结/研究→research | 待办→list_todos
-- 快速记→quick_note | 完成待办→complete_todo | 翻译→translate
-- 批量操作先search再batch_* | 搜索无果换关键词
+- 笔记概览仅供定位,问具体内容必须search_notes搜索
+- 找笔记→find_note(一步全文) | 查/总结/研究→research | 待办→list_todos
+- 快速记→quick_note | 完成待办→complete_todo(模糊匹配) | 翻译→translate
+- 批量操作:先search_notes({limit:50+})再batch_*(一次传所有ID)
 - 复杂任务(多步骤/跨领域)→sub_agent拆解为独立子步骤执行
-- 记用户偏好→save_memory | 回复用Markdown,简洁直接`;
+- 搜索无果换关键词重试 | 记用户偏好→save_memory
+- 回复用Markdown,简洁直接`;
 }
 
 // ===================== 渲染 =====================
@@ -1403,7 +1412,7 @@ function renderAssistantMessage(m) {
         // 尝试从 pendingAttachments 中找回 dataUrl 显示大图
         const matchedImg = typeof pendingAttachments !== 'undefined' ? pendingAttachments.find(p => p.type === 'image' && p.name === a.title) : null;
         if (matchedImg && matchedImg.dataUrl) {
-          html += '<div class="msg-image-attach" style="margin-top:6px; max-width:260px;"><img src="' + matchedImg.dataUrl + '" data-full-img="' + matchedImg.dataUrl + '" class="chat-img-preview" style="width:100%; max-height:200px; object-fit:contain; border-radius:8px; border:1px solid var(--rule-soft); cursor:zoom-in;" title="点击放大查看"></div>';
+          html += '<div class="msg-image-attach" style="margin-top:6px; max-width:120px;"><img src="' + matchedImg.dataUrl + '" data-full-img="' + matchedImg.dataUrl + '" class="chat-img-preview" style="width:100%; max-height:80px; object-fit:cover; border-radius:6px; border:1px solid var(--rule-soft); cursor:zoom-in;" title="点击放大查看"></div>';
         } else {
           html += '<span class="msg-attach-pill" title="图片附件: ' + escapeHtml(a.title || '图片') + '"><span class="attach-type-badge image">图片</span>' + escapeHtml(String(a.title || '图片').slice(0, 30)) + '</span>';
         }
@@ -1898,6 +1907,41 @@ function bindAssistantUi() {
   // 清空当前会话
   const clearBtn = document.getElementById('assistantClearBtn');
   if (clearBtn) clearBtn.addEventListener('click', () => { if (confirm('清空当前会话历史？')) clearActiveSessionHistory(); });
+
+  // 模型选择器
+  const modelSelect = document.getElementById('assistantModelSelect');
+  function refreshModelSelect() {
+    if (!modelSelect) return;
+    const providers = (typeof aiConfig !== 'undefined' && aiConfig.providers) ? aiConfig.providers : [];
+    const activeId = (typeof aiConfig !== 'undefined') ? aiConfig.activeId : null;
+    if (!providers.length) {
+      modelSelect.innerHTML = '<option value="">未配置模型</option>';
+      return;
+    }
+    modelSelect.innerHTML = providers.map(p => {
+      const label = (p.name || p.model || '模型').slice(0, 30);
+      return `<option value="${escapeHtml(p.id)}" ${p.id === activeId ? 'selected' : ''}>${escapeHtml(label)}</option>`;
+    }).join('');
+  }
+  if (modelSelect) {
+    refreshModelSelect();
+    modelSelect.addEventListener('change', () => {
+      const id = modelSelect.value;
+      if (id && typeof aiConfig !== 'undefined') {
+        aiConfig.activeId = id;
+        if (typeof saveAiConfig === 'function') saveAiConfig();
+        const p = aiConfig.providers.find(x => x.id === id);
+        if (typeof showToast === 'function' && p) showToast('已切换为 ' + (p.name || p.model));
+      }
+    });
+    if (typeof saveAiConfig === 'function') {
+      const _origSave = saveAiConfig;
+      window.saveAiConfig = function() {
+        _origSave();
+        try { refreshModelSelect(); } catch {}
+      };
+    }
+  }
 
   // 记忆管理面板（左侧栏折叠区）
   const memToggle = document.getElementById('aiMemoryToggle');
