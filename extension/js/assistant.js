@@ -9,10 +9,19 @@
 //   - 设置：openSettingsModal
 // =====================================================================
 const ASSISTANT_GROUPS_KEY = 'marginote.assistantGroups';
-const ASSISTANT_HISTORY_MAX = 40;
+const ASSISTANT_HISTORY_MAX = 200;
 // 数据结构：assistantGroups = [{id, name, createdAt, sessions: [{id, name, createdAt, messages: [...]}]}]
 let assistantGroups = [];
 let assistantActiveGroupId = null;
+
+function _ctxLimit(small, medium, large) {
+  const p = typeof getActiveProvider === 'function' ? getActiveProvider() : null;
+  const k = (p && p.contextSize > 0) ? p.contextSize : 10;
+  if (k <= 16) return small;
+  if (k <= 64) return medium;
+  if (k <= 128) return large;
+  return Math.round(large * Math.min(k / 128, 10));
+}
 let assistantActiveSessionId = null;
 let assistantBusy = false;
 let assistantInAiView = false;
@@ -422,7 +431,7 @@ const ASSISTANT_TOOLS = {
     desc: '搜索笔记。{query?, limit?(默认30)}',
     run: ({ query, limit }) => {
       const q = String(query || '').trim().toLowerCase();
-      const lim = Math.max(1, Math.min(100, parseInt(limit, 10) || 30));
+      const lim = Math.max(1, Math.min(200, parseInt(limit, 10) || _ctxLimit(30, 50, 80)));
       let list = notes.filter(n => !n.deleted);
       if (q) {
         const terms = q.split(/\s+/).filter(Boolean);
@@ -452,7 +461,7 @@ const ASSISTANT_TOOLS = {
     desc: '搜索待办。{query?, status?"active"|"done"|"overdue"|"all", due?"today"|"overdue"|"week", limit?}',
     run: ({ query, status, due, limit }) => {
       const q = String(query || '').trim().toLowerCase();
-      const lim = Math.max(1, Math.min(50, parseInt(limit, 10) || 10));
+      const lim = Math.max(1, Math.min(100, parseInt(limit, 10) || 10));
       const now = Date.now();
       const todayStart = new Date(); todayStart.setHours(0, 0, 0, 0);
       const todayEnd = new Date(); todayEnd.setHours(23, 59, 59, 999);
@@ -849,7 +858,7 @@ const ASSISTANT_TOOLS = {
       if (!(n.content || '').trim()) throw new Error('笔记内容为空，无法总结');
       const summary = await callAi([
         { role: 'system', content: '你是摘要助手。用中文将给定文本总结为 3-5 个要点，每个要点一行，以 • 开头。仅输出要点，不加前缀标题。' },
-        { role: 'user', content: (n.content || '').slice(0, 4000) }
+        { role: 'user', content: (n.content || '').slice(0, _ctxLimit(4000, 12000, 30000)) }
       ], { stream: false });
       return { id: n.id, title: n.title || '(无标题)', summary };
     }
@@ -940,7 +949,7 @@ const ASSISTANT_TOOLS = {
       const full = notes.find(n => n.id === best.id);
       if (!full) return { found: false, message: '笔记已删除' };
       const nb = notebooks.find(x => x.id === full.notebookId);
-      return { found: true, id: full.id, title: full.title, content: (full.content || '').slice(0, 3000), notebook: nb?.name, tags: full.tags, updatedAt: full.updatedAt, otherResults: results.slice(1).map(r => ({ id: r.id, title: r.title })) };
+      return { found: true, id: full.id, title: full.title, content: (full.content || '').slice(0, _ctxLimit(3000, 10000, 30000)), notebook: nb?.name, tags: full.tags, updatedAt: full.updatedAt, otherResults: results.slice(1).map(r => ({ id: r.id, title: r.title })) };
     }
   },
   quick_note: {
@@ -991,7 +1000,7 @@ const ASSISTANT_TOOLS = {
   list_recent_notes: {
     desc: '最近更新的笔记。{limit?(默认10)}',
     run: ({ limit } = {}) => {
-      const max = Math.min(limit || 10, 30);
+      const max = Math.min(limit || _ctxLimit(10, 20, 50), 100);
       return notes.filter(n => !n.deleted).sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0)).slice(0, max).map(n => {
         const nb = notebooks.find(x => x.id === n.notebookId);
         return { id: n.id, title: n.title || '(无标题)', notebook: nb?.name, snippet: stripMarkdown(n.content).slice(0, 80), updatedAt: n.updatedAt };
@@ -1011,7 +1020,7 @@ const ASSISTANT_TOOLS = {
     desc: '跨笔记研究总结。{query, limit?(默认5)}搜索多篇笔记提取关键信息+出处',
     run: async ({ query, limit }) => {
       if (!query) throw new Error('query 必填');
-      const max = Math.min(limit || 5, 10);
+      const max = Math.min(limit || _ctxLimit(5, 10, 20), 30);
       const results = ASSISTANT_TOOLS.search_notes.run({ query, limit: max });
       if (!results.length) return { found: 0, summary: '未找到相关笔记', sources: [] };
       const sources = [];
@@ -1019,14 +1028,14 @@ const ASSISTANT_TOOLS = {
       for (const r of results) {
         const n = notes.find(x => x.id === r.id);
         if (!n) continue;
-        const content = (n.content || '').slice(0, 2000);
+        const content = (n.content || '').slice(0, _ctxLimit(2000, 8000, 20000));
         const nb = notebooks.find(x => x.id === n.notebookId);
         sources.push({ id: n.id, title: n.title || '(无标题)', notebook: nb?.name });
         combined += `\n\n【${n.title || '无标题'}】\n${content}`;
       }
       const summary = await callAi([
         { role: 'system', content: '你是研究助手。根据以下多篇笔记内容，针对用户的查询提取关键信息并总结。用Markdown格式：先总结要点，再分条列出关键信息。简洁直接。' },
-        { role: 'user', content: `查询：${query}\n\n相关笔记：${combined.slice(0, 8000)}` }
+        { role: 'user', content: `查询：${query}\n\n相关笔记：${combined.slice(0, _ctxLimit(8000, 24000, 60000))}` }
       ], { stream: false });
       return { found: sources.length, summary, sources };
     }
@@ -1040,7 +1049,7 @@ const ASSISTANT_TOOLS = {
       const lang = { en: '英文', zh: '中文', ja: '日文', ko: '韩文', fr: '法文', de: '德文' }[to || 'en'] || to || '英文';
       const result = await callAi([
         { role: 'system', content: `你是翻译助手。将用户的文本翻译为${lang}，仅输出翻译结果。` },
-        { role: 'user', content: text.slice(0, 4000) }
+        { role: 'user', content: text.slice(0, _ctxLimit(4000, 12000, 30000)) }
       ], { stream: false });
       return { translated: result, targetLang: lang };
     }
@@ -1053,7 +1062,7 @@ const ASSISTANT_TOOLS = {
       if (!src || !src.trim()) throw new Error('text 或 noteId 必填');
       const result = await callAi([
         { role: 'system', content: '提取5-10个关键词，用逗号分隔，仅输出关键词。' },
-        { role: 'user', content: src.slice(0, 3000) }
+        { role: 'user', content: src.slice(0, _ctxLimit(3000, 10000, 30000)) }
       ], { stream: false });
       return { keywords: result.split(/[,，、\s]+/).filter(Boolean) };
     }
@@ -1066,7 +1075,7 @@ const ASSISTANT_TOOLS = {
       const lang = { en: '英文', zh: '中文', ja: '日文', ko: '韩文' }[to || 'en'] || to || '英文';
       const translated = await callAi([
         { role: 'system', content: `翻译为${lang}，保持Markdown格式，仅输出翻译。` },
-        { role: 'user', content: (n.content || '').slice(0, 6000) }
+        { role: 'user', content: (n.content || '').slice(0, _ctxLimit(6000, 20000, 50000)) }
       ], { stream: false });
       const titleTr = await callAi([
         { role: 'system', content: `翻译为${lang}，仅输出翻译。` },
@@ -1159,7 +1168,7 @@ const ASSISTANT_TOOLS = {
       if (!(n.content || '').trim()) throw new Error('笔记内容为空');
       const cleaned = await callAi([
         { role: 'system', content: '清理以下文本：去除冗余、修正格式、保持原意、输出Markdown。仅输出结果。' },
-        { role: 'user', content: (n.content || '').slice(0, 6000) }
+        { role: 'user', content: (n.content || '').slice(0, _ctxLimit(6000, 20000, 50000)) }
       ], { stream: false });
       n.content = cleaned; n.updatedAt = Date.now(); saveData(); renderNotesList();
       return { id: n.id, title: n.title, cleaned: true };
@@ -1227,7 +1236,7 @@ async function runSubAgent(step, stepIndex, totalSteps) {
 
   let result = { reply: '', toolResults: [] };
   let iter = 0;
-  while (iter++ < 8) {
+  while (iter++ < _ctxLimit(8, 15, 20)) {
     let raw;
     try {
       raw = await callAi(ctx, { temperature: 0.2, stream: false });
@@ -1245,7 +1254,7 @@ async function runSubAgent(step, stepIndex, totalSteps) {
       const args = a.args || a.arguments || {};
       try {
         const toolResult = await runAssistantTool(name, args);
-        const resultStr = JSON.stringify(toolResult).slice(0, 1200);
+        const resultStr = JSON.stringify(toolResult).slice(0, _ctxLimit(1200, 5000, 16000));
         result.toolResults.push({ tool: name, summary: summarizeActionResult(name, toolResult) });
         ctx.push({ role: 'assistant', content: raw });
         ctx.push({ role: 'user', content: '工具结果:' + name + ':' + resultStr });
@@ -1264,7 +1273,7 @@ ASSISTANT_TOOLS.sub_agent = {
   desc: '拆解复杂任务为子步骤独立执行。{steps:[{task:"描述",context?"上下文"}],summary?"汇总说明"}',
   run: async ({ steps, summary }) => {
     if (!Array.isArray(steps) || !steps.length) throw new Error('steps 必填');
-    if (steps.length > 10) throw new Error('子任务最多10个');
+    if (steps.length > 20) throw new Error('子任务最多20个');
     const results = [];
     for (let i = 0; i < steps.length; i++) {
       const step = steps[i];
@@ -1301,7 +1310,7 @@ function buildAssistantSystemPrompt() {
     const parts = [];
     let imgCount = 0;
     for (const a of pendingAttachments) {
-      if (a.type === 'note') { const n = notes.find(x => x.id === a.id); if (n) parts.push(`[笔记:id=${n.id},${n.title || '无标题'},${(n.content || '').slice(0, 1500)}]`); }
+      if (a.type === 'note') { const n = notes.find(x => x.id === a.id); if (n) parts.push(`[笔记:id=${n.id},${n.title || '无标题'},${(n.content || '').slice(0, _ctxLimit(1500, 5000, 16000))}]`); }
       else if (a.type === 'todo') { const t = todos.find(x => x.id === a.id); if (t) parts.push(`[待办:id=${t.id},${t.text},${t.done?'完成':'未完成'}${t.dueDate?',截止'+new Date(t.dueDate).toISOString():''}]`); }
       else if (a.type === 'image') { imgCount++; }
     }
@@ -1312,11 +1321,11 @@ function buildAssistantSystemPrompt() {
   const activeNotes = notes.filter(n => !n.deleted).sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
   let noteIndex = '';
   if (activeNotes.length) {
-    const top = activeNotes.slice(0, 20);
+    const top = activeNotes.slice(0, _ctxLimit(20, 80, 300));
     noteIndex = '\n\n笔记(' + activeNotes.length + '篇,近' + top.length + '篇):\n';
     noteIndex += top.map((n, i) => {
       const nb = notebooks.find(x => x.id === n.notebookId);
-      const summary = stripMarkdown(n.content).slice(0, 40);
+      const summary = stripMarkdown(n.content).slice(0, _ctxLimit(40, 80, 200));
       return `${i + 1}.${n.title || '无标题'}${nb ? '[' + nb.name + ']' : ''}${summary ? '—' + summary : ''}`;
     }).join('\n');
   }
@@ -1332,17 +1341,17 @@ function buildAssistantSystemPrompt() {
     if (todayTodos.length) todoOverview += ',今日' + todayTodos.length + '条';
     if (overdueTodos.length) todoOverview += ',过期' + overdueTodos.length + '条';
     if (todayTodos.length) {
-      todoOverview += '\n今日:' + todayTodos.slice(0, 8).map(t => t.text + (t.dueDate ? '(' + new Date(t.dueDate).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }) + ')' : '')).join('; ');
+      todoOverview += '\n今日:' + todayTodos.slice(0, _ctxLimit(8, 30, 100)).map(t => t.text + (t.dueDate ? '(' + new Date(t.dueDate).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }) + ')' : '')).join('; ');
     }
     if (overdueTodos.length) {
-      todoOverview += '\n过期:' + overdueTodos.slice(0, 5).map(t => t.text).join('; ');
+      todoOverview += '\n过期:' + overdueTodos.slice(0, _ctxLimit(5, 20, 50)).map(t => t.text).join('; ');
     }
   }
 
   const memArr = loadMemories();
   let memorySection = '';
   if (memArr.length) {
-    const top = memArr.slice(-10);
+    const top = memArr.slice(-_ctxLimit(10, 30, 100));
     memorySection = '\n记忆(' + memArr.length + '条):\n' + top.map(m => `${m.key}:${m.value}`).join('; ');
   }
 
@@ -1567,23 +1576,23 @@ function compressForContext(name, result) {
     if ((name === 'search_notes' || name === 'list_recent_notes' || name === 'list_starred') && Array.isArray(result))
       return result.map(n => `「${n.title || '无标题'}」`).join(', ');
     if ((name === 'search_todos' || name === 'list_todos') && Array.isArray(result))
-      return result.map(t => `${t.done ? '✓' : '○'}${(t.text || '').slice(0, 30)}`).join('; ');
+      return result.map(t => `${t.done ? '✓' : '○'}${(t.text || '').slice(0, _ctxLimit(30, 80, 200))}`).join('; ');
     if (name === 'get_note' && result)
-      return `「${result.title || ''}」nb:${result.notebookName || ''} tags:${(result.tags || []).join(',')} content:${(result.content || '').slice(0, 300)}`;
+      return `「${result.title || ''}」nb:${result.notebookName || ''} tags:${(result.tags || []).join(',')} content:${(result.content || '').slice(0, _ctxLimit(300, 1000, 4000))}`;
     if (name === 'get_todo' && result)
       return `${result.done ? '✓' : '○'}「${result.text || ''}」due:${result.dueAt || ''} note:${result.note || ''}`;
     if (name === 'list_tags' && Array.isArray(result))
       return result.map(t => `${t.tag}(${t.count})`).join(', ');
     if (name === 'export_note' && result)
-      return `「${result.title || ''}」\n${(result.markdown || '').slice(0, 500)}`;
+      return `「${result.title || ''}」\n${(result.markdown || '').slice(0, _ctxLimit(500, 2000, 6000))}`;
     if (name === 'research' && result)
-      return `found:${result.found} summary:${(result.summary || '').slice(0, 400)}`;
+      return `found:${result.found} summary:${(result.summary || '').slice(0, _ctxLimit(400, 1500, 5000))}`;
     if (name === 'daily_briefing' && result)
-      return (result.briefing || '').slice(0, 500);
+      return (result.briefing || '').slice(0, _ctxLimit(500, 2000, 6000));
     if (name === 'note_stats' && result)
       return JSON.stringify(result);
   } catch {}
-  return JSON.stringify(result).slice(0, 500);
+  return JSON.stringify(result).slice(0, _ctxLimit(500, 2000, 6000));
 }
 
 // 流式中从未完成 JSON 中提取 "reply": "...部分..." 的可见字符
@@ -1680,8 +1689,8 @@ async function runAssistantTurn(userInput) {
   const provider = getActiveProvider();
   const mm = !!(provider && provider.multimodal);
   const ctxK = (provider && provider.contextSize > 0) ? provider.contextSize : 10;
-  const historyWindow = ctxK <= 16 ? 20 : ctxK <= 64 ? 40 : 80;
-  const loopCompressThreshold = ctxK <= 16 ? 40 : ctxK <= 64 ? 80 : 200;
+  const historyWindow = ctxK <= 16 ? 20 : ctxK <= 64 ? 40 : ctxK <= 128 ? 80 : 150;
+  const loopCompressThreshold = ctxK <= 16 ? 40 : ctxK <= 64 ? 80 : ctxK <= 128 ? 200 : 400;
   const loopCompressKeep = Math.floor(loopCompressThreshold * 0.75);
   const recent = (s?.messages || []).slice(-historyWindow);
   // 如果有图片附件但未开启多模态，提醒用户
@@ -1748,7 +1757,7 @@ async function runAssistantTurn(userInput) {
       setAssistantTyping(true, toolLog.length ? `执行中 (${toolLog.length} 步)…` : '');
       let raw;
       try {
-        raw = await callAi(ctx, { temperature: 0.3, max_tokens: 4096, stream: false });
+        raw = await callAi(ctx, { temperature: 0.3, max_tokens: _ctxLimit(2048, 4096, 16384), stream: false });
       } finally { setAssistantTyping(false); }
 
       const parsed = parseAssistantReply(raw);
@@ -1768,7 +1777,7 @@ async function runAssistantTurn(userInput) {
           else if (name === 'research' && result && Array.isArray(result.sources)) for (const r of result.sources) allSearchResults.push({ kind: 'note', id: r.id, title: r.title, snippet: r.notebook ? `来自「${r.notebook}」` : '' });
           // AI 上下文：大模型直传，小模型智能压缩
           const contextResult = ctxK >= 64
-            ? JSON.stringify(result).slice(0, 4000)
+            ? JSON.stringify(result).slice(0, _ctxLimit(4000, 12000, 30000))
             : compressForContext(name, result);
           ctx.push({ role: 'assistant', content: JSON.stringify({ actions: [{ tool: name }] }) });
           ctx.push({ role: 'user', content: '【结果】' + name + ': ' + contextResult });
@@ -1782,6 +1791,11 @@ async function runAssistantTurn(userInput) {
 
       finalReply = parsed.reply || finalReply;
       if (!hasActions) break;
+    }
+
+    const WRITE_TOOLS = new Set(['create_note','update_note','delete_note','quick_note','create_todo','update_todo','delete_todo','create_notebook','delete_notebook','rename_notebook','move_note','move_note_to_folder','batch_move_notes','batch_update_notes','batch_complete_todos','batch_delete_notes','batch_delete_todos','auto_title_notes','merge_notes','star_note','add_tags','remove_tags','append_to_note','duplicate_note','create_folder','create_from_template','translate_note','clean_text','optimize_text']);
+    if (toolLog.some(t => t.ok && WRITE_TOOLS.has(t.tool))) {
+      try { if (typeof workdirWriteAll === 'function') await workdirWriteAll(true); } catch {}
     }
 
     pushAssistantMessage('assistant', finalReply, {
