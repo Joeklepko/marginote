@@ -644,6 +644,15 @@
   .ai-group-header .group-chevron { width: 12px; height: 12px; flex-shrink: 0; opacity: 0.5; }
   .ai-group-header .group-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .ai-group-header .group-count { font-size: 11px; color: var(--ink-mute); min-width: 16px; text-align: center; }
+  .ai-group-header .group-actions { display: none; gap: 2px; flex-shrink: 0; }
+  .ai-group-header:hover .group-actions { display: flex; }
+  .ai-group-header:hover .group-count { display: none; }
+  .group-action-btn {
+    background: none; border: none; padding: 2px; cursor: pointer;
+    opacity: 0.7; color: var(--ink); display: flex; align-items: center;
+  }
+  .group-action-btn:hover { opacity: 1; color: var(--accent); }
+  .group-action-btn svg { width: 13px; height: 13px; }
   .ai-group-sessions { padding-left: 12px; border-left: 1px solid var(--rule-soft); margin-left: 17px; margin-bottom: 4px; }
   .ai-sessions-head {
     padding: 16px 20px 12px;
@@ -654,10 +663,12 @@
     font-size: 14px; font-weight: 600; color: var(--ink); margin: 0;
     flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   }
+  /* 新分组 / 新会话 两个按钮强制同一行，不换行、不收缩 */
+  .ai-sessions-actions { display: flex; flex-direction: row; flex-wrap: nowrap; gap: 4px; flex-shrink: 0; }
   .ai-sessions-new-btn {
     background: none; border: 1px solid var(--rule); border-radius: 6px;
-    padding: 4px 10px; font-size: 12px; cursor: pointer; color: var(--ink);
-    display: flex; align-items: center; gap: 4px; flex-shrink: 0;
+    padding: 4px 8px; font-size: 12px; cursor: pointer; color: var(--ink);
+    display: flex; align-items: center; gap: 4px; flex-shrink: 0; white-space: nowrap;
   }
   .ai-sessions-new-btn:hover { background: var(--ink); color: var(--paper); border-color: var(--ink); }
   .ai-sessions-new-btn svg { width: 12px; height: 12px; }
@@ -2603,6 +2614,18 @@
   }
 
   /* ====== AI 优化 ====== */
+  /* AI 生成中止浮动按钮 */
+  #aiCancelBtn {
+    display: none;
+    position: fixed; left: 50%; bottom: 28px; transform: translateX(-50%);
+    z-index: 2000; align-items: center; gap: 6px;
+    padding: 8px 16px; border-radius: 20px; cursor: pointer;
+    background: var(--ink); color: var(--paper); border: none;
+    font-size: 13px; box-shadow: var(--shadow-deep);
+  }
+  #aiCancelBtn.show { display: inline-flex; }
+  #aiCancelBtn:hover { opacity: 0.88; }
+  #aiCancelBtn svg { width: 14px; height: 14px; }
   .ai-menu {
     position: fixed;
     background: var(--paper);
@@ -3808,7 +3831,7 @@
     <div id="aiSessionsPanel">
       <div class="ai-sessions-head">
         <h2 class="ai-sessions-title" id="aiSessionsTitle">AI 助手</h2>
-        <div style="display:flex;gap:4px">
+        <div class="ai-sessions-actions">
           <button class="ai-sessions-new-btn" id="newAssistantGroupBtn" title="新建分组">
             <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" d="M12 5v14M5 12h14"/></svg>
             新分组
@@ -4603,6 +4626,12 @@
     </button>
   </div>
 </div>
+
+<!-- AI 生成中的浮动「中止」按钮（流式期间由 callAi 切换 .show） -->
+<button id="aiCancelBtn" type="button" title="中止 AI 生成">
+  <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
+  中止生成
+</button>
 
 <script src="js/appearance.js"></script>
 <script src="app.js"></script>

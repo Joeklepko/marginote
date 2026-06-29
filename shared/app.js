@@ -2664,15 +2664,17 @@ const AI_PRESETS = [
   { name: '自定义', endpoint: '', model: '' }
 ];
 const AI_ACTIONS_KEY = 'marginote.aiActions';
+// 多数 replace/append 动作共用的保护条款：保住原文格式与语言、不编造、只回结果
+const _MD_GUARD = '\n\n【硬性约束】\n- 完整保留原文中的代码块(```)、行内代码、引用块(>)、列表、表格、链接、图片、数学公式等 Markdown 结构，不得改写、转义或删除其内容。\n- 输出语言与原文一致（中文原文输出中文，勿擅自翻译）。\n- 不得编造原文不存在的事实、数据或引用。\n- 仅返回最终正文，不要任何解释、前后缀或包裹代码块。';
 const AI_ACTIONS_DEFAULTS = [
   { id: 'title',       label: '🏷 标题总结',     mode: 'title',   system: '## 任务：生成精准标题\n1. 根据内容提炼一个 20 字以内的自然语言标题。\n2. 标题需要使用简洁的中文，精准概括内容主题，不要使用任何前缀或分隔符（如破折号、冒号、竖线等）。\n3. **直接返回纯标题文本一行**，不要添加任何前后缀、解释或额外内容，不要使用 emoji。' },
-  { id: 'polish',      label: '✨ 润色优化',     mode: 'replace', system: '## 角色：专业中文写作助手\n**任务：** 提升内容的逻辑性与易读性，保持原文核心信息不变。\n**要求：** \n- **禁止添加标题：** 不要为内容添加 # 标题、章节名或任何形式的标题。\n- **分段：** 将长段落按逻辑点拆分，增加行间距感。\n- **强调：** 对核心概念进行 **加粗**。\n- **列表：** 若文中包含多个并列观点，请转化为 Markdown 列表。\n- **直接输出：** 仅返回优化后的 Markdown 内容。' },
-  { id: 'summarize',   label: '📝 总结要点',     mode: 'append',  system: '## 角色：首席笔记速记员\n**任务：** 提炼原文关键信息，以总结形式追加到原文末尾。\n**重要：** 不要覆盖或修改原文内容，总结部分放在原文的后面。\n**总结结构要求：**\n- **## 📝 要点总结**：使用列表列出关键点。\n- **## 🔜 结论/下一步**：简短说明后续动作。\n- **标注：** 关键信息必须 **加粗**。' },
-  { id: 'expand',      label: '📖 扩写丰富',     mode: 'replace', system: '## 角色：资深内容编辑\n**任务：** 增加深度与细节。\n**逻辑：** 使用 `###` 子标题对扩写后的各部分进行分类，并增加具体的应用场景或原理说明，确保 Markdown 层级清晰。' },
-  { id: 'continue',    label: '✍️ 智能续写',     mode: 'append',  system: '## 角色：逻辑严密的续写专家\n**任务：** 保持风格一致并向下延伸。\n**要求：** 衔接紧凑，如果前文有 Markdown 格式（如列表或代码块），请保持格式的一致性继续输出。' },
-  { id: 'grammar',     label: '🩹 修正语法',     mode: 'replace', system: '## 角色：专业校对员\n**任务：** 修正错别字与标点。\n**视觉优化：** 确保中英文之间有空格，统一 Markdown 符号的使用。仅返回修正后的全文。' },
-  { id: 'translateEn', label: '🌐 翻译为英文',   mode: 'replace', system: '## Role: Professional Translator\n**Task:** Translate to natural English.\n**Formatting:** Use standard Markdown. Apply **bolding** for keywords to help quick scanning. Only output the translation.' },
-  { id: 'translateZh', label: '🇨🇳 翻译为中文',   mode: 'replace', system: '## 角色：地道翻译官\n**任务：** 翻译为流畅中文。\n**规范：** 增加适当的分段和 **重点加粗**，确保技术术语准确。直接输出结果。' },
+  { id: 'polish',      label: '✨ 润色优化',     mode: 'replace', system: '## 角色：专业中文写作助手\n**任务：** 提升内容的逻辑性与易读性，保持原文核心信息不变。\n**要求：** \n- **禁止添加标题：** 不要为内容添加 # 标题、章节名或任何形式的标题。\n- **分段：** 将长段落按逻辑点拆分，增加行间距感。\n- **强调：** 对核心概念进行 **加粗**。\n- **列表：** 若文中包含多个并列观点，请转化为 Markdown 列表。' + _MD_GUARD },
+  { id: 'summarize',   label: '📝 总结要点',     mode: 'append',  system: '## 角色：首席笔记速记员\n**任务：** 提炼原文关键信息，以总结形式追加到原文末尾。\n**重要：** 不要覆盖或修改原文内容，总结部分放在原文的后面。\n**总结结构要求：**\n- **## 📝 要点总结**：使用列表列出关键点。\n- **## 🔜 结论/下一步**：简短说明后续动作。\n- **标注：** 关键信息必须 **加粗**。\n- 要点须忠实于原文，不得编造；总结语言与原文一致。\n- 只输出要追加的总结部分，不要重复原文。' },
+  { id: 'expand',      label: '📖 扩写丰富',     mode: 'replace', system: '## 角色：资深内容编辑\n**任务：** 在不改变原意的前提下增加深度与细节，使内容更充实可读。\n**要求：**\n- 紧扣原文主题展开：补充背景、原理、步骤、具体示例或应用场景；宁缺毋滥，不空洞堆砌。\n- 用 `###` 子标题对扩写内容分层，保持 Markdown 层级清晰。\n- 保留原文已有的论点与结论，只做补充和细化，不得删改原有信息。' + _MD_GUARD },
+  { id: 'continue',    label: '✍️ 智能续写',     mode: 'append',  system: '## 角色：逻辑严密的续写专家\n**任务：** 承接原文的主题、语气与结构继续向下书写，不重复已有内容。\n**要求：** 衔接紧凑自然；若前文有列表/代码块/标题层级，保持同样的 Markdown 格式继续输出。' + _MD_GUARD },
+  { id: 'grammar',     label: '🩹 修正语法',     mode: 'replace', system: '## 角色：专业校对员\n**任务：** 仅修正错别字、标点与明显语法错误，【不改写文风、不增删内容、不改变原意】。\n**视觉优化：** 确保中英文之间有空格，统一 Markdown 符号的使用。' + _MD_GUARD },
+  { id: 'translateEn', label: '🌐 翻译为英文',   mode: 'replace', system: '## Role: Professional Translator\n**Task:** Translate the content into natural, fluent English.\n**Constraints:**\n- Preserve all Markdown structure (code blocks, inline code, quotes, lists, tables, links, formulas) exactly; do NOT translate code or content inside code blocks.\n- Keep technical terms accurate. Apply **bold** to key terms for scannability.\n- Output only the translation, no explanation or wrapping fences.' },
+  { id: 'translateZh', label: '🇨🇳 翻译为中文',   mode: 'replace', system: '## 角色：地道翻译官\n**任务：** 翻译为流畅、自然的中文。\n**规范：**\n- 完整保留代码块、行内代码、引用、列表、表格、链接、公式原样，代码块内不翻译。\n- 技术术语准确，适当分段、对重点 **加粗**。\n- 仅输出译文，不要解释或包裹代码块。' },
   { id: 'custom',      label: '⚙ 自定义指令…',   mode: 'custom' }
 ];
 let AI_ACTIONS = AI_ACTIONS_DEFAULTS.map(a => ({ ...a }));
@@ -2923,33 +2925,49 @@ async function testModelContextSize() {
   async function tryK(sK) {
     const code = String(1000 + Math.floor(Math.random() * 9000));
     const msgs = [{ role:'system', content:'You are a helpful assistant. Follow instructions exactly.' },{ role:'user', content:'Below is a long text. At the END there is a ===VERIFICATION=== section with a secret code. Read the ENTIRE text and reply with ONLY the 4-digit code.\n\n' + genPad(sK, code) }];
-    const bodyStr = JSON.stringify({ model, messages: msgs, temperature:0, max_tokens:20, stream:false });
+    // max_tokens 给足：minimax 2.7 等「思考型」模型会先消耗推理 token，额度太小（旧值 20）会在
+    // 吐出验证码前就被截断，导致明明连上了却被误判成「连接失败」。需求方仅需 4 位码，1024 足够。
+    const bodyStr = JSON.stringify({ model, messages: msgs, temperature:0, max_tokens:1024, stream:false });
+    // 提取回复：兼容 message.content 为空但答案在 reasoning_content / 直接为裸文本的情况
+    const pickContent = (j) => {
+      const msg = j?.choices?.[0]?.message;
+      return (typeof msg?.content === 'string' && msg.content) ? msg.content
+        : (typeof msg?.reasoning_content === 'string' ? msg.reasoning_content : '')
+        || j?.choices?.[0]?.delta?.content || j?.response || j?.result || '';
+    };
+    const parseReply = (body) => {
+      let reply = '';
+      if (body.trimStart().startsWith('data:')) { for (const ln of body.split('\n')) { const l = ln.trim(); if (l.startsWith('data:') && !l.includes('[DONE]')) { try { const c = JSON.parse(l.slice(l.indexOf('{'))); reply += c?.choices?.[0]?.delta?.content || c?.choices?.[0]?.message?.content || c?.choices?.[0]?.message?.reasoning_content || ''; } catch {} } } }
+      else { try { reply = pickContent(JSON.parse(body)); } catch { reply = body; } }
+      return reply || '';
+    };
     try {
       if (usePF) {
         const res = await mn.platform.fetch(url, { method:'POST', headers:hdrs, body:bodyStr }, null);
         if (!res.ok) return { ok:false, err:'HTTP '+(res.status||res.error||'err') };
-        let reply = '';
-        const rb = typeof res.body === 'string' ? res.body : '';
-        if (rb.trimStart().startsWith('data:')) { for (const ln of rb.split('\n')) { const l = ln.trim(); if (l.startsWith('data:') && !l.includes('[DONE]')) { try { const c = JSON.parse(l.slice(l.indexOf('{'))); reply += c?.choices?.[0]?.delta?.content || c?.choices?.[0]?.message?.content || ''; } catch {} } } }
-        else { try { const j = JSON.parse(rb); reply = j?.choices?.[0]?.message?.content || ''; } catch { reply = rb; } }
-        return { ok: reply.includes(code) };
+        const reply = parseReply(typeof res.body === 'string' ? res.body : '');
+        return { ok: reply.includes(code), connected: true, reply };
       }
       const ctrl = new AbortController();
       const tm = setTimeout(() => ctrl.abort(), sK > 128 ? 120000 : sK > 64 ? 60000 : 30000);
       const res = await fetch(url, { method:'POST', headers:hdrs, body:bodyStr, signal:ctrl.signal });
       clearTimeout(tm);
       if (!res.ok) return { ok:false, err:'HTTP '+res.status };
-      const raw = await res.text();
-      let reply = '';
-      if (raw.trimStart().startsWith('data:')) { for (const ln of raw.split('\n')) { const l = ln.trim(); if (l.startsWith('data:') && !l.includes('[DONE]')) { try { const c = JSON.parse(l.slice(l.indexOf('{'))); reply += c?.choices?.[0]?.delta?.content || c?.choices?.[0]?.message?.content || ''; } catch {} } } }
-      else { try { const j = JSON.parse(raw); reply = j?.choices?.[0]?.message?.content || ''; } catch { reply = raw; } }
-      return { ok: reply.includes(code) };
+      const reply = parseReply(await res.text());
+      return { ok: reply.includes(code), connected: true, reply };
     } catch(e) { return { ok:false, err:e.message||String(e) }; }
   }
   try {
     statusEl.textContent = '\u9a8c\u8bc1\u8fde\u63a5\u2026';
     const r0 = await tryK(1);
-    if (!r0.ok) { statusEl.textContent = '\u274c ' + (r0.err || '\u8fde\u63a5\u5931\u8d25\uff0c\u8bf7\u68c0\u67e5\u914d\u7f6e'); btn.disabled = false; return; }
+    if (!r0.ok) {
+      // \u533a\u5206\u300c\u8fde\u4e0d\u4e0a\u300d\u4e0e\u300c\u8fde\u4e0a\u4e86\u4f46\u6a21\u578b\u6ca1\u6309\u8981\u6c42\u56de\u9a8c\u8bc1\u7801\u300d\u2014\u2014\u540e\u8005\u591a\u89c1\u4e8e\u601d\u8003\u578b\u6a21\u578b\u6216\u975e\u6807\u51c6\u54cd\u5e94\u683c\u5f0f\uff0c
+      // \u4e0d\u8be5\u518d\u7b3c\u7edf\u62a5\u300c\u8fde\u63a5\u5931\u8d25\uff0c\u8bf7\u68c0\u67e5\u914d\u7f6e\u300d\u8bef\u5bfc\u7528\u6237\u3002
+      const msg = r0.connected
+        ? ('\u26a0\ufe0f \u5df2\u8fde\u63a5\uff0c\u4f46\u6a21\u578b\u672a\u8fd4\u56de\u9a8c\u8bc1\u7801' + (r0.reply ? '\uff08\u8fd4\u56de\uff1a' + String(r0.reply).slice(0, 40).replace(/\s+/g, ' ') + '\uff09' : '\uff08\u8fd4\u56de\u4e3a\u7a7a\uff09') + '\uff0c\u65e0\u6cd5\u81ea\u52a8\u6d4b\u5b9a\uff0c\u8bf7\u624b\u52a8\u586b\u5199\u4e0a\u4e0b\u6587\u5927\u5c0f')
+        : ('\u274c ' + (r0.err || '\u8fde\u63a5\u5931\u8d25\uff0c\u8bf7\u68c0\u67e5\u914d\u7f6e'));
+      statusEl.textContent = msg; btn.disabled = false; return;
+    }
     const sizes = [2,4,8,16,32,64,128,256,512,1024];
     let last = 1, prog = '1K\u2713 ';
     for (const sK of sizes) {
@@ -3048,6 +3066,23 @@ async function syncProxyToBackground() {
   } catch (e) { logError(e, 'clear-proxy-on-startup'); }
 }
 
+// 剥离推理模型(deepseek-v4-flash / minimax2.7 等)的思维链。推理模型的 <think> 块总出现在输出
+// 【最开头】(真正答案在其后),因此只锚定开头剥离,【不碰正文中间】合法出现的 <think> 文本——
+// 否则翻译/润色一篇正好讲到 <think> 的笔记会误删用户内容。覆盖三种开头形态:
+//   1) 成对 <think>…</think>   2) 被 max_tokens 截断的未闭合 <think>…   3) 仅剩孤立的 </think>
+function stripThinking(s) {
+  if (typeof s !== 'string' || !s) return s || '';
+  let out = s;
+  if (/^\s*<think(?:ing)?>/i.test(out)) {
+    out = /<\/think(?:ing)?>/i.test(out)
+      ? out.replace(/^\s*<think(?:ing)?>[\s\S]*?<\/think(?:ing)?>\s*/i, '')   // 成对
+      : out.replace(/^\s*<think(?:ing)?>[\s\S]*$/i, '');                       // 未闭合,截到尾
+  } else {
+    out = out.replace(/^\s*<\/think(?:ing)?>\s*/i, '');                        // 孤立闭合标签
+  }
+  return out.trim();
+}
+
 async function callAi(messages, opts) {
   const p = getActiveProvider();
   if (!p) throw new Error('未配置 AI 模型，请先在 AI 设置中添加');
@@ -3077,7 +3112,19 @@ async function callAi(messages, opts) {
     }
     try {
       const data = JSON.parse(raw);
-      const content = data?.choices?.[0]?.message?.content;
+      const msg = data?.choices?.[0]?.message;
+      const content = msg?.content;
+      if (typeof content === 'string') { const cleaned = stripThinking(content); if (cleaned) return cleaned; }
+      // 原生 function calling：content 为空但有 tool_calls（部分模型如此返回）→ 转成助手内部的
+      // {"reply","actions"} 信封，下游 parseAssistantReply 即可正常解析并执行工具。
+      if (msg && Array.isArray(msg.tool_calls) && msg.tool_calls.length) {
+        const actions = msg.tool_calls.map(c => {
+          let a = {};
+          try { a = JSON.parse(c?.function?.arguments || '{}'); } catch {}
+          return { tool: c?.function?.name, args: a };
+        }).filter(x => x.tool);
+        if (actions.length) return JSON.stringify({ reply: typeof content === 'string' ? content : '', actions });
+      }
       if (typeof content === 'string') return content.trim();
       if (data?.choices?.[0]?.delta?.content) return data.choices[0].delta.content.trim();
       if (data?.response) return String(data.response).trim();
@@ -3144,7 +3191,7 @@ function pushAiUndoSnapshot(target, snapshot) {
   if (!target) return;
   if (!aiUndoStore[target]) aiUndoStore[target] = [];
   aiUndoStore[target].push(snapshot);
-  if (aiUndoStore[target].length > 10) aiUndoStore[target].shift();
+  if (aiUndoStore[target].length > 50) aiUndoStore[target].shift();
   saveAiUndo();
 }
 
@@ -4328,7 +4375,7 @@ callAi = async function(messages, opts) {
       const data = await res.json();
       const c = data?.choices?.[0]?.message?.content;
       if (typeof c === 'string' && opts?.onDelta) await _simulateStreamEmit(c, opts.onDelta);
-      return typeof c === 'string' ? c.trim() : '';
+      return typeof c === 'string' ? stripThinking(c) : '';
     }
     const reader = res.body.getReader();
     const decoder = new TextDecoder();
@@ -4358,7 +4405,7 @@ callAi = async function(messages, opts) {
         } catch {}
       }
     }
-    return full.trim();
+    return stripThinking(full);
   } catch (e) {
     if (e.name === 'AbortError') throw new Error('已取消');
     throw e;
@@ -4861,6 +4908,7 @@ async function workdirWriteAll(silent) {
       exportedAt: Date.now(),
       notebooks, folders,
       deletedNotes: notes.filter(n => n.deleted),
+      memories: (typeof loadMemories === 'function' ? loadMemories() : []),   // AI 记忆随库持久化/跨设备同步
       imagesMeta: Object.fromEntries(Object.entries(images).map(([k, v]) => [k, { name: v.name, ext: v.ext, createdAt: v.createdAt }])),
       noteFiles: idToPath
     }, null, 2));
@@ -4895,6 +4943,18 @@ async function workdirImportAll(silent) {
     }
     if (Array.isArray(meta.folders)) {
       meta.folders.forEach(f => { if (!folders.find(x => x.id === f.id)) folders.push(f); });
+    }
+    // AI 记忆合并：同 key 取 updatedAt 较新者，磁盘有、本地无的补入
+    if (Array.isArray(meta.memories) && typeof loadMemories === 'function' && typeof saveMemories === 'function') {
+      const byKey = new Map(loadMemories().map(m => [m.key, m]));
+      for (const m of meta.memories) {
+        if (!m || !m.key) continue;
+        const ex = byKey.get(m.key);
+        if (!ex || (m.updatedAt || 0) > (ex.updatedAt || 0)) byKey.set(m.key, m);
+      }
+      saveMemories([...byKey.values()]);
+      const mc = document.getElementById('memoryCount');
+      if (mc) mc.textContent = byKey.size;
     }
     const imagesMeta = (meta.imagesMeta && typeof meta.imagesMeta === 'object') ? meta.imagesMeta : {};
 

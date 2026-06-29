@@ -19,8 +19,10 @@ function _ctxLimit(small, medium, large) {
   const k = (p && p.contextSize > 0) ? p.contextSize : 10;
   if (k <= 16) return small;
   if (k <= 64) return medium;
-  if (k <= 128) return large;
-  return Math.round(large * Math.min(k / 128, 10));
+  // 64K 以上按上下文比例放大 large 档,以 96K 为基准单调递增:
+  //   96K→1.0×  128K≈1.33×  140K≈1.46×  200K≈2.08×,上限 12×。
+  // 用户当前模型多为 128K~200K,旧逻辑把它们全压成同一套 large 值,偏保守,这里解锁更大检索/历史预算。
+  return Math.round(large * Math.min(Math.max(k, 96) / 96, 12));
 }
 let assistantActiveSessionId = null;
 let assistantBusy = false;
@@ -376,8 +378,31 @@ function renderAttachmentPickerContent() {
 // ===================== 辅助函数 =====================
 
 const MEMORY_KEY = 'marginote.assistant.memory';
+const MEMORY_MAX = 300;          // 记忆总条数上限（超出按最旧更新丢弃）
+const MEMORY_VALUE_MAX = 600;    // 单条 value 字符上限，防止单条撑爆系统提示词
+const MEMORY_CATEGORIES = ['preference', 'fact', 'context', 'other'];
+const MEMORY_CAT_LABEL = { preference: '偏好', fact: '事实', context: '背景', other: '其他' };
 function loadMemories() { try { return JSON.parse(localStorage.getItem(MEMORY_KEY)) || []; } catch { return []; } }
 function saveMemories(arr) { localStorage.setItem(MEMORY_KEY, JSON.stringify(arr)); }
+// 统一的记忆写入入口（AI 工具与手动添加共用）：同 key 覆盖并保留 createdAt、key/value 限长、
+// category 归一化、总量封顶时按 updatedAt 升序丢弃最旧。返回写入的条目。
+function upsertMemory(key, value, category) {
+  key = String(key == null ? '' : key).trim().slice(0, 80);
+  value = String(value == null ? '' : value).trim().slice(0, MEMORY_VALUE_MAX);
+  if (!key || !value) throw new Error('key 和 value 必填');
+  const cat = MEMORY_CATEGORIES.includes(category) ? category : 'other';
+  const arr = loadMemories();
+  const idx = arr.findIndex(m => m.key === key);
+  const now = Date.now();
+  const entry = { key, value, category: cat, createdAt: idx >= 0 ? (arr[idx].createdAt || now) : now, updatedAt: now };
+  if (idx >= 0) arr[idx] = entry; else arr.push(entry);
+  if (arr.length > MEMORY_MAX) {
+    arr.sort((a, b) => (a.updatedAt || 0) - (b.updatedAt || 0));
+    arr.splice(0, arr.length - MEMORY_MAX);
+  }
+  saveMemories(arr);
+  return entry;
+}
 
 function stripMarkdown(text) {
   if (!text) return '';
@@ -650,37 +675,35 @@ const ASSISTANT_TOOLS = {
 
   // ——— 记忆系统 ———
   save_memory: {
-    desc: '保存记忆。{key, value, category?"preference"|"fact"|"context"|"other"}',
+    desc: '记住用户的持久信息供以后对话使用(同一 key 覆盖更新,value 请简洁)。{key:"简短标识", value:"内容", category?:"preference"长期偏好/习惯|"fact"关于用户的事实|"context"项目或工作背景|"other"}',
     run: ({ key, value, category }) => {
-      if (!key || !value) throw new Error('key 和 value 必填');
-      const arr = loadMemories();
-      const idx = arr.findIndex(m => m.key === key);
-      const entry = { key: String(key), value: String(value), category: category || 'other', createdAt: idx >= 0 ? arr[idx].createdAt : Date.now(), updatedAt: Date.now() };
-      if (idx >= 0) arr[idx] = entry; else arr.push(entry);
-      saveMemories(arr);
-      return { key: entry.key, category: entry.category, saved: true };
+      const e = upsertMemory(key, value, category);
+      return { key: e.key, category: e.category, saved: true };
     }
   },
   recall_memory: {
-    desc: '查找记忆。{query?}不传返回全部',
-    run: ({ query }) => {
+    desc: '查找已保存的记忆(按最近更新排序)。{query?:关键词, category?:"preference"|"fact"|"context"|"other"} 均不传则返回全部',
+    run: ({ query, category }) => {
       let arr = loadMemories();
+      if (MEMORY_CATEGORIES.includes(category)) arr = arr.filter(m => m.category === category);
       if (query) {
         const q = String(query).toLowerCase();
-        arr = arr.filter(m => m.key.toLowerCase().includes(q) || m.value.toLowerCase().includes(q));
+        arr = arr.filter(m => (m.key || '').toLowerCase().includes(q) || (m.value || '').toLowerCase().includes(q));
       }
-      return arr.map(m => ({ key: m.key, value: m.value, category: m.category, updatedAt: m.updatedAt }));
+      return arr
+        .sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))
+        .map(m => ({ key: m.key, value: m.value, category: m.category, updatedAt: m.updatedAt ? new Date(m.updatedAt).toISOString().slice(0, 10) : undefined }));
     }
   },
   delete_memory: {
-    desc: '删除记忆。{key}',
+    desc: '删除一条记忆。{key}',
     run: ({ key }) => {
+      key = String(key == null ? '' : key).trim();
       if (!key) throw new Error('key 必填');
       const arr = loadMemories();
-      const len = arr.length;
       const filtered = arr.filter(m => m.key !== key);
       saveMemories(filtered);
-      return { deleted: len - filtered.length > 0, key };
+      return { deleted: arr.length - filtered.length > 0, key };
     }
   },
 
@@ -1245,7 +1268,7 @@ async function runSubAgent(step, stepIndex, totalSteps) {
 笔记本${notebooks.length} 笔记${activeNotes.length} 待办${todos.length}
 工具:\n${subTools}
 协议:仅输出JSON{"reply":"结果","actions":[{"tool":"名","args":{}}]}
-无工具时actions=[]。每次1个工具。任何问题先search_notes搜索。`;
+无工具时actions=[]。相互独立的工具可一轮并列多个;有依赖的分多轮。任何问题先search_notes搜索。`;
 
   const ctx = [
     { role: 'system', content: sysPrompt },
@@ -1339,11 +1362,13 @@ function buildAssistantSystemPrompt() {
   const activeNotes = notes.filter(n => !n.deleted).sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
   let noteIndex = '';
   if (activeNotes.length) {
-    const top = activeNotes.slice(0, _ctxLimit(20, 300, 300));
+    // 笔记索引是【每轮都重发】的常驻开销,不随上下文放大(否则 128K 时会膨胀到数百条×数百字、单独吃掉
+    // ~20% 窗口)。这里硬性封顶:最多 150 条标题、每条摘要 ≤120 字;需要更多细节让模型 search_notes 检索。
+    const top = activeNotes.slice(0, Math.min(_ctxLimit(20, 150, 150), 150));
     noteIndex = '\n\n笔记(' + activeNotes.length + '篇,近' + top.length + '篇):\n';
     noteIndex += top.map((n, i) => {
       const nb = notebooks.find(x => x.id === n.notebookId);
-      const summary = stripMarkdown(n.content).slice(0, _ctxLimit(40, 80, 200));
+      const summary = stripMarkdown(n.content).slice(0, Math.min(_ctxLimit(40, 80, 120), 120));
       return `${i + 1}.${n.title || '无标题'}${nb ? '[' + nb.name + ']' : ''}${summary ? '—' + summary : ''}`;
     }).join('\n');
   }
@@ -1359,18 +1384,19 @@ function buildAssistantSystemPrompt() {
     if (todayTodos.length) todoOverview += ',今日' + todayTodos.length + '条';
     if (overdueTodos.length) todoOverview += ',过期' + overdueTodos.length + '条';
     if (todayTodos.length) {
-      todoOverview += '\n今日:' + todayTodos.slice(0, _ctxLimit(8, 30, 100)).map(t => t.text + (t.dueDate ? '(' + new Date(t.dueDate).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }) + ')' : '')).join('; ');
+      todoOverview += '\n今日:' + todayTodos.slice(0, Math.min(_ctxLimit(8, 30, 60), 60)).map(t => t.text + (t.dueDate ? '(' + new Date(t.dueDate).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }) + ')' : '')).join('; ');
     }
     if (overdueTodos.length) {
-      todoOverview += '\n过期:' + overdueTodos.slice(0, _ctxLimit(5, 20, 50)).map(t => t.text).join('; ');
+      todoOverview += '\n过期:' + overdueTodos.slice(0, Math.min(_ctxLimit(5, 20, 50), 50)).map(t => t.text).join('; ');
     }
   }
 
   const memArr = loadMemories();
   let memorySection = '';
   if (memArr.length) {
-    const top = memArr.slice(-_ctxLimit(10, 30, 100));
-    memorySection = '\n记忆(' + memArr.length + '条):\n' + top.map(m => `${m.key}:${m.value}`).join('; ');
+    // 记忆同为常驻段,封顶 80 条,不随上下文放大;标注类别便于模型按需遵守
+    const top = memArr.slice(-Math.min(_ctxLimit(10, 30, 80), 80));
+    memorySection = '\n用户记忆(' + memArr.length + '条,作答时主动遵守相关项):\n' + top.map(m => `[${MEMORY_CAT_LABEL[m.category] || '其他'}]${m.key}:${m.value}`).join('; ');
   }
 
   return `你是Marginote笔记应用的内置AI助手,直接运行在用户设备本地。你可以搜索、读取、创建、修改、删除用户的所有笔记和待办事项。
@@ -1384,7 +1410,7 @@ function buildAssistantSystemPrompt() {
 ${tools}
 回复格式(严格JSON):
 {"reply":"你的回复(Markdown)","actions":[{"tool":"工具名","args":{参数}}]}
-不需要工具时actions为空数组[]。每次最多调用1个工具,多步操作分多轮完成。reply必须完整,不要截断。
+不需要工具时actions为空数组[]。可在一轮actions里并列多个【相互独立】的工具调用(如同时搜笔记和待办、批量读取多篇),以减少往返;但【有先后依赖】的操作(需先拿到上一步结果)必须分多轮——同一轮内的工具互相看不到彼此结果。reply必须完整,不要截断。
 
 示例——用户说"用药上线时间是啥时候":
 {"reply":"正在搜索相关笔记…","actions":[{"tool":"search_notes","args":{"query":"用药 上线时间","limit":20}}]}
@@ -1398,7 +1424,8 @@ ${tools}
 - 快速记→quick_note | 完成待办→complete_todo(模糊匹配) | 翻译→translate
 - 批量操作:先search_notes({limit:50+})再batch_*(一次传所有ID)
 - 复杂任务(多步骤/跨领域)→sub_agent拆解为独立子步骤执行
-- 搜索无果→换关键词重试 | 记用户偏好→save_memory
+- 搜索无果→换关键词重试
+- 记忆:用户透露持久偏好/习惯/关于自己的事实/项目背景时,主动save_memory记住(value简洁,选对category);回答涉及个人偏好的问题前,先看上方「用户记忆」,不足再recall_memory;过时的用save_memory覆盖同名key或delete_memory删除
 - 回复用Markdown,简洁直接,不要废话`;
 }
 
@@ -1406,13 +1433,25 @@ ${tools}
 
 function parseAssistantReply(raw) {
   if (!raw) return { reply: '', actions: [] };
+  // 先剥离推理模型思维链（流式对话不经 parseAiResponse，必须在此兜底，否则 <think> 里的花括号
+  // 会让下面按 first{…last} 截取 JSON 失败、甚至把思考当回复显示）
+  if (typeof stripThinking === 'function') raw = stripThinking(raw);
+  if (!raw) return { reply: '', actions: [] };
   let s = raw.trim();
   const fence = s.match(/```(?:json)?\s*([\s\S]*?)```/i);
   if (fence) s = fence[1].trim();
   const first = s.indexOf('{');
   const last = s.lastIndexOf('}');
   if (first >= 0 && last > first) s = s.slice(first, last + 1);
-  try { const obj = JSON.parse(s); return { reply: typeof obj.reply === 'string' ? obj.reply : '', actions: Array.isArray(obj.actions) ? obj.actions : [] }; }
+  try {
+    const obj = JSON.parse(s);
+    // 解析成功但不是 {reply,actions} 信封（例如截到的是工具调用里的裸 args 对象）→ 回退抢救
+    if (typeof obj.reply !== 'string' && !Array.isArray(obj.actions)) {
+      const salv = salvageToolCalls(raw);
+      if (salv.length) return { reply: '', actions: salv };
+    }
+    return { reply: typeof obj.reply === 'string' ? obj.reply : '', actions: Array.isArray(obj.actions) ? obj.actions : [] };
+  }
   catch {
     const m = raw.match(/"reply"\s*:\s*"([\s\S]*?)(?:"\s*[,}]|$)/);
     if (m) {
@@ -1420,10 +1459,44 @@ function parseAssistantReply(raw) {
       const am = raw.match(/"actions"\s*:\s*(\[[\s\S]*?\])/);
       let actions = [];
       if (am) { try { actions = JSON.parse(am[1]); } catch {} }
+      if (!actions.length) actions = salvageToolCalls(raw);
       return { reply, actions };
     }
+    // 抢救非标准格式（如 minimax 的 `minimax:tool_call` + 裸 `["tool": "x", "args": {...}]`，
+    // 这类输出既不是合法 JSON 信封、也没有 "reply" 字段，旧逻辑会把整段原文当最终回复显示、
+    // 导致工具根本不执行）。能抢救到工具调用就只回 actions，丢弃噪声文本。
+    const salvaged = salvageToolCalls(raw);
+    if (salvaged.length) return { reply: '', actions: salvaged };
     return { reply: raw, actions: [] };
   }
+}
+
+// 从任意文本中抢救工具调用：扫描所有 "tool":"名" 片段，并就近提取其后的 "args":{...}
+// （用花括号配平来容忍后面跟着的非法字符）。容忍 minimax 等模型的非标准 tool-call 包裹。
+function salvageToolCalls(raw) {
+  if (!raw || typeof raw !== 'string') return [];
+  const out = [];
+  const re = /["']?(?:tool|name)["']?\s*:\s*["']([a-zA-Z_][a-zA-Z0-9_]*)["']/g;
+  let m;
+  while ((m = re.exec(raw))) {
+    const tool = m[1];
+    if (!ASSISTANT_TOOLS[tool]) continue;          // 只认识真实工具名，避免误伤
+    let args = {};
+    const rest = raw.slice(re.lastIndex);
+    const am = rest.match(/["']?(?:args|arguments)["']?\s*:\s*(\{)/);
+    if (am) {
+      const start = rest.indexOf('{', am.index);
+      let depth = 0, end = -1;
+      for (let i = start; i < rest.length; i++) {
+        const c = rest[i];
+        if (c === '{') depth++;
+        else if (c === '}') { depth--; if (depth === 0) { end = i; break; } }
+      }
+      if (end > start) { try { args = JSON.parse(rest.slice(start, end + 1)); } catch {} }
+    }
+    out.push({ tool, args });
+  }
+  return out;
 }
 
 async function runAssistantTool(name, args) {
@@ -1515,15 +1588,17 @@ function pushAssistantMessage(role, content, extra) {
 function setAssistantTyping(on, stepInfo) {
   const box = document.getElementById('assistantChat');
   if (!box) return;
+  if (!on) { box.querySelectorAll('.assistant-typing-msg').forEach(el => el.remove()); return; }
+  const info = stepInfo || '思考中…';
+  // 流式期间 onDelta 高频调用：已有气泡就只更新提示文字，避免每个 token 重建整段 DOM 造成抖动
+  const existing = box.querySelector('.assistant-typing-msg .assistant-typing-hint');
+  if (existing) { existing.innerHTML = info; box.scrollTop = box.scrollHeight; return; }
   box.querySelectorAll('.assistant-typing-msg').forEach(el => el.remove());
-  if (on) {
-    const div = document.createElement('div');
-    div.className = 'assistant-msg bot assistant-typing-msg';
-    const info = stepInfo || '思考中…';
-    div.innerHTML = `<span class="role">AI</span><div class="bubble"><span class="assistant-typing"><span></span><span></span><span></span></span> <span style="color:var(--ink-mute);font-size:11px;">${info}</span></div>`;
-    box.appendChild(div);
-    box.scrollTop = box.scrollHeight;
-  }
+  const div = document.createElement('div');
+  div.className = 'assistant-msg bot assistant-typing-msg';
+  div.innerHTML = `<span class="role">AI</span><div class="bubble"><span class="assistant-typing"><span></span><span></span><span></span></span> <span class="assistant-typing-hint" style="color:var(--ink-mute);font-size:11px;">${info}</span></div>`;
+  box.appendChild(div);
+  box.scrollTop = box.scrollHeight;
 }
 
 function summarizeActionResult(name, result) {
@@ -1617,6 +1692,8 @@ function compressForContext(name, result) {
 // 若找不到 JSON reply 字段则回退到显示纯净文本（避免推理模型前端空白）
 function _extractStreamingReply(s) {
   if (!s) return '';
+  if (typeof stripThinking === 'function') s = stripThinking(s);
+  if (!s) return '';
   let body = s;
   const fence = s.match(/```(?:json)?\s*([\s\S]*)/i);
   if (fence) body = fence[1];
@@ -1650,6 +1727,17 @@ function _extractStreamingReply(s) {
     result += c;
   }
   return result;
+}
+
+// 流式过程中给打字气泡的提示文案：已出现 reply 文本就实时预览其尾部;否则按阶段显示「思考中/执行中」。
+// 经 escapeHtml 转义后塞进 setAssistantTyping 的 innerHTML,防止注入/破坏布局。
+function _streamingHint(full, steps) {
+  const preview = _extractStreamingReply(full || '');
+  if (preview && preview.trim()) {
+    const tail = preview.length > 80 ? '…' + preview.slice(-80) : preview;
+    return escapeHtml(tail);
+  }
+  return steps ? `执行中 (${steps} 步)…` : '思考中…';
 }
 
 async function runAssistantTurn(userInput) {
@@ -1707,9 +1795,10 @@ async function runAssistantTurn(userInput) {
   const provider = getActiveProvider();
   const mm = !!(provider && provider.multimodal);
   const ctxK = (provider && provider.contextSize > 0) ? provider.contextSize : 10;
-  const historyWindow = ctxK <= 16 ? 20 : ctxK <= 64 ? 60 : ctxK <= 128 ? 100 : 200;
-  const loopCompressThreshold = ctxK <= 16 ? 40 : ctxK <= 64 ? 120 : ctxK <= 128 ? 250 : 500;
-  const loopCompressKeep = Math.floor(loopCompressThreshold * 0.75);
+  // 128K 模型放宽历史窗口与压缩阈值,更充分利用上下文、减少中途压缩丢历史的频率
+  const historyWindow = ctxK <= 16 ? 20 : ctxK <= 64 ? 60 : ctxK <= 128 ? 160 : 240;
+  const loopCompressThreshold = ctxK <= 16 ? 40 : ctxK <= 64 ? 120 : ctxK <= 128 ? 600 : 800;
+  const loopCompressKeep = Math.floor(loopCompressThreshold * 0.85);
   const recent = (s?.messages || []).slice(-historyWindow);
   // 如果有图片附件但未开启多模态，提醒用户
   const hasImages = pendingAttachments.some(a => a.type === 'image');
@@ -1757,25 +1846,28 @@ async function runAssistantTurn(userInput) {
   }
 
   assistantBusy = true;
+  // 这几个状态在 try 外声明,以便 catch（如用户中止）也能读取已生成的部分结果
+  let iter = 0;
+  const toolLog = [];
+  const allSearchResults = [];
+  let finalReply = '';
+  let forcedSearch = false;            // 兜底：是否已对「未检索就回答」强制纠正过一次
   try {
-    let iter = 0;
-    const toolLog = [];
-    const allSearchResults = [];
-    let finalReply = '';
-
     while (iter++ < 100) {
       // 上下文压缩：防止极长任务溢出（根据模型上下文大小动态调整）
       if (ctx.length > loopCompressThreshold) {
         const sysMsg = ctx[0];
         const recent = ctx.slice(-loopCompressKeep);
         ctx.length = 0;
-        ctx.push(sysMsg, { role: 'user', content: '（前序步骤已省略，继续完成任务，不要重复已做过的操作）' }, ...recent);
+        // 用「已执行工具摘要」替代空泛的「前序已省略」，保留操作轨迹避免重复劳动
+        const done = toolLog.length ? '已执行:' + toolLog.map(t => t.tool + (t.ok ? '' : '✗')).join(',') + '。' : '';
+        ctx.push(sysMsg, { role: 'user', content: '（前序步骤已省略。' + done + '继续完成任务，不要重复已做过的操作）' }, ...recent);
       }
 
       setAssistantTyping(true, toolLog.length ? `执行中 (${toolLog.length} 步)…` : '');
       let raw;
       try {
-        raw = await callAi(ctx, { temperature: 0.3, max_tokens: _ctxLimit(2048, 4096, 16384), stream: false });
+        raw = await callAi(ctx, { temperature: 0.3, max_tokens: Math.min(_ctxLimit(2048, 4096, 16384), 16384), stream: true, onDelta: (_d, full) => setAssistantTyping(true, _streamingHint(full, toolLog.length)) });
       } finally { setAssistantTyping(false); }
 
       const parsed = parseAssistantReply(raw);
@@ -1808,10 +1900,23 @@ async function runAssistantTurn(userInput) {
       }
 
       finalReply = parsed.reply || finalReply;
-      if (!hasActions) break;
+      if (!hasActions) {
+        // 检索兜底：模型一次笔记检索都没做，却给出「无法找到/不知道」之类回答时，
+        // 不直接采信——强制要求它先用关键词搜索再作答。只纠正一次，避免死循环。
+        const QUERY_TOOLS = ['search_notes','find_note','research','search_todos','list_notebooks','get_note','count_notes'];
+        const noSearchYet = allSearchResults.length === 0 && !toolLog.some(t => QUERY_TOOLS.includes(t.tool));
+        const looksUnsure = /无法找到|未找到|没有找到|无法确定|不知道|无法访问|没有相关|请提供更多|不清楚|无法回答|无法搜索|没有权限|哪个|是指/.test(finalReply || '');
+        if (!forcedSearch && noSearchYet && looksUnsure && trimmed) {
+          forcedSearch = true;
+          ctx.push({ role: 'user', content: '【系统强制】你还没有检索任何笔记就给出了回答，这是不允许的。请立即调用 search_notes，把用户的问题「' + trimmed + '」拆成 2-3 个关键词进行搜索（例如 {"tool":"search_notes","args":{"query":"用药 上线时间"}}），拿到结果后严格根据笔记内容回答；若确实搜不到再说明未找到。' });
+          finalReply = '';
+          continue;
+        }
+        break;
+      }
     }
 
-    const WRITE_TOOLS = new Set(['create_note','update_note','delete_note','quick_note','create_todo','update_todo','delete_todo','create_notebook','delete_notebook','rename_notebook','move_note','move_note_to_folder','batch_move_notes','batch_update_notes','batch_complete_todos','batch_delete_notes','batch_delete_todos','auto_title_notes','merge_notes','star_note','add_tags','remove_tags','append_to_note','duplicate_note','create_folder','create_from_template','translate_note','clean_text','optimize_text']);
+    const WRITE_TOOLS = new Set(['create_note','update_note','delete_note','quick_note','create_todo','update_todo','delete_todo','create_notebook','delete_notebook','rename_notebook','move_note','move_note_to_folder','batch_move_notes','batch_update_notes','batch_complete_todos','batch_delete_notes','batch_delete_todos','auto_title_notes','merge_notes','star_note','add_tags','remove_tags','append_to_note','duplicate_note','create_folder','create_from_template','translate_note','clean_text','optimize_text','save_memory','delete_memory']);
     if (toolLog.some(t => t.ok && WRITE_TOOLS.has(t.tool))) {
       try { if (typeof workdirWriteAll === 'function') await workdirWriteAll(true); } catch {}
     }
@@ -1821,8 +1926,15 @@ async function runAssistantTurn(userInput) {
       searchResults: allSearchResults.length ? allSearchResults : undefined
     });
   } catch (e) {
-    pushAssistantMessage('assistant', '出错：' + (e.message || String(e)));
-    if (typeof logError === 'function') logError(e, 'assistant');
+    const msg = e && (e.message || String(e));
+    // 用户主动中止：保留已生成的部分回复，不当成错误
+    if (msg === '已取消') {
+      pushAssistantMessage('assistant', (finalReply ? finalReply + '\n\n' : '') + '_（已中止生成）_',
+        { toolLog: toolLog.length ? toolLog : undefined, searchResults: allSearchResults.length ? allSearchResults : undefined });
+    } else {
+      pushAssistantMessage('assistant', '出错：' + msg);
+      if (typeof logError === 'function') logError(e, 'assistant');
+    }
   } finally {
     assistantBusy = false;
     setAssistantTyping(false);
@@ -1866,29 +1978,49 @@ function renderAssistantSessions() {
         <svg class="group-chevron" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="${chevronD}"/></svg>
         <span class="group-name" title="${escapeHtml(g.name)}">${escapeHtml(g.name)}</span>
         <span class="group-count">${sessionCount}</span>
+        <span class="group-actions">
+          <button class="group-action-btn" data-action="rename" title="重命名分组"><svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path stroke-linecap="round" stroke-linejoin="round" d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></button>
+          <button class="group-action-btn" data-action="delete" title="删除分组"><svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.87 12.14A2 2 0 0116.14 21H7.86a2 2 0 01-1.99-1.86L5 7m5 4v6m4-6v6M3 7h18M9 7V4a1 1 0 011-1h4a1 1 0 011 1v3"/></svg></button>
+        </span>
       </div>
       ${sessionsHtml ? '<div class="ai-group-sessions">' + sessionsHtml + '</div>' : ''}
     </div>`;
   }).join('');
 
-  // --- 分组 header 点击/右键 ---
+  // --- 分组 header 点击/操作图标/右键 ---
+  const confirmDeleteGroup = (gid) => {
+    const g = assistantGroups.find(x => x.id === gid);
+    if (!g) return;
+    // 用应用内自定义弹窗替代原生 confirm()（后者在 Tauri webview 里会显示「tauri.localhost 显示」）
+    showModal('删除分组', '确定删除分组「' + g.name + '」吗？分组下的会话也会一并删除，且无法恢复。', () => deleteAssistantGroup(gid));
+  };
   listEl.querySelectorAll('.ai-group-header').forEach(header => {
-    header.addEventListener('click', () => {
+    header.addEventListener('click', (e) => {
+      if (e.target.closest('.group-action-btn')) return;   // 点的是操作图标，交给下面处理
       const gid = header.dataset.aiGroup;
       if (assistantInAiView && gid === assistantActiveGroupId) return;
       enterAiView(gid);
     });
+    // 右键也直接走应用内删除确认，不再用 prompt()/confirm()
     header.addEventListener('contextmenu', (e) => {
       e.preventDefault();
-      const gid = header.dataset.aiGroup;
+      confirmDeleteGroup(header.dataset.aiGroup);
+    });
+  });
+  listEl.querySelectorAll('.group-action-btn[data-action="rename"]').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const header = btn.closest('.ai-group-header');
+      const gid = header?.dataset.aiGroup;
       const g = assistantGroups.find(x => x.id === gid);
       if (!g) return;
-      const action = prompt('输入 rename 重命名，delete 删除：');
-      if (action === 'rename' || action === '重命名') {
-        startInlineRename(header, '.group-name', g.name, (val) => renameAssistantGroup(gid, val));
-      } else if (action === 'delete' || action === '删除') {
-        if (confirm('删除分组「' + g.name + '」？')) deleteAssistantGroup(gid);
-      }
+      startInlineRename(header, '.group-name', g.name, (val) => renameAssistantGroup(gid, val));
+    });
+  });
+  listEl.querySelectorAll('.group-action-btn[data-action="delete"]').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      confirmDeleteGroup(btn.closest('.ai-group-header')?.dataset.aiGroup);
     });
   });
 
@@ -1924,7 +2056,9 @@ function renderAssistantSessions() {
       const sid = sessionItem?.dataset.sid;
       const gid = sessionItem?.dataset.gid;
       if (!sid || !gid) return;
-      if (confirm('删除该会话？')) deleteAssistantSession(gid, sid);
+      const g = assistantGroups.find(x => x.id === gid);
+      const s = g && (g.sessions || []).find(x => x.id === sid);
+      showModal('删除会话', '确定删除会话「' + (s?.name || '该会话') + '」吗？此操作无法恢复。', () => deleteAssistantSession(gid, sid));
     });
   });
 
@@ -2044,7 +2178,7 @@ function bindAssistantUi() {
 
   // 清空当前会话
   const clearBtn = document.getElementById('assistantClearBtn');
-  if (clearBtn) clearBtn.addEventListener('click', () => { if (confirm('清空当前会话历史？')) clearActiveSessionHistory(); });
+  if (clearBtn) clearBtn.addEventListener('click', () => { showModal('清空会话历史', '确定清空当前会话的全部聊天记录吗？此操作无法恢复。', () => clearActiveSessionHistory()); });
 
   // 模型选择器
   const modelSelect = document.getElementById('assistantModelSelect');
@@ -2090,7 +2224,7 @@ function bindAssistantUi() {
     const arr = loadMemories();
     const countEl = document.getElementById('memoryCount');
     if (countEl) countEl.textContent = arr.length;
-    const catLabel = { preference: '偏好', fact: '事实', context: '上下文', other: '其他' };
+    const catLabel = MEMORY_CAT_LABEL;
     if (!arr.length) { list.innerHTML = '<div class="memory-empty">暂无记忆<br><span style="font-size:11px">和 AI 对话时说"记住…"即可保存</span></div>'; return; }
     list.innerHTML = arr.map((m, i) => `<div class="memory-item" data-idx="${i}"><span class="mem-cat">${catLabel[m.category] || '其他'}</span><div class="mem-body"><div class="mem-key">${escapeHtml(m.key)}</div><div class="mem-val">${escapeHtml(m.value)}</div></div><button class="mem-del" data-key="${escapeHtml(m.key)}" title="删除">✕</button></div>`).join('');
     list.querySelectorAll('.mem-del').forEach(btn => {
@@ -2099,6 +2233,7 @@ function bindAssistantUi() {
         const mArr = loadMemories().filter(x => x.key !== key);
         saveMemories(mArr);
         renderMemoryList();
+        if (typeof workdirWriteAll === 'function') workdirWriteAll(true);
       });
     });
   }
@@ -2118,14 +2253,12 @@ function bindAssistantUi() {
     const key = (keyEl?.value || '').trim();
     const value = (valEl?.value || '').trim();
     if (!key || !value) { if (typeof showToast === 'function') showToast('请填写关键词和内容'); return; }
-    const arr = loadMemories();
-    const idx = arr.findIndex(m => m.key === key);
-    const entry = { key, value, category: catEl?.value || 'other', createdAt: idx >= 0 ? arr[idx].createdAt : Date.now(), updatedAt: Date.now() };
-    if (idx >= 0) arr[idx] = entry; else arr.push(entry);
-    saveMemories(arr);
+    try { upsertMemory(key, value, catEl?.value); }            // 与 AI 工具共用同一写入逻辑(限长/去重/封顶)
+    catch (e) { if (typeof showToast === 'function') showToast(e.message || '保存失败'); return; }
     if (keyEl) keyEl.value = '';
     if (valEl) valEl.value = '';
     renderMemoryList();
+    if (typeof workdirWriteAll === 'function') workdirWriteAll(true);   // 落盘到工作目录
   });
   // 初始化记忆计数
   const initCount = document.getElementById('memoryCount');
