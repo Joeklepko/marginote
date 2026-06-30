@@ -6,8 +6,12 @@
 <title>Marginote · 笔记本</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,300;0,9..144,400;0,9..144,500;0,9..144,600;0,9..144,700;1,9..144,400&family=Noto+Serif+SC:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-<script src="vendor/jszip.min.js"></script>
+<!-- 字体非阻塞加载：先用系统字体瞬间渲染首屏，网络字体到位后再平滑替换（离线/慢网不再白屏卡住）。
+     media=print 让该样式表不阻塞首屏渲染，onload 后切回 all 生效；无 JS 时用 noscript 兜底。 -->
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,300;0,9..144,400;0,9..144,500;0,9..144,600;0,9..144,700;1,9..144,400&family=Noto+Serif+SC:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" media="print" onload="this.media='all'">
+<noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,300;0,9..144,400;0,9..144,500;0,9..144,600;0,9..144,700;1,9..144,400&family=Noto+Serif+SC:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"></noscript>
+<!-- JSZip 仅备份/导入时用,defer 出首屏关键路径(调用处已有 typeof 守卫) -->
+<script defer src="vendor/jszip.min.js"></script>
 <script src="vendor/markdown-it.min.js"></script>
 <script src="vendor/purify.min.js"></script>
 <!-- 平台抽象层（桌面端 Tauri 直接静态加载，避免动态 loader 竞态） -->

@@ -4771,7 +4771,7 @@ openStorageModal = function() {
 //   · 新增 / 修改：写回目录（卸载软件/扩展不删这些文件）
 // ==========================================================
 const WORKDIR_KEY = 'marginote.workdir';
-let _workdirCfg = { enabled: false, lastSyncAt: 0, name: null };
+let _workdirCfg = { enabled: false, lastSyncAt: 0, name: null, lastImportAt: 0 };
 try { Object.assign(_workdirCfg, JSON.parse(localStorage.getItem(WORKDIR_KEY) || '{}')); } catch {}
 function saveWorkdirCfg() { try { localStorage.setItem(WORKDIR_KEY, JSON.stringify(_workdirCfg)); } catch {} }
 
@@ -4927,10 +4927,14 @@ async function workdirWriteAll(silent) {
 }
 
 // 从工作目录读入并合并（disk → app）。返回新增笔记数。
-async function workdirImportAll(silent) {
+// opts.since: 增量导入阈值(epoch ms)——只读取 mtime 超过它的笔记/画板文件,跳过未变动的。
+// 启动时由 initWorkDir 传入上次导入的阈值,避免每次冷启动都全量读取+解析磁盘上所有 .md(慢)。
+// 手动「扫描」/首次绑定不传 since → 全量导入,行为不变。
+async function workdirImportAll(silent, opts) {
   const fs = fsApi();
   if (!fs) { if (!silent) showToast('当前环境不支持工作目录'); return 0; }
   if (!await fs.hasDir()) { if (!silent) showToast('未绑定工作目录或无权限'); return 0; }
+  const since = (opts && opts.since) || 0;
   let added = 0, updated = 0;
   try {
     // 先读元数据（恢复笔记本/文件夹/图片元）
@@ -4964,6 +4968,13 @@ async function workdirImportAll(silent) {
     const mdFiles = entries.filter(e => !e.dir && /\.(md|markdown)$/i.test(e.path) && !e.path.startsWith('_'));
     const drawFiles = entries.filter(e => !e.dir && /\.excalidraw$/i.test(e.path) && !e.path.startsWith('_'));
     const assetFiles = entries.filter(e => !e.dir && /^_assets\//i.test(e.path));
+    // 增量阈值用「本次见到的最大 mtime」推进(与文件同一时钟,避免 Date.now 时钟错位);
+    // 文件 mtime 缺失(=0)时一律视为需导入(保守)。
+    let maxMtime = since;
+    for (const e of mdFiles) if ((e.mtime || 0) > maxMtime) maxMtime = e.mtime;
+    for (const e of drawFiles) if ((e.mtime || 0) > maxMtime) maxMtime = e.mtime;
+    const skipUnchanged = (e) => since > 0 && (e.mtime || 0) > 0 && e.mtime <= since;
+    let skipped = 0;
 
     // 资产先读入 images 映射（供 _assets 路径引用解析）
     for (const a of assetFiles) {
@@ -4981,6 +4992,7 @@ async function workdirImportAll(silent) {
     }
 
     for (const f of mdFiles) {
+      if (skipUnchanged(f)) { skipped++; continue; }   // 增量:未变动的文件不读不解析
       const text = await fs.readText(f.path);
       if (text == null) continue;
       const segs = f.path.split('/').filter(Boolean);
@@ -5033,6 +5045,7 @@ async function workdirImportAll(silent) {
 
     // 画板 .excalidraw → type:'drawing' 笔记
     for (const f of drawFiles) {
+      if (skipUnchanged(f)) { skipped++; continue; }   // 增量:未变动的画板不读不解析
       const text = await fs.readText(f.path);
       if (text == null) continue;
       let scene = {};
@@ -5073,9 +5086,10 @@ async function workdirImportAll(silent) {
     if (currentView.startsWith('todo:')) renderTodos(); else renderNotesList();
     renderTodoCounts();
     _workdirCfg.lastSyncAt = Date.now();
+    _workdirCfg.lastImportAt = maxMtime;          // 推进增量阈值,下次启动只读更新过的文件
     saveWorkdirCfg();
     renderWorkDirInfo();
-    if (!silent) showToast(`已从工作目录导入：新增 ${added}、更新 ${updated}`);
+    if (!silent) showToast(`已从工作目录导入：新增 ${added}、更新 ${updated}${skipped ? `、跳过 ${skipped}` : ''}`);
     return added;
   } catch (e) {
     logError(e, 'workdir-import');
@@ -5110,7 +5124,7 @@ async function forgetWorkDir() {
   const fs = fsApi();
   showModal('停用工作目录？', '将不再把改动写入本地目录（已写出的文件保留在磁盘，不会删除）。', async () => {
     try { if (fs) await fs.forget(); } catch {}
-    _workdirCfg = { enabled: false, lastSyncAt: 0, name: null };
+    _workdirCfg = { enabled: false, lastSyncAt: 0, name: null, lastImportAt: 0 };
     saveWorkdirCfg();
     renderWorkDirInfo();
     showToast('已停用工作目录');
@@ -5152,7 +5166,8 @@ saveData = function() {
     const fs = fsApi();
     if (fs && await fs.hasDir()) {
       _workdirCfg.name = (await fs.dirName()) || _workdirCfg.name;
-      await workdirImportAll(true);
+      // 增量导入:只读取自上次导入后有变动的文件,加快冷启动
+      await workdirImportAll(true, { since: _workdirCfg.lastImportAt || 0 });
     }
   } catch (e) { logError(e, 'init-workdir'); }
   renderWorkDirInfo();
