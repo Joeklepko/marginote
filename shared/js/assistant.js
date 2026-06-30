@@ -453,33 +453,42 @@ const ASSISTANT_TOOLS = {
     })
   },
   search_notes: {
-    desc: '搜索笔记。{query?, limit?(默认30)}',
+    desc: '搜索笔记(标题+正文,支持中文模糊匹配,按相关度排序)。{query?, limit?(默认30)}',
     run: ({ query, limit }) => {
       const q = String(query || '').trim().toLowerCase();
       const lim = Math.max(1, Math.min(200, parseInt(limit, 10) || _ctxLimit(30, 50, 80)));
       let list = notes.filter(n => !n.deleted);
       if (q) {
         const terms = q.split(/\s+/).filter(Boolean);
-        list = list.filter(n => {
+        // 2-gram 词块：应对中文无空格查询。例如"用药上线时间"拆出"用药/药上/上线/线时/时间",
+        // 即可命中标题"用药交付时间"(共享"用药"+"时间")——这正是大模型不加空格直搜时找不到笔记的根因。
+        const grams = new Set();
+        for (const t of terms) { const s = t.replace(/\s/g, ''); if (s.length < 2) { if (s) grams.add(s); } else for (let i = 0; i < s.length - 1; i++) grams.add(s.slice(i, i + 2)); }
+        const scoreOf = (n) => {
           const title = (n.title || '').toLowerCase();
           const content = (n.content || '').toLowerCase();
-          return terms.some(t => title.includes(t) || content.includes(t));
-        });
-        if (!list.length) {
-          list = notes.filter(n => !n.deleted).filter(n => {
-            const chars = q.replace(/\s+/g, '').split('');
-            const blob = ((n.title || '') + (n.content || '')).toLowerCase();
-            return chars.every(c => blob.includes(c));
-          });
+          let s = 0;
+          for (const t of terms) { if (title.includes(t)) s += 10; else if (content.includes(t)) s += 5; }   // 整词命中,标题权重高于正文
+          if (!s) { for (const g of grams) { if (title.includes(g)) s += 2; else if (content.includes(g)) s += 1; } }  // 退化到词块模糊
+          return s;
+        };
+        const scored = list.map(n => ({ n, s: scoreOf(n) })).filter(x => x.s > 0);
+        if (scored.length) {
+          scored.sort((a, b) => b.s - a.s || (b.n.updatedAt || 0) - (a.n.updatedAt || 0));   // 相关度优先,更新时间次之
+          list = scored.map(x => x.n);
+        } else {
+          // 最后兜底:字符子序列(极宽松),按更新时间排序
+          const chars = q.replace(/\s+/g, '').split('');
+          list = list.filter(n => { const blob = ((n.title || '') + (n.content || '')).toLowerCase(); return chars.every(c => blob.includes(c)); })
+            .sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
         }
+      } else {
+        list = list.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
       }
-      return list
-        .sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))
-        .slice(0, lim)
-        .map(n => {
-          const nb = notebooks.find(x => x.id === n.notebookId);
-          return { id: n.id, title: n.title || '(无标题)', snippet: extractSnippet(n.content, q, _ctxLimit(200, 400, 800)), notebookName: nb?.name || '', tags: n.tags || [], updatedAt: n.updatedAt };
-        });
+      return list.slice(0, lim).map(n => {
+        const nb = notebooks.find(x => x.id === n.notebookId);
+        return { id: n.id, title: n.title || '(无标题)', snippet: extractSnippet(n.content, q, _ctxLimit(200, 400, 800)), notebookName: nb?.name || '', tags: n.tags || [], updatedAt: n.updatedAt };
+      });
     }
   },
   search_todos: {
@@ -993,17 +1002,23 @@ const ASSISTANT_TOOLS = {
     }
   },
   quick_note: {
-    desc: '快速记笔记。{text, notebookName?}自动提取标题',
+    desc: '快速记笔记(自动提取标题)。{text, notebookName?:按内容选一个合适的笔记本,不存在会自动新建;不传则落入第一个笔记本}',
     run: ({ text, notebookName }) => {
       if (!text || !text.trim()) throw new Error('text 必填');
       const lines = text.trim().split('\n');
       const title = lines[0].slice(0, 50).trim();
       const content = lines.length > 1 ? lines.slice(1).join('\n').trim() : text.trim();
       let nbId = notebooks[0]?.id;
-      if (notebookName) { const nb = notebooks.find(x => x.name === notebookName); if (nb) nbId = nb.id; }
+      if (notebookName) {
+        let nb = notebooks.find(x => x.name === notebookName);
+        // 指定了笔记本名但不存在 → 新建(而非静默落回"随笔")。这样 AI 可按内容归类到合适/新建的笔记本。
+        if (!nb) { nb = { id: uid(), name: String(notebookName), color: '#525252', createdAt: Date.now() }; notebooks.push(nb); if (typeof renderNotebooks === 'function') renderNotebooks(); }
+        nbId = nb.id;
+      }
       const n = { id: uid(), notebookId: nbId, folderId: null, title, content, tags: [], starred: false, deleted: false, createdAt: Date.now(), updatedAt: Date.now() };
       notes.push(n); saveData(); renderNotesList();
-      return { id: n.id, title: n.title };
+      const nbName = (notebooks.find(x => x.id === nbId) || {}).name || '';
+      return { id: n.id, title: n.title, notebookName: nbName };
     }
   },
   quick_todo: {
@@ -1399,12 +1414,15 @@ function buildAssistantSystemPrompt() {
     memorySection = '\n用户记忆(' + memArr.length + '条,作答时主动遵守相关项):\n' + top.map(m => `[${MEMORY_CAT_LABEL[m.category] || '其他'}]${m.key}:${m.value}`).join('; ');
   }
 
+  const nbList = notebooks.slice(0, 40).map(nb => nb.name).filter(Boolean).join('、');
+
   return `你是Marginote笔记应用的内置AI助手,直接运行在用户设备本地。你可以搜索、读取、创建、修改、删除用户的所有笔记和待办事项。
 
 核心原则:用户的笔记和待办是你的唯一知识库。用户问你任何问题,你都必须先用search_notes搜索相关笔记,根据搜索结果回答。绝不能凭自己的知识直接回答——先搜索,搜到了用笔记内容回答,搜不到再告诉用户"未找到相关笔记"。
 严禁说"无法访问笔记"、"没有权限"、"无法搜索"之类的话——你就是笔记应用本身的一部分。
 
-当前状态:${now.toLocaleString('zh-CN')} | 笔记本${notebooks.length}个 | 笔记${activeNotes.length}篇 | 待办${todos.length}条${attachInfo}${noteIndex}${todoOverview}${memorySection}
+当前状态:${now.toLocaleString('zh-CN')} | 笔记${activeNotes.length}篇 | 待办${todos.length}条
+现有笔记本(${notebooks.length}个):${nbList || '(无)'}${attachInfo}${noteIndex}${todoOverview}${memorySection}
 
 可用工具:
 ${tools}
@@ -1422,6 +1440,7 @@ ${tools}
 - 任何问题→先search_notes搜索,根据笔记内容回答,不要编造
 - 找笔记→find_note(一步全文) | 查/总结/研究→research | 待办→list_todos
 - 快速记→quick_note | 完成待办→complete_todo(模糊匹配) | 翻译→translate
+- 记笔记必须归类:根据内容从上方「现有笔记本」里选最贴切的一个,通过notebookName参数传入;没有合适的就起个贴切的新名字传给notebookName(会自动新建),不要一律丢进"随笔"/默认笔记本
 - 批量操作:先search_notes({limit:50+})再batch_*(一次传所有ID)
 - 复杂任务(多步骤/跨领域)→sub_agent拆解为独立子步骤执行
 - 搜索无果→换关键词重试
@@ -1731,6 +1750,17 @@ function _extractStreamingReply(s) {
 
 // 流式过程中给打字气泡的提示文案：已出现 reply 文本就实时预览其尾部;否则按阶段显示「思考中/执行中」。
 // 经 escapeHtml 转义后塞进 setAssistantTyping 的 innerHTML,防止注入/破坏布局。
+// 从用户自然语言问句中提取检索关键词：去掉标点与常见疑问词/虚词,降低噪声。
+// 中文无空格分词交给 search_notes 的 2-gram 模糊匹配处理,这里只做粗清洗。
+function _queryKeywords(s) {
+  const cleaned = String(s || '')
+    .replace(/[？?。.,，、!！:：;；"'「」『』()（）]/g, ' ')
+    .replace(/是?啥时候|什么时候|哪一?天|是?多少|怎么样?|怎样|如何|为什么|是不是|有没有|是否|可以|能否|帮我|请问|告诉我|我想知道|一下|的话|呢|吗|啊|哦|呀/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return cleaned || String(s || '').trim();
+}
+
 function _streamingHint(full, steps) {
   const preview = _extractStreamingReply(full || '');
   if (preview && preview.trim()) {
@@ -1908,9 +1938,21 @@ async function runAssistantTurn(userInput) {
         const looksUnsure = /无法找到|未找到|没有找到|无法确定|不知道|无法访问|没有相关|请提供更多|不清楚|无法回答|无法搜索|没有权限|哪个|是指/.test(finalReply || '');
         if (!forcedSearch && noSearchYet && looksUnsure && trimmed) {
           forcedSearch = true;
-          ctx.push({ role: 'user', content: '【系统强制】你还没有检索任何笔记就给出了回答，这是不允许的。请立即调用 search_notes，把用户的问题「' + trimmed + '」拆成 2-3 个关键词进行搜索（例如 {"tool":"search_notes","args":{"query":"用药 上线时间"}}），拿到结果后严格根据笔记内容回答；若确实搜不到再说明未找到。' });
-          finalReply = '';
-          continue;
+          // 不再只是「提示模型去搜」（部分模型不照做/查询写不好）——直接在代码里替它检索一次,
+          // 把结果塞回上下文,逼它基于真实笔记重答。配合 search_notes 的中文模糊匹配,大模型也能命中。
+          try {
+            const result = await runAssistantTool('search_notes', { query: _queryKeywords(trimmed) });
+            toolLog.push({ tool: 'search_notes', summary: summarizeActionResult('search_notes', result), ok: true });
+            if (Array.isArray(result)) for (const r of result) allSearchResults.push({ kind: 'note', id: r.id, title: r.title, snippet: r.snippet, updatedAt: r.updatedAt });
+            if (Array.isArray(result) && result.length) {
+              const ctxResult = ctxK >= 64 ? JSON.stringify(result).slice(0, _ctxLimit(4000, 12000, 30000)) : compressForContext('search_notes', result);
+              ctx.push({ role: 'user', content: '【系统已自动检索】针对「' + trimmed + '」找到以下相关笔记,请严格依据它们重新作答(找到答案就直接给出并注明来源笔记标题);确属无关再说明未找到。\n【结果】search_notes: ' + ctxResult });
+            } else {
+              ctx.push({ role: 'user', content: '【系统已自动检索】「' + trimmed + '」无结果。请换更宽泛/不同的关键词再调用一次 search_notes;若仍无则如实告知未找到,不要编造。' });
+            }
+            finalReply = '';
+            continue;
+          } catch { /* 检索失败则照常结束 */ }
         }
         break;
       }
@@ -2325,14 +2367,20 @@ function bindAssistantUi() {
   // 发送
   const send = document.getElementById('assistantSendBtn');
   const input = document.getElementById('assistantInput');
+  // 输入框随内容自动增高(上限由 CSS max-height 控制,超出内部滚动);发送后复位
+  const autoGrowInput = () => { if (!input) return; input.style.height = 'auto'; input.style.height = Math.min(input.scrollHeight, 200) + 'px'; };
   const submit = () => {
     const v = (input?.value || '').trim();
     if (!v) return;
-    if (input) input.value = '';
+    if (input) { input.value = ''; input.style.height = 'auto'; }
     runAssistantTurn(v);
   };
   if (send) send.addEventListener('click', submit);
-  if (input) input.addEventListener('keydown', e => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); submit(); } });
+  if (input) {
+    input.addEventListener('input', autoGrowInput);
+    // 保持 Enter=换行、Cmd/Ctrl+Enter=发送:用户常需录入多段长文本,Enter 直接发送易误触
+    input.addEventListener('keydown', e => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); submit(); } });
+  }
 
   // Esc 退出 AI 视图
   document.addEventListener('keydown', e => {
