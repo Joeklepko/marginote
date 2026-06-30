@@ -1879,6 +1879,21 @@ function copyContent() {
   });
 }
 
+// 全局外链拦截：笔记/待办/AI 对话/手册等渲染出的 http(s) 链接，点击时一律在【外部】打开，
+// 不在应用自身的 webview 内导航——否则桌面端会被网页整页顶掉、无法返回笔记（无后退按钮）。
+document.addEventListener('click', (e) => {
+  const t = e.target;
+  const a = t && t.closest ? t.closest('a[href]') : null;
+  if (!a) return;
+  const href = a.getAttribute('href') || '';
+  if (!/^https?:\/\//i.test(href)) return;        // 仅拦外部 http(s);锚点/相对/内部链接放行
+  e.preventDefault();
+  try {
+    if (window.mn && mn.platform && typeof mn.platform.openExternal === 'function') mn.platform.openExternal(href);
+    else window.open(href, '_blank', 'noopener,noreferrer');
+  } catch (err) { try { window.open(href, '_blank', 'noopener,noreferrer'); } catch (e2) {} }
+}, true);   // 捕获阶段,确保先于任何默认导航执行
+
 // ===================== Markdown 渲染 (markdown-it + DOMPurify) =====================
 let _mdRenderer = null;
 function getMdRenderer() {

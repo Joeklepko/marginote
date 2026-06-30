@@ -121,6 +121,13 @@
     }
   };
 
+  // ===== openExternal（系统默认浏览器打开外链，避免在主 webview 内导航把应用"顶掉"）=====
+  // 走 tauri-plugin-shell 的 open 命令（capabilities 已授权 shell:allow-open）。
+  platform.openExternal = async function (url) {
+    try { await invoke('plugin:shell|open', { path: url }); return true; }
+    catch (e) { console.warn('openExternal fail', e); return false; }
+  };
+
   // ===== window =====
   platform.window = {
     async focus() { try { await invoke('cmd_window_focus'); } catch (e) {} },

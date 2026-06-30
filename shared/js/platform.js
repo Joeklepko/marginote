@@ -31,6 +31,10 @@
 
     fetch: NOT_READY,                        // (url, init?, proxyConfig?) → Promise<{ok, status, body, error?}>
 
+    // 在外部打开 URL（系统浏览器/新标签页），避免在应用 webview 内导航导致"陷在网页里出不来"。
+    // 默认走 window.open（扩展/纯网页适用）；桌面端在 platform-desktop.js 覆盖为 Tauri shell open。
+    openExternal: (url) => { try { window.open(url, '_blank', 'noopener,noreferrer'); } catch (e) {} return Promise.resolve(true); },
+
     window: {
       focus: NOT_READY,                      // () → Promise<void>
       minimize: NOT_READY,
