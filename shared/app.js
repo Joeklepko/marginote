@@ -3625,45 +3625,47 @@ function migrateInlineImages() {
 }
 
 async function init() {
-  // 等平台 bridge 加载完成（扩展走 chrome.*，桌面走 Tauri）
-  if (window.mn && window.mn.ready) await window.mn.ready;
-
+  // ── 首屏：同步加载 + 立即渲染真实内容，【不等】平台 bridge/图片仓/闹钟等异步初始化，
+  //    消除"先显示空笔记页、过一会才刷出数据"的启动闪烁。loadData/loadAiConfig 均走 localStorage(同步)。──
   loadErrorLog();
   loadData();
   // 清理历史版本注入的「功能说明书」笔记（含 marginote 旧 ID）
   purgeLegacyManualNotes();
   loadAiConfig();
-  await initImagesIdb();
-  migrateInlineImages();
-  migrateLegacyRestoreLabel();
-  if (isExtensionContext()) document.body.classList.add('is-ext');
-  if (isDesktopContext()) {
-    document.body.classList.add('is-desktop');
-    initDesktopSettings();
-  }
-  await rescheduleAllAlarms();
-  // 自动备份延迟到 UI 渲染完
-  setTimeout(checkAutoBackup, 1500);
+
+  // 主题尽早应用，避免先白后切的主题闪烁（默认 · 黑白；旧 'mono' 已迁移到 'light'）
+  let savedTheme = localStorage.getItem(THEME_KEY) || 'light';
+  if (savedTheme === 'mono') savedTheme = 'light';
+  applyTheme(THEMES[savedTheme] ? savedTheme : 'light');
+
   renderNotebooks();
   renderTagFilters();
   renderNotesList();
   switchView('all');
+  // 静态色点（待办状态点等）一次性 JS 强制上色，规避 WebView2 inline 解析漏洞
+  paintDotColors(document);
 
   // 日期
   const today = new Date();
   const months = ['一月', '二月', '三月', '四月', '五月', '六月', '七月', '八月', '九月', '十月', '十一月', '十二月'];
   document.getElementById('todayDate').textContent = `${months[today.getMonth()]} ${today.getDate()}, ${today.getFullYear()}`;
 
-  // 主题恢复（默认 · 黑白；旧 'mono' 已迁移到 'light'）
-  let savedTheme = localStorage.getItem(THEME_KEY) || 'light';
-  if (savedTheme === 'mono') savedTheme = 'light';
-  applyTheme(THEMES[savedTheme] ? savedTheme : 'light');
-
-  // 静态色点（待办状态点等）一次性 JS 强制上色，规避 WebView2 inline 解析漏洞
-  paintDotColors(document);
-
-  // 桌面/Windows 把 Mac 的 ⌘ 改成 Ctrl（默认 HTML 里写的是 ⌘，给 Mac 浏览器用）
+  // ── 首屏之后：等平台 bridge 就绪，再做依赖 bridge/IDB 的异步初始化（不阻塞首屏）──
+  if (window.mn && window.mn.ready) await window.mn.ready;
+  if (isExtensionContext()) document.body.classList.add('is-ext');
+  if (isDesktopContext()) {
+    document.body.classList.add('is-desktop');
+    initDesktopSettings();
+  }
+  // 桌面/Windows 把 Mac 的 ⌘ 改成 Ctrl（需先知道平台，故放在 bridge 就绪后）
   applyShortcutLabels();
+  await initImagesIdb();
+  migrateInlineImages();
+  migrateLegacyRestoreLabel();
+  renderNotesList();   // 图片仓就绪后重渲染一次，让笔记缩略图/内联图正常显示
+  await rescheduleAllAlarms();
+  // 自动备份延迟到 UI 渲染完
+  setTimeout(checkAutoBackup, 1500);
 
   // 统一设置模态框
   document.getElementById('settingsBtn').addEventListener('click', () => openSettingsModal('appearance'));
@@ -4505,24 +4507,8 @@ async function runCustomAi() {
   await _runAiActionInternal({ id: 'custom', mode: 'replace', system: ins });
 }
 
-// ---------- 主题 hover 实时预览 ----------
-function previewTheme(name) {
-  const preset = THEMES[name];
-  if (!preset) return;
-  document.body.setAttribute('data-theme', preset.mode);
-  THEME_VAR_NAMES.forEach(v => document.body.style.removeProperty(v));
-  Object.entries(preset.vars).forEach(([k, v]) => document.body.style.setProperty(k, v));
-}
-function restoreTheme() { applyTheme(currentThemePreset); }
-
-const _origRenderThemeGrid = renderThemeGrid;
-renderThemeGrid = function() {
-  _origRenderThemeGrid();
-  document.querySelectorAll('#themeGrid .theme-card').forEach(el => {
-    el.addEventListener('mouseenter', () => previewTheme(el.dataset.theme));
-    el.addEventListener('mouseleave', () => restoreTheme());
-  });
-};
+// 主题改为「仅点击应用」：移除原先 hover 实时预览（鼠标划过即变主题，极易误触、页面闪烁）。
+// 点击应用的逻辑在 appearance.js 的 renderThemeGrid 里（theme-card 的 click → applyTheme）。
 
 // ---------- Outline 大纲面板 ----------
 function getOutline(text) {
