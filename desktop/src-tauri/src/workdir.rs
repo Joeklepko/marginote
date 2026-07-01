@@ -185,3 +185,19 @@ pub async fn cmd_workdir_remove(app: AppHandle, rel: String) -> Result<(), Strin
         Ok(())
     }
 }
+
+#[tauri::command]
+pub async fn cmd_workdir_mkdir(app: AppHandle, rel: String) -> Result<(), String> {
+    let Some(root) = workdir_root(&app) else { return Err("未绑定工作目录".into()) };
+    let p = resolve_rel(&root, &rel)?;
+    std::fs::create_dir_all(&p).map_err(|e| format!("mkdir: {e}"))
+}
+
+#[tauri::command]
+pub async fn cmd_workdir_move(app: AppHandle, from: String, to: String) -> Result<(), String> {
+    let Some(root) = workdir_root(&app) else { return Err("未绑定工作目录".into()) };
+    let src = resolve_rel(&root, &from)?;
+    let dst = resolve_rel(&root, &to)?;
+    if let Some(parent) = dst.parent() { let _ = std::fs::create_dir_all(parent); }
+    std::fs::rename(&src, &dst).map_err(|e| format!("move: {e}"))
+}

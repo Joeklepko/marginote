@@ -67,6 +67,8 @@
       readBinary: () => Promise.resolve(null),  // (relPath) → Promise<base64|null>
       writeBinary: () => Promise.resolve(false),// (relPath, base64) → Promise<bool>
       remove: () => Promise.resolve(false),     // (relPath) → Promise<bool>
+      mkdir: () => Promise.resolve(false),      // (relPath) → Promise<bool>
+      move: () => Promise.resolve(false),       // (fromRel, toRel) → Promise<bool>
     },
   };
 
