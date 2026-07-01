@@ -4904,6 +4904,24 @@ async function workdirWriteAll(silent) {
     for (const oldPath of [...Object.values(prevNoteFiles), ...Object.values(prevTodoFiles)]) {
       if (oldPath && !keepPaths.has(oldPath)) { try { await fs.remove(oldPath); } catch {} }
     }
+    // 再清理"变空的目录"：删笔记本/文件夹后其文件已被上面删掉，留下的空目录也一并移除，
+    // 让磁盘目录结构与应用一致。只删【完全不含任何文件】的目录(深层优先),不碰特殊目录,
+    // 因此绝不会删到用户放在目录里的外部文件（有文件的目录一律保留）。
+    try {
+      const after = await fs.list();
+      const dirsWithFiles = new Set();
+      for (const e of after) {
+        if (e.dir) continue;
+        const segs = e.path.split('/'); segs.pop();
+        let acc = '';
+        for (const s of segs) { acc = acc ? acc + '/' + s : s; dirsWithFiles.add(acc); }
+      }
+      const emptyDirs = after.filter(e => e.dir)
+        .map(e => e.path)
+        .filter(p => p && !p.startsWith('_') && p !== TODO_DIR && !p.startsWith(TODO_DIR + '/') && !dirsWithFiles.has(p))
+        .sort((a, b) => b.length - a.length);   // 先删深层子目录，避免父目录 remove_dir_all 递归误伤顺序
+      for (const d of emptyDirs) { try { await fs.remove(d); } catch {} }
+    } catch {}
     // 图片资产
     for (const id of usedImgIds) {
       const img = images[id];
