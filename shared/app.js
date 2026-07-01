@@ -4858,6 +4858,14 @@ async function workdirWriteAll(silent) {
   if (!fs) { if (!silent) showToast('当前环境不支持工作目录'); return false; }
   if (!await fs.hasDir()) { if (!silent) showToast('未绑定工作目录或无权限'); return false; }
   try {
+    // 读取上次写入记录的文件路径映射，用于清理"移动/重命名/删除笔记或笔记本后遗留在旧路径"的文件。
+    // 只依据 Marginote 自己写过的路径来删除，绝不动用户在工作目录里外部新增的 .md，避免误删。
+    let prevNoteFiles = {}, prevTodoFiles = {};
+    try {
+      const prev = JSON.parse((await fs.readText(WORKDIR_META)) || '{}');
+      if (prev && prev.noteFiles && typeof prev.noteFiles === 'object') prevNoteFiles = prev.noteFiles;
+      if (prev && prev.todoFiles && typeof prev.todoFiles === 'object') prevTodoFiles = prev.todoFiles;
+    } catch {}
     const usedPaths = new Set();
     const usedImgIds = new Set();
     const collectIds = (text) => {
@@ -4878,21 +4886,23 @@ async function workdirWriteAll(silent) {
       collectIds(n.content);
       await fs.writeText(rel, noteToMarkdown(n, { mode: 'inline' }));
     }
-    // 删除已标记删除的笔记文件（防止下次导入时复活）
-    for (const n of notes.filter(x => x.deleted)) {
-      try {
-        if (n.type === 'drawing') { const p = drawingRelPath(n); await fs.remove(p); }
-        else { const p = noteRelPath(n); await fs.remove(p); }
-      } catch {}
-    }
-        // 待办（统一放 待办/ 子目录）
+    // 待办（统一放 待办/ 子目录）
     const usedTodo = new Set();
+    const todoIdToPath = {};
     for (const t of todos) {
       let base = safeName(t.text || 'todo'); let rel = TODO_DIR + '/' + base; let n = 1;
       while (usedTodo.has(rel + '.md')) { n++; rel = TODO_DIR + '/' + base + '-' + n; }
       usedTodo.add(rel + '.md');
+      if (t.id) todoIdToPath[t.id] = rel + '.md';
       collectIds(t.content);
       await fs.writeText(rel + '.md', todoToMarkdown(t));
+    }
+    // 清理旧文件：上次写过、但这次不再写（笔记/待办被移动、重命名、删除，或所在笔记本被删）的
+    // 路径，从磁盘删掉，否则下次导入会把它们当新文件读回、"复活"已删的笔记本/笔记。
+    // 仅删「不再被任何当前文件占用」的旧路径，兼顾笔记互换路径的情况，也不会删到外部文件。
+    const keepPaths = new Set([...Object.values(idToPath), ...usedTodo]);
+    for (const oldPath of [...Object.values(prevNoteFiles), ...Object.values(prevTodoFiles)]) {
+      if (oldPath && !keepPaths.has(oldPath)) { try { await fs.remove(oldPath); } catch {} }
     }
     // 图片资产
     for (const id of usedImgIds) {
@@ -4911,7 +4921,8 @@ async function workdirWriteAll(silent) {
       deletedNotes: notes.filter(n => n.deleted),
       memories: (typeof loadMemories === 'function' ? loadMemories() : []),   // AI 记忆随库持久化/跨设备同步
       imagesMeta: Object.fromEntries(Object.entries(images).map(([k, v]) => [k, { name: v.name, ext: v.ext, createdAt: v.createdAt }])),
-      noteFiles: idToPath
+      noteFiles: idToPath,
+      todoFiles: todoIdToPath
     }, null, 2));
 
     _workdirCfg.lastSyncAt = Date.now();
