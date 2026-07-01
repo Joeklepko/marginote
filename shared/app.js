@@ -4956,14 +4956,12 @@ async function workdirWriteAll(silent) {
 }
 
 // 从工作目录读入并合并（disk → app）。返回新增笔记数。
-// opts.since: 增量导入阈值(epoch ms)——只读取 mtime 超过它的笔记/画板文件,跳过未变动的。
-// 启动时由 initWorkDir 传入上次导入的阈值,避免每次冷启动都全量读取+解析磁盘上所有 .md(慢)。
-// 手动「扫描」/首次绑定不传 since → 全量导入,行为不变。
-async function workdirImportAll(silent, opts) {
+// 全量可靠导入：应用尚未载入的文件一律读取,绝不因 mtime 跳过(修复"磁盘有文件却不导入")。
+// 已载入且 mtime 未变的文件才跳过重复解析,详见 importPlan.planImport（回收站/、_ 前缀也在其中排除）。
+async function workdirImportAll(silent) {
   const fs = fsApi();
   if (!fs) { if (!silent) showToast('当前环境不支持工作目录'); return 0; }
   if (!await fs.hasDir()) { if (!silent) showToast('未绑定工作目录或无权限'); return 0; }
-  const since = (opts && opts.since) || 0;
   let added = 0, updated = 0;
   try {
     // 先读元数据（恢复笔记本/文件夹/图片元）
@@ -4994,16 +4992,13 @@ async function workdirImportAll(silent, opts) {
 
     const deletedIds = new Set((Array.isArray(meta.deletedNotes) ? meta.deletedNotes : []).map(n => n.id).filter(Boolean));
     const entries = await fs.list();
-    const mdFiles = entries.filter(e => !e.dir && /\.(md|markdown)$/i.test(e.path) && !e.path.startsWith('_'));
-    const drawFiles = entries.filter(e => !e.dir && /\.excalidraw$/i.test(e.path) && !e.path.startsWith('_'));
+    // 已载入的路径 → mtime，用于跳过未变文件的重复解析（但绝不跳过未载入的文件）
+    const loadedByPath = {};
+    for (const n of notes) if (n._srcPath) loadedByPath[n._srcPath] = { mtime: n._srcMtime || 0 };
+    const { toRead } = importPlan.planImport({ entries, loadedByPath });
+    const mdFiles = toRead.filter(e => /\.(md|markdown)$/i.test(e.path));
+    const drawFiles = toRead.filter(e => /\.excalidraw$/i.test(e.path));
     const assetFiles = entries.filter(e => !e.dir && /^_assets\//i.test(e.path));
-    // 增量阈值用「本次见到的最大 mtime」推进(与文件同一时钟,避免 Date.now 时钟错位);
-    // 文件 mtime 缺失(=0)时一律视为需导入(保守)。
-    let maxMtime = since;
-    for (const e of mdFiles) if ((e.mtime || 0) > maxMtime) maxMtime = e.mtime;
-    for (const e of drawFiles) if ((e.mtime || 0) > maxMtime) maxMtime = e.mtime;
-    const skipUnchanged = (e) => since > 0 && (e.mtime || 0) > 0 && e.mtime <= since;
-    let skipped = 0;
 
     // 资产先读入 images 映射（供 _assets 路径引用解析）
     for (const a of assetFiles) {
@@ -5021,7 +5016,6 @@ async function workdirImportAll(silent, opts) {
     }
 
     for (const f of mdFiles) {
-      if (skipUnchanged(f)) { skipped++; continue; }   // 增量:未变动的文件不读不解析
       const text = await fs.readText(f.path);
       if (text == null) continue;
       const segs = f.path.split('/').filter(Boolean);
@@ -5064,6 +5058,8 @@ async function workdirImportAll(silent, opts) {
         createdAt: fm.createdAt ? new Date(fm.createdAt).getTime() : Date.now(),
         updatedAt: fm.updatedAt ? new Date(fm.updatedAt).getTime() : Date.now()
       };
+      note._srcPath = f.path;
+      note._srcMtime = f.mtime || 0;
       if (existing) {
         // 仅当磁盘更新时间较新才覆盖，避免回退正在编辑的内容
         if ((note.updatedAt || 0) >= (existing.updatedAt || 0)) { Object.assign(existing, note); updated++; }
@@ -5074,7 +5070,6 @@ async function workdirImportAll(silent, opts) {
 
     // 画板 .excalidraw → type:'drawing' 笔记
     for (const f of drawFiles) {
-      if (skipUnchanged(f)) { skipped++; continue; }   // 增量:未变动的画板不读不解析
       const text = await fs.readText(f.path);
       if (text == null) continue;
       let scene = {};
@@ -5104,6 +5099,8 @@ async function workdirImportAll(silent, opts) {
         createdAt: mn.createdAt ? new Date(mn.createdAt).getTime() : Date.now(),
         updatedAt: mn.updatedAt ? new Date(mn.updatedAt).getTime() : Date.now()
       };
+      note._srcPath = f.path;
+      note._srcMtime = f.mtime || 0;
       if (existing) {
         if ((note.updatedAt || 0) >= (existing.updatedAt || 0)) { Object.assign(existing, note); updated++; }
       } else { notes.push(note); added++; }
@@ -5115,10 +5112,9 @@ async function workdirImportAll(silent, opts) {
     if (currentView.startsWith('todo:')) renderTodos(); else renderNotesList();
     renderTodoCounts();
     _workdirCfg.lastSyncAt = Date.now();
-    _workdirCfg.lastImportAt = maxMtime;          // 推进增量阈值,下次启动只读更新过的文件
     saveWorkdirCfg();
     renderWorkDirInfo();
-    if (!silent) showToast(`已从工作目录导入：新增 ${added}、更新 ${updated}${skipped ? `、跳过 ${skipped}` : ''}`);
+    if (!silent) showToast(`已从工作目录导入：新增 ${added}、更新 ${updated}`);
     return added;
   } catch (e) {
     logError(e, 'workdir-import');
@@ -5195,8 +5191,8 @@ saveData = function() {
     const fs = fsApi();
     if (fs && await fs.hasDir()) {
       _workdirCfg.name = (await fs.dirName()) || _workdirCfg.name;
-      // 增量导入:只读取自上次导入后有变动的文件,加快冷启动
-      await workdirImportAll(true, { since: _workdirCfg.lastImportAt || 0 });
+      // 全量可靠导入(已载入且未变的文件由 planImport 内部跳过重复解析)
+      await workdirImportAll(true);
     }
   } catch (e) { logError(e, 'init-workdir'); }
   renderWorkDirInfo();
