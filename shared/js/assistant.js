@@ -605,26 +605,32 @@ const ASSISTANT_TOOLS = {
     }
   },
   delete_notebook: {
-    desc: '删除笔记本（笔记移到默认本）。{notebookId?|notebookName?}',
+    desc: '删除笔记本。{notebookId?|notebookName?}（工作目录下整个移入回收站可整体恢复；否则笔记搬到默认本）',
     run: async ({ notebookId, notebookName }) => {
       let nb = null;
       if (notebookId) nb = notebooks.find(x => x.id === notebookId);
       else if (notebookName) nb = notebooks.find(x => x.name === notebookName);
       if (!nb) throw new Error('笔记本未找到');
       if (notebooks.length <= 1) throw new Error('至少保留一个笔记本');
+      const cnt = notes.filter(n => n.notebookId === nb.id && !n.deleted).length;
+      const fs = typeof fsApi === 'function' ? fsApi() : null;
+      const onWorkdir = !!(fs && await fs.hasDir() && window.trash);
+      if (onWorkdir) {
+        // 整个笔记本目录移入回收站（连同其中的笔记文件，可在回收站整体恢复）
+        try { await window.trash.moveToTrash({ path: safeName(nb.name), type: 'notebook', name: nb.name }); } catch (e) { logError && logError(e, 'trash-nb'); }
+        notes = notes.filter(n => n.notebookId !== nb.id);
+        folders = folders.filter(f => f.notebookId !== nb.id);
+        notebooks = notebooks.filter(x => x.id !== nb.id);
+        saveData(); renderNotebooks(); renderNotesList();
+        return { deleted: nb.name, trashed: true, noteCount: cnt };
+      }
+      // 非工作目录（扩展等）：保留旧行为——笔记搬到默认本，避免无回收站时丢数据
       const defaultNb = notebooks.find(x => x.id !== nb.id);
-      const movedCount = notes.filter(n => n.notebookId === nb.id && !n.deleted).length;
       notes.forEach(n => { if (n.notebookId === nb.id) n.notebookId = defaultNb.id; });
       folders = folders.filter(f => f.notebookId !== nb.id);
       notebooks = notebooks.filter(x => x.id !== nb.id);
       saveData(); renderNotebooks(); renderNotesList();
-      // 桌面：直接删掉磁盘上的笔记本文件夹（含未导入的孤儿文件），否则扫描导入时该笔记本会"复活"。
-      // 活跃笔记已在内存搬到默认本(且已存 localStorage)，本轮结束的 workdirWriteAll 会把它们写到默认本目录，不会丢。
-      try {
-        const fs = typeof fsApi === 'function' ? fsApi() : null;
-        if (fs && await fs.hasDir()) await fs.remove(safeName(nb.name));
-      } catch {}
-      return { deleted: nb.name, movedNotesTo: defaultNb.name, movedCount };
+      return { deleted: nb.name, movedNotesTo: defaultNb.name, movedCount: cnt };
     }
   },
   move_note: {
@@ -644,23 +650,24 @@ const ASSISTANT_TOOLS = {
     }
   },
   delete_note: {
-    desc: '删除笔记。{id}',
+    desc: '删除笔记（移入回收站，可恢复）。{id}',
     run: async ({ id }) => {
       const n = notes.find(x => x.id === id);
       if (!n) throw new Error('笔记未找到：' + (id || '(未指定)'));
-      n.deleted = true;
-      n.updatedAt = Date.now();
+      const title = n.title || '(无标题)';
+      const fs = typeof fsApi === 'function' ? fsApi() : null;
+      const onWorkdir = !!(fs && await fs.hasDir() && window.trash);
+      if (onWorkdir) {
+        // 桌面回收站：把文件移入 回收站/，从活跃列表移除（可在回收站视图恢复）
+        const p = n._srcPath || (n.type === 'drawing' ? drawingRelPath(n) : noteRelPath(n));
+        try { await window.trash.moveToTrash({ path: p, type: 'note', name: title + (n.type === 'drawing' ? '.excalidraw' : '.md') }); } catch (e) { logError && logError(e, 'trash-note'); }
+        notes = notes.filter(x => x.id !== id);
+      } else {
+        n.deleted = true; n.updatedAt = Date.now();
+      }
       saveData();
       renderNotesList();
-      try {
-        const fs = typeof fsApi === 'function' ? fsApi() : null;
-        if (fs && await fs.hasDir()) {
-          // 优先用导入时记录的真实路径 _srcPath;否则回退按当前元数据推算(标题/结构变化时可能不准)
-          const p = n._srcPath || (n.type === 'drawing' ? drawingRelPath(n) : noteRelPath(n));
-          await fs.remove(p);
-        }
-      } catch {}
-      return { id: n.id, title: n.title || '(无标题)', deleted: true };
+      return { id, title, deleted: true, trashed: onWorkdir };
     }
   },
   optimize_text: {

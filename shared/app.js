@@ -1288,33 +1288,39 @@ function saveNotebook() {
 function deleteNotebook(nb) {
   if (!nb) return;
   const noteCount = notes.filter(n => n.notebookId === nb.id && !n.deleted).length;
-  const msg = noteCount > 0
-    ? `这本笔记本包含 ${noteCount} 篇笔记，删除后这些笔记将被移至「${notebooks.find(x => x.id !== nb.id)?.name || '其他笔记本'}」。`
-    : '这本笔记本是空的，将直接删除。';
+  const onWorkdir = _workdirCfg && _workdirCfg.enabled && typeof fsApi === 'function' && fsApi() && window.trash;
+  const msg = onWorkdir
+    ? (noteCount > 0
+        ? `这本笔记本含 ${noteCount} 篇笔记。删除后整个笔记本会移入回收站，可在 30 天内恢复。`
+        : '删除后该笔记本会移入回收站，可在 30 天内恢复。')
+    : (noteCount > 0
+        ? `这本笔记本包含 ${noteCount} 篇笔记，删除后这些笔记将被移至「${notebooks.find(x => x.id !== nb.id)?.name || '其他笔记本'}」。`
+        : '这本笔记本是空的，将直接删除。');
 
   showModal(`删除笔记本「${nb.name}」？`, msg, async () => {
-    // 把笔记迁移到第一个其他笔记本，没有则创建一个默认
-    const others = notebooks.filter(x => x.id !== nb.id);
-    let target;
-    if (others.length > 0) {
-      target = others[0];
-    } else {
-      target = { id: uid(), name: '默认', color: '#525252', createdAt: Date.now() };
-      notebooks.push(target);
+    if (onWorkdir) {
+      // 工作目录：整个笔记本目录移入回收站（连同笔记，可整体恢复），并从内存移除笔记本及其笔记
+      try {
+        const fs = fsApi();
+        if (fs && await fs.hasDir()) await window.trash.moveToTrash({ path: safeName(nb.name), type: 'notebook', name: nb.name });
+      } catch (e) { logError(e, 'ui-trash-notebook'); }
+      notes = notes.filter(n => n.notebookId !== nb.id);
+      folders = folders.filter(f => f.notebookId !== nb.id);
+      notebooks = notebooks.filter(x => x.id !== nb.id);
+      saveData();
+      if (currentView === 'nb:' + nb.id) switchView('all');
+      else { renderNotebooks(); renderNotesList(); }
+      showToast('已移入回收站');
+      return;
     }
-    notes.forEach(n => {
-      if (n.notebookId === nb.id) n.notebookId = target.id;
-    });
-    // 清理文件夹
+    // 非工作目录：笔记搬到其他本，避免无回收站时丢数据
+    const others = notebooks.filter(x => x.id !== nb.id);
+    let target = others.length > 0 ? others[0] : { id: uid(), name: '默认', color: '#525252', createdAt: Date.now() };
+    if (others.length === 0) notebooks.push(target);
+    notes.forEach(n => { if (n.notebookId === nb.id) n.notebookId = target.id; });
     folders = folders.filter(f => f.notebookId !== nb.id);
     notebooks = notebooks.filter(x => x.id !== nb.id);
     saveData();
-    // 桌面：直接删掉磁盘上的笔记本文件夹（含未导入的孤儿文件），避免扫描导入时"复活"。
-    // 活跃笔记已在内存搬到目标本，随后 workdirWriteAll 会写到目标本目录，不会丢。
-    try {
-      const fs = (typeof fsApi === 'function') ? fsApi() : null;
-      if (fs && await fs.hasDir()) await fs.remove(safeName(nb.name));
-    } catch (e) { logError(e, 'ui-del-notebook-dir'); }
     if (currentView === 'nb:' + nb.id) switchView('all');
     else { renderNotebooks(); renderNotesList(); }
     showToast('已删除笔记本');
@@ -1702,8 +1708,19 @@ function deleteCurrent() {
   showModal(
     isPermanent ? '永久删除？' : '移至回收站？',
     isPermanent ? '此操作将永久删除这篇笔记，无法恢复。' : '笔记将被移至回收站，可在那里恢复或彻底删除。',
-    () => {
-      if (isPermanent) {
+    async () => {
+      const onWorkdir = _workdirCfg && _workdirCfg.enabled && typeof fsApi === 'function' && fsApi() && window.trash;
+      if (!isPermanent && onWorkdir) {
+        // 工作目录：把笔记文件移入磁盘回收站，从活跃列表移除（可在回收站视图恢复）
+        try {
+          const fs = fsApi();
+          if (fs && await fs.hasDir()) {
+            const p = currentNote._srcPath || (currentNote.type === 'drawing' ? drawingRelPath(currentNote) : noteRelPath(currentNote));
+            await window.trash.moveToTrash({ path: p, type: 'note', name: (currentNote.title || '无标题') + (currentNote.type === 'drawing' ? '.excalidraw' : '.md') });
+          }
+        } catch (e) { logError(e, 'ui-trash-note'); }
+        notes = notes.filter(n => n.id !== currentNote.id);
+      } else if (isPermanent) {
         if (currentNote.linkedFile) {
           fhDelete(currentNote.id).catch(err => console.error('fhDelete failed', err));
         }
@@ -5203,6 +5220,8 @@ saveData = function() {
       _workdirCfg.name = (await fs.dirName()) || _workdirCfg.name;
       // 全量可靠导入(已载入且未变的文件由 planImport 内部跳过重复解析)
       await workdirImportAll(true);
+      // 回收站 30 天清理：删除删除时间超过 30 天的项
+      try { if (window.trash) await window.trash.purgeExpired(Date.now()); } catch (e) { logError(e, 'trash-purge'); }
     }
   } catch (e) { logError(e, 'init-workdir'); }
   renderWorkDirInfo();
