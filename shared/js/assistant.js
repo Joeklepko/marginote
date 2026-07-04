@@ -1444,6 +1444,7 @@ ${tools}
 - 批量操作:先search_notes({limit:50+})再batch_*(一次传所有ID)
 - 复杂任务(多步骤/跨领域)→sub_agent拆解为独立子步骤执行
 - 搜索无果→换关键词重试
+- 【严禁口头假装完成】要创建/保存/删除/修改,必须在本次 actions 里真的发出对应工具调用;绝不能在没有工具调用的情况下声称"已创建/已保存/已记录"。正确做法:先发出工具调用,拿到工具结果后,下一轮再据结果告知用户是否成功
 - 记忆:用户透露持久偏好/习惯/关于自己的事实/项目背景时,主动save_memory记住(value简洁,选对category);回答涉及个人偏好的问题前,先看上方「用户记忆」,不足再recall_memory;过时的用save_memory覆盖同名key或delete_memory删除
 - 回复用Markdown,简洁直接,不要废话`;
 }
@@ -1959,8 +1960,22 @@ async function runAssistantTurn(userInput) {
     }
 
     const WRITE_TOOLS = new Set(['create_note','update_note','delete_note','quick_note','create_todo','update_todo','delete_todo','create_notebook','delete_notebook','rename_notebook','move_note','move_note_to_folder','batch_move_notes','batch_update_notes','batch_complete_todos','batch_delete_notes','batch_delete_todos','auto_title_notes','merge_notes','star_note','add_tags','remove_tags','append_to_note','duplicate_note','create_folder','create_from_template','translate_note','clean_text','optimize_text','save_memory','delete_memory']);
-    if (toolLog.some(t => t.ok && WRITE_TOOLS.has(t.tool))) {
+    const wroteSomething = toolLog.some(t => t.ok && WRITE_TOOLS.has(t.tool));
+    if (wroteSomething) {
       try { if (typeof workdirWriteAll === 'function') await workdirWriteAll(true); } catch {}
+    }
+
+    // 防"幻觉式成功"：模型在 reply 里声称已创建/保存了笔记/待办/记忆，但本轮没有任何写工具
+    // 真正成功执行（模型只是描述结果没调用工具，或工具执行失败）——不能让用户误以为成功了。
+    const claimsWrite = /(创建|新建|保存|存入|记住|加入|添加|归类|记录到|建好|存好)/.test(finalReply || '')
+      && /(笔记|待办|记忆|笔记本|分组|随笔)/.test(finalReply || '')
+      && /(已|成功|帮你|为你|好了|完成)/.test(finalReply || '');
+    if (claimsWrite && !wroteSomething) {
+      const failed = toolLog.filter(t => !t.ok).map(t => t.tool + (t.summary ? '（' + t.summary + '）' : ''));
+      finalReply = '⚠️ 实际并未创建/保存成功——' + (failed.length
+        ? '工具执行失败：' + failed.join('；') + '。'
+        : '模型只描述了结果，但没有真正调用工具（未产生任何写入）。')
+        + '\n\n请再说一次你的需求（例如「记录：<内容>」），或到「设置 → AI」换一个更稳的模型重试。';
     }
 
     pushAssistantMessage('assistant', finalReply, {
