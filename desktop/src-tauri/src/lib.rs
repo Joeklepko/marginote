@@ -53,6 +53,8 @@ pub fn run() {
             workdir::cmd_workdir_read_binary,
             workdir::cmd_workdir_write_binary,
             workdir::cmd_workdir_remove,
+            workdir::cmd_workdir_mkdir,
+            workdir::cmd_workdir_move,
         ])
         .setup(|app| {
             // 安装托盘

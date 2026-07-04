@@ -219,6 +219,14 @@
       try { await invoke('cmd_workdir_remove', { rel: relPath }); return true; }
       catch (e) { return false; }
     },
+    async mkdir(relPath) {
+      try { await invoke('cmd_workdir_mkdir', { rel: relPath }); return true; }
+      catch (e) { console.warn('workdir_mkdir fail', e); return false; }
+    },
+    async move(fromRel, toRel) {
+      try { await invoke('cmd_workdir_move', { from: fromRel, to: toRel }); return true; }
+      catch (e) { console.warn('workdir_move fail', e); return false; }
+    },
   };
 
   if (window.mn._readyResolve) window.mn._readyResolve();
