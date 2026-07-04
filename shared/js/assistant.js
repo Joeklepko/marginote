@@ -786,25 +786,28 @@ const ASSISTANT_TOOLS = {
     desc: '批量删除笔记。{noteIds[]}',
     run: async ({ noteIds }) => {
       if (!Array.isArray(noteIds) || !noteIds.length) throw new Error('noteIds 必填');
+      const fs = typeof fsApi === 'function' ? fsApi() : null;
+      const onWorkdir = !!(fs && await fs.hasDir() && window.trash);
       let success = 0, failed = 0;
       const details = [];
-      const deleted = [];
+      const toRemove = [];
       for (const id of noteIds) {
-        const n = notes.find(x => x.id === id);
-        if (n && !n.deleted) { n.deleted = true; n.updatedAt = Date.now(); success++; details.push({ id, title: n.title || '(无标题)' }); deleted.push(n); }
-        else { failed++; }
-      }
-      saveData(); renderNotesList();
-      try {
-        const fs = typeof fsApi === 'function' ? fsApi() : null;
-        if (fs && await fs.hasDir()) {
-          for (const n of deleted) {
-            const p = n.type === 'drawing' ? drawingRelPath(n) : noteRelPath(n);
-            try { await fs.remove(p); } catch {}
-          }
+        const n = notes.find(x => x.id === id && !x.deleted);
+        if (!n) { failed++; continue; }
+        const title = n.title || '(无标题)';
+        if (onWorkdir) {
+          // 移入磁盘回收站 + 稍后从活跃列表移除（用真实路径 _srcPath，避免删错）
+          const p = n._srcPath || (n.type === 'drawing' ? drawingRelPath(n) : noteRelPath(n));
+          try { await window.trash.moveToTrash({ path: p, type: 'note', name: title + (n.type === 'drawing' ? '.excalidraw' : '.md') }); } catch (e) { logError && logError(e, 'trash-batch'); }
+          toRemove.push(id);
+        } else {
+          n.deleted = true; n.updatedAt = Date.now();
         }
-      } catch {}
-      return { success, failed, details };
+        success++; details.push({ id, title });
+      }
+      if (toRemove.length) { const rm = new Set(toRemove); notes = notes.filter(x => !rm.has(x.id)); }
+      saveData(); renderNotesList();
+      return { success, failed, details, trashed: onWorkdir };
     }
   },
 
