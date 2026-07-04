@@ -1397,11 +1397,11 @@ function buildAssistantSystemPrompt() {
     // 笔记索引是【每轮都重发】的常驻开销,不随上下文放大(否则 128K 时会膨胀到数百条×数百字、单独吃掉
     // ~20% 窗口)。这里硬性封顶:最多 150 条标题、每条摘要 ≤120 字;需要更多细节让模型 search_notes 检索。
     const top = activeNotes.slice(0, Math.min(_ctxLimit(20, 150, 150), 150));
-    noteIndex = '\n\n笔记(' + activeNotes.length + '篇,近' + top.length + '篇):\n';
+    noteIndex = '\n\n笔记(' + activeNotes.length + '篇,近' + top.length + '篇,含 id 可直接操作):\n';
     noteIndex += top.map((n, i) => {
       const nb = notebooks.find(x => x.id === n.notebookId);
       const summary = stripMarkdown(n.content).slice(0, Math.min(_ctxLimit(40, 80, 120), 120));
-      return `${i + 1}.${n.title || '无标题'}${nb ? '[' + nb.name + ']' : ''}${summary ? '—' + summary : ''}`;
+      return `${i + 1}.(id:${n.id})${n.title || '无标题'}${nb ? '[' + nb.name + ']' : ''}${summary ? '—' + summary : ''}`;
     }).join('\n');
   }
 
@@ -1458,6 +1458,7 @@ ${tools}
 - 找笔记→find_note(一步全文) | 查/总结/研究→research | 待办→list_todos
 - 快速记→quick_note | 完成待办→complete_todo(模糊匹配) | 翻译→translate
 - 记笔记必须归类:根据内容从上方「现有笔记本」里选最贴切的一个,通过notebookName参数传入;没有合适的就起个贴切的新名字传给notebookName(会自动新建),不要一律丢进"随笔"/默认笔记本
+- 删除/修改指定笔记:上方「笔记索引」每条都带 (id:xxx),直接用该 id 调 delete_note/update_note,【不要反复 search 去找 id】。删"无标题/空"笔记也用索引里的 id;同一个工具调用不要重复发起
 - 批量操作:先search_notes({limit:50+})再batch_*(一次传所有ID)
 - 复杂任务(多步骤/跨领域)→sub_agent拆解为独立子步骤执行
 - 搜索无果→换关键词重试
@@ -1901,6 +1902,9 @@ async function runAssistantTurn(userInput) {
   const allSearchResults = [];
   let finalReply = '';
   let forcedSearch = false;            // 兜底：是否已对「未检索就回答」强制纠正过一次
+  const callSigs = new Set();          // 已发起过的工具调用签名,用于防打转(重复调用即停)
+  const MAX_TOOL_STEPS = 15;           // 一轮对话内工具调用步数上限(留在接口频率限制之下,避免撞 429)
+  let thrash = false;
   try {
     while (iter++ < 100) {
       // 上下文压缩：防止极长任务溢出（根据模型上下文大小动态调整）
@@ -1923,9 +1927,13 @@ async function runAssistantTurn(userInput) {
       let hasActions = false;
 
       for (const a of (parsed.actions || [])) {
-        hasActions = true;
         const name = a.tool || a.name;
         const args = a.args || a.arguments || {};
+        // 防打转：模型重复发起完全相同的工具调用 → 判定空转，停止（否则会一直调用直到撞接口限流）
+        const sig = String(name) + '|' + JSON.stringify(args);
+        if (callSigs.has(sig)) { thrash = true; break; }
+        callSigs.add(sig);
+        hasActions = true;
         try {
           const result = await runAssistantTool(name, args);
           const summary = summarizeActionResult(name, result);
@@ -1949,6 +1957,15 @@ async function runAssistantTurn(userInput) {
       }
 
       finalReply = parsed.reply || finalReply;
+      // 防打转：检测到重复调用，或工具步数达到上限 → 停止，避免空转到撞接口频率限制(429)
+      if (thrash) {
+        finalReply = (finalReply || '') + (finalReply ? '\n\n' : '') + '（已停止：检测到重复的相同操作，为避免空转/触发接口频率限制未继续。若要删除某条笔记，可在「笔记索引」里按其 id 让我删；或把需求说得更具体、换个模型重试。）';
+        break;
+      }
+      if (toolLog.length >= MAX_TOOL_STEPS) {
+        finalReply = (finalReply || '') + (finalReply ? '\n\n' : '') + `（已执行 ${toolLog.length} 步并停止，以免触发接口每分钟调用上限。任务可能未完成，请把需求说得更具体或分步进行。）`;
+        break;
+      }
       if (!hasActions) {
         // 检索兜底：模型一次笔记检索都没做，却给出「无法找到/不知道」之类回答时，
         // 不直接采信——强制要求它先用关键词搜索再作答。只纠正一次，避免死循环。
@@ -2005,6 +2022,10 @@ async function runAssistantTurn(userInput) {
     // 用户主动中止：保留已生成的部分回复，不当成错误
     if (msg === '已取消') {
       pushAssistantMessage('assistant', (finalReply ? finalReply + '\n\n' : '') + '_（已中止生成）_',
+        { toolLog: toolLog.length ? toolLog : undefined, searchResults: allSearchResults.length ? allSearchResults : undefined });
+    } else if (/\b429\b|per 1 minute|per minute|rate limit|too many requests/i.test(msg || '')) {
+      // 接口每分钟调用上限:给友好提示,并保留已完成的部分
+      pushAssistantMessage('assistant', (finalReply ? finalReply + '\n\n' : '') + '⚠️ 触发了 AI 接口的每分钟调用上限（HTTP 429）。请等约 1 分钟再试；若常出现，可到「设置 → AI」换用配额更高的模型。',
         { toolLog: toolLog.length ? toolLog : undefined, searchResults: allSearchResults.length ? allSearchResults : undefined });
     } else {
       pushAssistantMessage('assistant', '出错：' + msg);
