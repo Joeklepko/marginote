@@ -606,18 +606,24 @@ const ASSISTANT_TOOLS = {
   },
   delete_notebook: {
     desc: '删除笔记本（笔记移到默认本）。{notebookId?|notebookName?}',
-    run: ({ notebookId, notebookName }) => {
+    run: async ({ notebookId, notebookName }) => {
       let nb = null;
       if (notebookId) nb = notebooks.find(x => x.id === notebookId);
       else if (notebookName) nb = notebooks.find(x => x.name === notebookName);
       if (!nb) throw new Error('笔记本未找到');
       if (notebooks.length <= 1) throw new Error('至少保留一个笔记本');
       const defaultNb = notebooks.find(x => x.id !== nb.id);
-      const movedCount = notes.filter(n => n.notebookId === nb.id).length;
+      const movedCount = notes.filter(n => n.notebookId === nb.id && !n.deleted).length;
       notes.forEach(n => { if (n.notebookId === nb.id) n.notebookId = defaultNb.id; });
       folders = folders.filter(f => f.notebookId !== nb.id);
       notebooks = notebooks.filter(x => x.id !== nb.id);
       saveData(); renderNotebooks(); renderNotesList();
+      // 桌面：直接删掉磁盘上的笔记本文件夹（含未导入的孤儿文件），否则扫描导入时该笔记本会"复活"。
+      // 活跃笔记已在内存搬到默认本(且已存 localStorage)，本轮结束的 workdirWriteAll 会把它们写到默认本目录，不会丢。
+      try {
+        const fs = typeof fsApi === 'function' ? fsApi() : null;
+        if (fs && await fs.hasDir()) await fs.remove(safeName(nb.name));
+      } catch {}
       return { deleted: nb.name, movedNotesTo: defaultNb.name, movedCount };
     }
   },
@@ -649,7 +655,8 @@ const ASSISTANT_TOOLS = {
       try {
         const fs = typeof fsApi === 'function' ? fsApi() : null;
         if (fs && await fs.hasDir()) {
-          const p = n.type === 'drawing' ? drawingRelPath(n) : noteRelPath(n);
+          // 优先用导入时记录的真实路径 _srcPath;否则回退按当前元数据推算(标题/结构变化时可能不准)
+          const p = n._srcPath || (n.type === 'drawing' ? drawingRelPath(n) : noteRelPath(n));
           await fs.remove(p);
         }
       } catch {}
@@ -1445,6 +1452,7 @@ ${tools}
 - 复杂任务(多步骤/跨领域)→sub_agent拆解为独立子步骤执行
 - 搜索无果→换关键词重试
 - 【严禁口头假装完成】要创建/保存/删除/修改,必须在本次 actions 里真的发出对应工具调用;绝不能在没有工具调用的情况下声称"已创建/已保存/已记录"。正确做法:先发出工具调用,拿到工具结果后,下一轮再据结果告知用户是否成功
+- 判断笔记/笔记本是否存在,一律以当前「现有笔记本」列表和实际 list_notebooks/search_notes 结果为准;不要因为之前对话里说过"已删除"就断定它不存在——磁盘扫描导入等操作可能让它重新出现,用户让你删就直接尝试删
 - 记忆:用户透露持久偏好/习惯/关于自己的事实/项目背景时,主动save_memory记住(value简洁,选对category);回答涉及个人偏好的问题前,先看上方「用户记忆」,不足再recall_memory;过时的用save_memory覆盖同名key或delete_memory删除
 - 回复用Markdown,简洁直接,不要废话`;
 }

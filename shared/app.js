@@ -1292,7 +1292,7 @@ function deleteNotebook(nb) {
     ? `这本笔记本包含 ${noteCount} 篇笔记，删除后这些笔记将被移至「${notebooks.find(x => x.id !== nb.id)?.name || '其他笔记本'}」。`
     : '这本笔记本是空的，将直接删除。';
 
-  showModal(`删除笔记本「${nb.name}」？`, msg, () => {
+  showModal(`删除笔记本「${nb.name}」？`, msg, async () => {
     // 把笔记迁移到第一个其他笔记本，没有则创建一个默认
     const others = notebooks.filter(x => x.id !== nb.id);
     let target;
@@ -1309,6 +1309,12 @@ function deleteNotebook(nb) {
     folders = folders.filter(f => f.notebookId !== nb.id);
     notebooks = notebooks.filter(x => x.id !== nb.id);
     saveData();
+    // 桌面：直接删掉磁盘上的笔记本文件夹（含未导入的孤儿文件），避免扫描导入时"复活"。
+    // 活跃笔记已在内存搬到目标本，随后 workdirWriteAll 会写到目标本目录，不会丢。
+    try {
+      const fs = (typeof fsApi === 'function') ? fsApi() : null;
+      if (fs && await fs.hasDir()) await fs.remove(safeName(nb.name));
+    } catch (e) { logError(e, 'ui-del-notebook-dir'); }
     if (currentView === 'nb:' + nb.id) switchView('all');
     else { renderNotebooks(); renderNotesList(); }
     showToast('已删除笔记本');
@@ -5043,9 +5049,13 @@ async function workdirImportAll(silent) {
       const folder = folderName ? ensureFolderByName(nb.id, folderName) : null;
       let body = ingestImageDataUrls(ingestAssetPathRefs(content));
       const id = fm.id || uid();
-      if (deletedIds.has(id)) continue;
+      // 该文件对应一条已删除的笔记(墓碑)→ 这是删除时未清干净的残留文件，直接从磁盘清掉，
+      // 否则它既不显示、又让笔记本非空删不掉、还会在扫描时被当"新文件"复活。
+      if (deletedIds.has(id) || notes.some(n => n.id === id && n.deleted)) {
+        try { await fs.remove(f.path); } catch {}
+        continue;
+      }
       const existing = notes.find(n => n.id === id);
-      if (existing && existing.deleted) continue;
       const note = {
         id,
         notebookId: nb.id,
