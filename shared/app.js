@@ -3679,6 +3679,8 @@ async function init() {
   if (isDesktopContext()) {
     document.body.classList.add('is-desktop');
     initDesktopSettings();
+    // 未绑定工作目录时醒目引导设置（pickWorkDir 会导入+写出完成迁移）。延迟到首屏之后，避免打断。
+    setTimeout(promptWorkdirSetupIfNeeded, 1200);
   }
   // 桌面/Windows 把 Mac 的 ⌘ 改成 Ctrl（需先知道平台，故放在 bridge 就绪后）
   applyShortcutLabels();
@@ -5242,6 +5244,19 @@ function bindWorkDir() {
   if (trashClose) trashClose.addEventListener('click', closeTrashModal);
 }
 bindWorkDir();
+
+// 未设置工作目录时引导用户设置（桌面）。选择后 pickWorkDir 会导入+写出，完成本地数据迁移。
+async function promptWorkdirSetupIfNeeded() {
+  try {
+    if (!isDesktopContext()) return;
+    const fs = (typeof fsApi === 'function') ? fsApi() : null;
+    if (!fs) return;
+    if (_workdirCfg && _workdirCfg.enabled && await fs.hasDir()) return; // 已设置，跳过
+    showModal('建议设置工作目录',
+      '为确保你的笔记/待办以真实 .md 文件保存到电脑本地，并支持回收站与跨设备同步，建议现在选择一个工作目录。选择后，现有数据会写入该目录；之后所有增删改都会直接落到磁盘。',
+      () => { pickWorkDir(); });
+  } catch (e) { logError(e, 'workdir-prompt'); }
+}
 
 // ===================== 回收站视图 =====================
 function openTrashModal() {
