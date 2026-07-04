@@ -5236,8 +5236,67 @@ function bindWorkDir() {
   if (syncBtn) syncBtn.addEventListener('click', () => workdirWriteAll(false));
   if (scanBtn) scanBtn.addEventListener('click', () => workdirImportAll(false));
   if (offBtn) offBtn.addEventListener('click', forgetWorkDir);
+  const trashBtn = document.getElementById('openTrashBtn');
+  if (trashBtn) trashBtn.addEventListener('click', openTrashModal);
+  const trashClose = document.getElementById('trashCloseBtn');
+  if (trashClose) trashClose.addEventListener('click', closeTrashModal);
 }
 bindWorkDir();
+
+// ===================== 回收站视图 =====================
+function openTrashModal() {
+  const bg = document.getElementById('trashModalBg');
+  if (bg) bg.classList.add('show');
+  renderTrashView();
+}
+function closeTrashModal() {
+  const bg = document.getElementById('trashModalBg');
+  if (bg) bg.classList.remove('show');
+}
+async function renderTrashView() {
+  const box = document.getElementById('trashList');
+  if (!box) return;
+  const fs = (typeof fsApi === 'function') ? fsApi() : null;
+  if (!window.trash || !fs || !(await fs.hasDir())) {
+    box.innerHTML = '<div class="storage-info">未启用工作目录，暂无回收站。</div>';
+    return;
+  }
+  const idx = (await window.trash.loadTrashIndex()).slice().sort((a, b) => (b.deletedAt || 0) - (a.deletedAt || 0));
+  if (!idx.length) { box.innerHTML = '<div class="storage-info">回收站为空。</div>'; return; }
+  const now = Date.now();
+  const typeLabel = { note: '笔记', notebook: '笔记本', folder: '文件夹', todo: '待办' };
+  box.innerHTML = idx.map(e => {
+    const days = Math.max(0, 30 - Math.floor((now - (e.deletedAt || 0)) / 86400000));
+    return `<div class="trash-item" data-tp="${escapeHtml(e.trashPath)}" style="display:flex;align-items:center;gap:8px;padding:8px 4px;border-bottom:1px solid var(--rule-soft);">
+      <span style="font-size:11px;color:var(--ink-mute);border:1px solid var(--rule);border-radius:4px;padding:1px 6px;flex-shrink:0;">${typeLabel[e.type] || e.type || ''}</span>
+      <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(e.name || '')}</span>
+      <span style="font-size:11px;color:var(--ink-mute);flex-shrink:0;">剩 ${days} 天</span>
+      <button class="modal-btn" data-act="restore" style="padding:3px 10px;font-size:11px;flex-shrink:0;">恢复</button>
+      <button class="modal-btn" data-act="purge" style="padding:3px 10px;font-size:11px;flex-shrink:0;">彻底删</button>
+    </div>`;
+  }).join('');
+  box.querySelectorAll('.trash-item').forEach(row => {
+    const tp = row.dataset.tp;
+    const rb = row.querySelector('[data-act="restore"]');
+    const pb = row.querySelector('[data-act="purge"]');
+    if (rb) rb.addEventListener('click', async () => {
+      try {
+        const existing = new Set((await fs.list()).filter(x => !x.dir).map(x => x.path));
+        await window.trash.restoreFromTrash(tp, existing);
+        await workdirImportAll(true);
+        renderNotebooks(); renderNotesList();
+        renderTrashView();
+        showToast('已恢复');
+      } catch (err) { logError(err, 'trash-restore'); showToast('恢复失败：' + (err && err.message)); }
+    });
+    if (pb) pb.addEventListener('click', () => {
+      showModal('彻底删除？', '将从磁盘永久删除该项，无法恢复。', async () => {
+        try { await window.trash.permanentDelete(tp); renderTrashView(); showToast('已彻底删除'); }
+        catch (err) { logError(err, 'trash-purge-one'); }
+      });
+    });
+  });
+}
 
 // ==========================================================
 // v1.7 阅读模式

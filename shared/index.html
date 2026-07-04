@@ -4148,6 +4148,17 @@
   </div>
 </div>
 
+<!-- 回收站模态框 -->
+<div class="modal-bg" id="trashModalBg">
+  <div class="modal" style="max-width:560px;width:92%;">
+    <h3 style="display:flex;justify-content:space-between;align-items:center;gap:12px;">
+      <span>回收站 <span style="font-weight:400;font-size:12px;color:var(--ink-mute);">（超过 30 天自动清除）</span></span>
+      <button class="modal-btn" id="trashCloseBtn" style="padding:4px 12px;font-size:11px;">关闭</button>
+    </h3>
+    <div id="trashList" style="max-height:52vh;overflow-y:auto;margin-top:10px;"></div>
+  </div>
+</div>
+
 <!-- 笔记本编辑模态框 -->
 <div class="modal-bg" id="notebookModalBg">
   <div class="modal">
@@ -4367,6 +4378,7 @@
           <button id="scanWorkDirBtn">🔄 扫描导入</button>
           <button id="syncWorkDirBtn">⬆ 立即写出</button>
           <button id="forgetWorkDirBtn">✕ 停用</button>
+          <button id="openTrashBtn">🗑 回收站</button>
         </div>
         <div class="settings-label-mono" style="margin-bottom: 16px;">选择后，新增/修改的笔记与待办会以 .md 实时保存到该目录（笔记本/文件夹/标题.md，待办在「待办」子目录，图片在 _assets）。把外部 .md 放进目录后点「扫描导入」即可出现在应用中。卸载软件或扩展不会删除这些文件。扩展端需 Chrome/Edge 100+，重装后重新选择同一目录即可。</div>
         <p class="settings-section-title" style="display:flex;justify-content:space-between;align-items:center;">
