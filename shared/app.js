@@ -89,6 +89,16 @@ function idbGetAll(store) {
   });
 }
 
+function idbGetAllKeys(store) {
+  return new Promise((resolve, reject) => {
+    if (!_idb) { resolve([]); return; }
+    const tx = _idb.transaction(store, 'readonly');
+    const r = tx.objectStore(store).getAllKeys();
+    r.onsuccess = () => resolve(r.result || []);
+    r.onerror = () => reject(r.error);
+  });
+}
+
 function idbDelete(store, key) {
   return new Promise((resolve, reject) => {
     if (!_idb) { resolve(); return; }
@@ -119,11 +129,20 @@ async function initImagesIdb() {
   // 从 IDB 加载所有图片到内存。内存里改存 blob 对象 URL(而非 base64 dataUrl):base64 比二进制大约 37%
   // 且常驻 JS 堆,图片多时会把 WebView2 渲染进程内存推爆(out of memory)。blob 二进制放堆外,内存表只留
   // 极短的 blob: URL 字符串;渲染 <img src="blob:..."> 也不再内联大 base64。IDB 里仍保留 base64 供导出/持久化。
+  // 逐张加载:先只取全部 key(极小),再单张 idbGet 取 base64→建 blob URL,建完即释放该张 base64。
+  // 这样峰值只有[已建的全部 blob(堆外,较小)] + [当前这一张 base64],而不是[全部 base64] + [逐张临时数组] +
+  // [全部 blob] ≈ 2-3 倍图片体积同时驻留。每处理若干张就 yield 一次,避免同步长循环卡死主线程(启动 OOM/设置打不开)。
   try {
-    const all = await idbGetAll('images');
-    all.forEach(img => {
-      images[img.id] = { name: img.name, ext: img.ext, createdAt: img.createdAt, dataUrl: _imgDataUrlToObjectURL(img.dataUrl) };
-    });
+    const keys = await idbGetAllKeys('images');
+    let i = 0;
+    for (const id of keys) {
+      let rec = null;
+      try { rec = await idbGet('images', id); } catch (e) { continue; }
+      if (!rec) continue;
+      images[id] = { name: rec.name, ext: rec.ext, createdAt: rec.createdAt, dataUrl: _imgDataUrlToObjectURL(rec.dataUrl) };
+      rec = null; // 释放该张 base64,避免峰值堆积
+      if (++i % 8 === 0) await new Promise(r => setTimeout(r, 0)); // 让出主线程 + 给 GC 回收上一批临时对象的机会
+    }
   } catch (e) { logError(e, 'idb-load'); }
 }
 
