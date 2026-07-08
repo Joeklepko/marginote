@@ -1969,9 +1969,44 @@ function getMdRenderer() {
     tokens[idx].attrSet('rel', 'noopener nofollow');
     return dft(tokens, idx, options, env, self);
   };
+  // 图片懒加载 + 异步解码：只解码进入视口的图片，大幅降低"图片多时反复渲染把未压缩位图堆满内存"
+  // 造成的 out of memory（一张大截图解码成位图可达数十 MB）。
+  const dftImg = md.renderer.rules.image || function (tokens, idx, options, env, self) {
+    return self.renderToken(tokens, idx, options);
+  };
+  md.renderer.rules.image = function (tokens, idx, options, env, self) {
+    tokens[idx].attrSet('loading', 'lazy');
+    tokens[idx].attrSet('decoding', 'async');
+    return dftImg(tokens, idx, options, env, self);
+  };
   _mdRenderer = md;
   return md;
 }
+
+// ── 内存诊断读数（临时）──
+// 仅当 performance.memory 可用（WebView2/Chromium）时，在左下角显示 JS 堆占用/上限/峰值。
+// 用途：定位 out of memory —— 操作时观察它是否持续攀升（=泄漏）还是稳定偏高（=基线）。
+// 稳定后可移除。
+(function heapMeter() {
+  try {
+    if (!(window.performance && performance.memory)) return;
+    const box = document.createElement('div');
+    box.id = 'heapMeter';
+    box.style.cssText = 'position:fixed;left:6px;bottom:6px;z-index:99999;font:11px/1.3 monospace;background:rgba(0,0,0,.6);color:#fff;padding:2px 6px;border-radius:4px;pointer-events:none;opacity:.72;white-space:nowrap;';
+    const attach = () => { if (document.body) document.body.appendChild(box); };
+    if (document.body) attach(); else document.addEventListener('DOMContentLoaded', attach);
+    let peak = 0;
+    setInterval(() => {
+      try {
+        const m = performance.memory;
+        const used = m.usedJSHeapSize / 1048576, lim = m.jsHeapSizeLimit / 1048576;
+        if (used > peak) peak = used;
+        box.textContent = `堆 ${used.toFixed(0)} / ${lim.toFixed(0)} MB · 峰 ${peak.toFixed(0)}`;
+        box.style.background = (used / lim > 0.8) ? 'rgba(170,0,0,.8)' : 'rgba(0,0,0,.6)';
+      } catch (e) {}
+    }, 1500);
+  } catch (e) {}
+})();
 
 // 协议白名单：http(s) / mailto / tel / ftp / 锚点 / 相对路径 / data:image
 const SAFE_URI_RE = /^(?:(?:https?|mailto|tel|ftp):|#|\/|data:image\/(?:png|jpe?g|gif|webp|svg\+xml|bmp))/i;
