@@ -116,13 +116,46 @@ async function initImagesIdb() {
     // saveData 之后会从 localStorage 主表移除（saveData 已不写 images）
     saveData();
   }
-  // 从 IDB 加载所有图片到内存（同步访问需要）
+  // 从 IDB 加载所有图片到内存。内存里改存 blob 对象 URL(而非 base64 dataUrl):base64 比二进制大约 37%
+  // 且常驻 JS 堆,图片多时会把 WebView2 渲染进程内存推爆(out of memory)。blob 二进制放堆外,内存表只留
+  // 极短的 blob: URL 字符串;渲染 <img src="blob:..."> 也不再内联大 base64。IDB 里仍保留 base64 供导出/持久化。
   try {
     const all = await idbGetAll('images');
     all.forEach(img => {
-      images[img.id] = { name: img.name, dataUrl: img.dataUrl, ext: img.ext, createdAt: img.createdAt };
+      images[img.id] = { name: img.name, ext: img.ext, createdAt: img.createdAt, dataUrl: _imgDataUrlToObjectURL(img.dataUrl) };
     });
   } catch (e) { logError(e, 'idb-load'); }
+}
+
+// base64 dataUrl → blob 对象 URL(把二进制移出 JS 堆)。失败/非 base64 则原样返回,保证图片仍能显示。
+function _imgDataUrlToObjectURL(dataUrl) {
+  try {
+    const m = /^data:([^;]+);base64,(.+)$/.exec(dataUrl || '');
+    if (!m) return dataUrl || '';
+    const bin = atob(m[2]);
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    return URL.createObjectURL(new Blob([bytes], { type: m[1] }));
+  } catch (e) { return dataUrl || ''; }
+}
+
+// 新增图片统一入口:base64 写 IDB(持久化+导出用),内存只放 blob 对象 URL(省内存)。
+function addImageRecord(id, base64DataUrl, meta) {
+  meta = meta || {};
+  const ext = meta.ext || detectExtFromDataUrl(base64DataUrl);
+  const createdAt = meta.createdAt || Date.now();
+  const name = meta.name || ('image' + ext);
+  if (_idb) { try { idbPut('images', { id, name, ext, createdAt, dataUrl: base64DataUrl }); } catch (e) { logError(e, 'idb-put'); } }
+  images[id] = { name, ext, createdAt, dataUrl: _imgDataUrlToObjectURL(base64DataUrl) };
+  return images[id];
+}
+
+// 导出/写盘需要 base64:内存现在是 blob: URL,从 IDB 取回持久化的 base64。
+async function getImageBase64(id) {
+  const img = images[id];
+  if (img && typeof img.dataUrl === 'string' && img.dataUrl.startsWith('data:')) return img.dataUrl;
+  try { const rec = await idbGet('images', id); if (rec && rec.dataUrl) return rec.dataUrl; } catch (e) {}
+  return null;
 }
 
 async function persistImage(id) {
@@ -2195,8 +2228,7 @@ async function handleImageInsert(file, target) {
     const id = uid();
     const ext = detectExtFromDataUrl(dataUrl);
     const baseName = (file.name || 'image' + ext).replace(/[\[\]()]/g, '');
-    images[id] = { name: baseName, dataUrl, ext, createdAt: Date.now() };
-    persistImage(id); // 异步写 IDB
+    addImageRecord(id, dataUrl, { name: baseName, ext }); // base64→IDB, 内存存 blob URL
     // 短引用，避免编辑区显示长 base64
     const md = `\n![${baseName}](img:${id})\n`;
     if (target === 'todo') {
@@ -2239,8 +2271,7 @@ function ingestImageDataUrls(content) {
   return (content || '').replace(/!\[([^\]]*)\]\((data:image\/[a-z0-9+.\-]+;base64,[^\s)]+)\)/gi, (m, alt, dataUrl) => {
     const id = uid();
     const ext = detectExtFromDataUrl(dataUrl);
-    images[id] = { name: alt || ('image' + ext), dataUrl, ext, createdAt: Date.now() };
-    persistImage(id);
+    addImageRecord(id, dataUrl, { name: alt || ('image' + ext), ext });
     return `![${alt}](img:${id})`;
   });
 }
@@ -2487,14 +2518,16 @@ async function exportAll(opts) {
   });
 
   // 写入资产
-  usedImgIds.forEach(id => {
+  for (const id of usedImgIds) {
     const img = images[id];
-    if (!img || !img.dataUrl) return;
-    const m = img.dataUrl.match(/^data:[^;]+;base64,(.+)$/);
-    if (!m) return;
-    const ext = img.ext || detectExtFromDataUrl(img.dataUrl);
+    if (!img) continue;
+    const b64 = await getImageBase64(id);   // 内存是 blob URL,导出需从 IDB 取回 base64
+    if (!b64) continue;
+    const m = b64.match(/^data:[^;]+;base64,(.+)$/);
+    if (!m) continue;
+    const ext = img.ext || detectExtFromDataUrl(b64);
     zip.file('_assets/' + id + ext, m[1], { base64: true });
-  });
+  }
 
   // 元信息（含被回收笔记 + 笔记本/文件夹/待办 + 完整 images 供回写）
   zip.file('_marginote_meta.json', JSON.stringify({
@@ -4954,10 +4987,12 @@ async function workdirWriteAll(silent) {
     // 图片资产
     for (const id of usedImgIds) {
       const img = images[id];
-      if (!img || !img.dataUrl) continue;
-      const m = img.dataUrl.match(/^data:[^;]+;base64,(.+)$/);
+      if (!img) continue;
+      const b64 = await getImageBase64(id);   // 内存是 blob URL,写盘需从 IDB 取回 base64
+      if (!b64) continue;
+      const m = b64.match(/^data:[^;]+;base64,(.+)$/);
       if (!m) continue;
-      const ext = img.ext || detectExtFromDataUrl(img.dataUrl);
+      const ext = img.ext || detectExtFromDataUrl(b64);
       await fs.writeBinary('_assets/' + id + ext, m[1]);
     }
     // 元数据：笔记本/文件夹/被删笔记/图片元信息/路径映射
@@ -5039,8 +5074,7 @@ async function workdirImportAll(silent) {
         const b64 = await fs.readBinary(a.path);
         if (!b64) continue;
         const mi = imagesMeta[id] || {};
-        images[id] = { name: mi.name || fname, ext: mi.ext || ext, createdAt: mi.createdAt || Date.now(), dataUrl: `data:${mimeFromExt(ext)};base64,${b64}` };
-        await idbPut('images', { id, ...images[id] });
+        addImageRecord(id, `data:${mimeFromExt(ext)};base64,${b64}`, { name: mi.name || fname, ext: mi.ext || ext, createdAt: mi.createdAt || Date.now() });
       } catch (e) { logError(e, 'workdir-asset:' + a.path); }
     }
 
