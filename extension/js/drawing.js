@@ -65,7 +65,7 @@
         onExportFromFrame(d);
       } else if (d.type === 'assets-missing') {
         if (typeof showToast === 'function') {
-          showToast('画图资源未安装：在 shared/excalidraw/vendor 运行 bash fetch.sh');
+          showToast('画图资源缺失：安装包/扩展未完整，请重新安装或重新加载扩展');
         }
       } else if (d.type === 'error') {
         if (typeof console !== 'undefined') console.warn('[drawing]', d.message);

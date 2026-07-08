@@ -1,8 +1,0 @@
-# Excalidraw 自托管大文件不入库（由 fetch.sh 下载）
-react.production.min.js
-react-dom.production.min.js
-excalidraw.production.min.js
-excalidraw.css
-*.woff2
-*.woff
-fonts/

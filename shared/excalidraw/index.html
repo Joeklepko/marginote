@@ -4,10 +4,11 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Marginote · 画图</title>
-<!-- Excalidraw 自托管资源（由 vendor/fetch.sh 下载到 ./vendor/）。
-     扩展 MV3 与桌面 Tauri 的 CSP 都是 script-src 'self'，所以必须本地化，
-     不能用 CDN。缺资源时下方脚本会显示提示而非白屏。 -->
-<link rel="stylesheet" href="./vendor/excalidraw.css" onerror="window.__cssFail=true">
+<!-- Excalidraw 自托管资源已内置在 ./vendor/（随仓库与安装包一起分发，无需联网、
+     无需运行任何脚本）。扩展 MV3 与桌面 Tauri 的 CSP 都是 script-src 'self'，
+     所以脚本必须本地化、且不能内联（内联会被 MV3 拦截）—— 引导与主逻辑分别放在
+     boot.js / app.js。0.17.x 的样式由 JS 注入（无独立 CSS 文件），style-src 允许
+     'unsafe-inline'，故此处不再引用 vendor/*.css。 -->
 <style>
   html, body { height: 100%; margin: 0; }
   /* canvas 必须有确定高度，否则 Excalidraw 工具栏（绝对定位）能显示但
@@ -27,199 +28,24 @@
     background: #ece5d6; padding: 2px 8px; border-radius: 4px;
     font-family: ui-monospace, Consolas, monospace; font-size: 13px;
   }
-  #setup-hint pre {
-    text-align: left; background: #1a1814; color: #f4efe6;
-    padding: 14px 18px; border-radius: 8px; font-size: 13px;
-    max-width: 560px; overflow-x: auto;
-  }
+  #setup-detail { font-size: 12px; color: #b8431f; max-width: 560px; word-break: break-all; }
 </style>
 </head>
 <body>
 <div id="root"></div>
 <div id="setup-hint">
-  <h2>Excalidraw 画图资源未安装</h2>
-  <p>这是一次性安装（约 3MB，需要联网下载一次，之后离线可用）。</p>
-  <p>在项目根目录运行：</p>
-  <pre>cd shared/excalidraw/vendor &amp;&amp; bash fetch.sh</pre>
-  <p style="font-size:13px;color:#888;">扩展端会随 <code>shared/</code> 一并同步到 <code>extension/</code>。</p>
+  <h2>画图资源未就绪</h2>
+  <p>Excalidraw 资源已内置在安装包/扩展内，正常情况下无需任何操作。</p>
+  <p>若出现此提示，通常是安装包或扩展未完整解压；请重新安装，或重新加载扩展。</p>
+  <div id="setup-detail"></div>
 </div>
 
-<!-- 本地 React + Excalidraw UMD（fetch.sh 下载）。缺失则 onerror 触发提示。 -->
-<script>window.__assetFail = false;</script>
-<script src="./vendor/react.production.min.js" onerror="window.__assetFail=true"></script>
-<script src="./vendor/react-dom.production.min.js" onerror="window.__assetFail=true"></script>
-<script src="./vendor/excalidraw.production.min.js" onerror="window.__assetFail=true"></script>
-<script>
-(function () {
-  'use strict';
-
-  // 资源缺失 → 显示安装提示，不白屏
-  function assetsReady() {
-    return !window.__assetFail
-      && typeof window.React !== 'undefined'
-      && typeof window.ReactDOM !== 'undefined'
-      && typeof window.ExcalidrawLib !== 'undefined';
-  }
-  if (!assetsReady()) {
-    document.getElementById('setup-hint').classList.add('show');
-    try { parent.postMessage({ source: 'mn-excalidraw', type: 'assets-missing' }, '*'); } catch (e) {}
-    return;
-  }
-
-  const Lib = window.ExcalidrawLib;
-  const { Excalidraw, serializeAsJSON } = Lib;
-  let excalidrawAPI = null;
-  let pendingScene = null;   // 父窗口在 ready 之前发来的场景
-  let saveTimer = null;
-  let thumbTimer = null;
-
-  function postToParent(msg) {
-    try { parent.postMessage(Object.assign({ source: 'mn-excalidraw' }, msg), '*'); } catch (e) {}
-  }
-
-  function currentSceneJSON() {
-    if (!excalidrawAPI) return '';
-    try {
-      return serializeAsJSON(
-        excalidrawAPI.getSceneElements(),
-        excalidrawAPI.getAppState(),
-        excalidrawAPI.getFiles(),
-        'local'
-      );
-    } catch (e) { return ''; }
-  }
-
-  function blobToB64(blob) {
-    return new Promise(function (resolve) {
-      const r = new FileReader();
-      r.onload = function () {
-        const s = String(r.result || '');
-        const i = s.indexOf('base64,');
-        resolve(i >= 0 ? s.slice(i + 7) : '');
-      };
-      r.onerror = function () { resolve(''); };
-      r.readAsDataURL(blob);
-    });
-  }
-
-  // 生成缩略图 PNG base64（长边 ~320px）。失败返回 ''。
-  async function makeThumb() {
-    if (!excalidrawAPI || typeof Lib.exportToBlob !== 'function') return '';
-    try {
-      const elements = excalidrawAPI.getSceneElements();
-      if (!elements || !elements.length) return '';
-      const blob = await Lib.exportToBlob({
-        elements: elements,
-        appState: Object.assign({}, excalidrawAPI.getAppState(), { exportBackground: true }),
-        files: excalidrawAPI.getFiles(),
-        mimeType: 'image/png',
-        maxWidthOrHeight: 320,
-      });
-      return await blobToB64(blob);
-    } catch (e) { return ''; }
-  }
-
-  // 导出整图 PNG/SVG base64（用于「导出到笔记」，全尺寸）
-  async function exportFull(kind) {
-    if (!excalidrawAPI) return null;
-    const elements = excalidrawAPI.getSceneElements();
-    if (!elements || !elements.length) return null;
-    const appState = Object.assign({}, excalidrawAPI.getAppState(), { exportBackground: true });
-    const files = excalidrawAPI.getFiles();
-    try {
-      if (kind === 'svg' && typeof Lib.exportToSvg === 'function') {
-        const svg = await Lib.exportToSvg({ elements: elements, appState: appState, files: files });
-        const str = new XMLSerializer().serializeToString(svg);
-        return { ext: '.svg', mime: 'image/svg+xml', b64: btoa(unescape(encodeURIComponent(str))) };
-      }
-      if (typeof Lib.exportToBlob === 'function') {
-        const blob = await Lib.exportToBlob({ elements: elements, appState: appState, files: files, mimeType: 'image/png', maxWidthOrHeight: 2000 });
-        return { ext: '.png', mime: 'image/png', b64: await blobToB64(blob) };
-      }
-    } catch (e) { postToParent({ type: 'error', message: 'export failed: ' + (e && e.message) }); }
-    return null;
-  }
-
-  function loadSceneJSON(json) {
-    if (!excalidrawAPI) { pendingScene = json; return; }
-    try {
-      const data = (json && json.trim()) ? JSON.parse(json) : { elements: [], appState: {} };
-      excalidrawAPI.updateScene({
-        elements: data.elements || [],
-        appState: Object.assign({}, data.appState || {}, { collaborators: [] }),
-      });
-      if (data.files && Object.keys(data.files).length) {
-        const arr = Object.keys(data.files).map(function (k) { return data.files[k]; });
-        try { excalidrawAPI.addFiles(arr); } catch (e) {}
-      }
-      try { excalidrawAPI.scrollToContent(); } catch (e) {}
-      // 加载后强制刷新画布尺寸（修复 canvas rect 缓存为 0 导致无法编辑）
-      try { excalidrawAPI.refresh(); } catch (e) {}
-    } catch (e) {
-      postToParent({ type: 'error', message: 'load scene failed: ' + (e && e.message) });
-    }
-  }
-
-  // 父 → iframe 消息
-  window.addEventListener('message', async function (ev) {
-    const d = ev.data;
-    if (!d || d.target !== 'mn-excalidraw') return;
-    if (d.type === 'load') {
-      loadSceneJSON(d.json || '');
-    } else if (d.type === 'request-save') {
-      postToParent({ type: 'scene', json: currentSceneJSON() });
-    } else if (d.type === 'set-theme') {
-      if (excalidrawAPI) {
-        try { excalidrawAPI.updateScene({ appState: { theme: d.dark ? 'dark' : 'light' } }); } catch (e) {}
-      }
-    } else if (d.type === 'request-export') {
-      const out = await exportFull(d.kind || 'png');
-      postToParent({ type: 'export', kind: d.kind || 'png', data: out });
-    } else if (d.type === 'refresh') {
-      if (excalidrawAPI) { try { excalidrawAPI.refresh(); } catch (e) {} }
-    }
-  });
-
-  function onChange() {
-    clearTimeout(saveTimer);
-    saveTimer = setTimeout(function () {
-      postToParent({ type: 'scene', json: currentSceneJSON() });
-    }, 800);
-    clearTimeout(thumbTimer);
-    thumbTimer = setTimeout(async function () {
-      const b64 = await makeThumb();
-      if (b64) postToParent({ type: 'thumb', b64: b64 });
-    }, 1400);
-  }
-
-  function isDark() {
-    try { return new URLSearchParams(location.search).get('theme') === 'dark'; }
-    catch (e) { return false; }
-  }
-
-  // 窗口尺寸变化时刷新画布（容器从 0→有尺寸、或拖动分隔时）
-  window.addEventListener('resize', function () {
-    if (excalidrawAPI) { try { excalidrawAPI.refresh(); } catch (e) {} }
-  });
-
-  const e = window.React.createElement;
-  function App() {
-    return e(Excalidraw, {
-      excalidrawAPI: function (api) {
-        excalidrawAPI = api;
-        if (pendingScene) { loadSceneJSON(pendingScene); pendingScene = null; }
-        // 首帧后再刷新一次，确保拿到正确容器尺寸
-        setTimeout(function () { try { api.refresh(); } catch (e) {} }, 60);
-        postToParent({ type: 'ready' });
-      },
-      onChange: onChange,
-      theme: isDark() ? 'dark' : 'light',
-      langCode: 'zh-CN',
-    });
-  }
-
-  window.ReactDOM.createRoot(document.getElementById('root')).render(e(App));
-})();
-</script>
+<!-- 加载顺序：boot.js（process 垫片 + 资源路径 + 错误捕获）必须最先；
+     再按序加载 react → react-dom → excalidraw；最后 app.js 启动画板。 -->
+<script src="./boot.js"></script>
+<script src="./vendor/react.production.min.js"></script>
+<script src="./vendor/react-dom.production.min.js"></script>
+<script src="./vendor/excalidraw.production.min.js"></script>
+<script src="./app.js"></script>
 </body>
 </html>
