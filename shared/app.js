@@ -126,12 +126,12 @@ async function initImagesIdb() {
     // saveData 之后会从 localStorage 主表移除（saveData 已不写 images）
     saveData();
   }
-  // 从 IDB 加载所有图片到内存。内存里改存 blob 对象 URL(而非 base64 dataUrl):base64 比二进制大约 37%
-  // 且常驻 JS 堆,图片多时会把 WebView2 渲染进程内存推爆(out of memory)。blob 二进制放堆外,内存表只留
-  // 极短的 blob: URL 字符串;渲染 <img src="blob:..."> 也不再内联大 base64。IDB 里仍保留 base64 供导出/持久化。
-  // 逐张加载:先只取全部 key(极小),再单张 idbGet 取 base64→建 blob URL,建完即释放该张 base64。
-  // 这样峰值只有[已建的全部 blob(堆外,较小)] + [当前这一张 base64],而不是[全部 base64] + [逐张临时数组] +
-  // [全部 blob] ≈ 2-3 倍图片体积同时驻留。每处理若干张就 yield 一次,避免同步长循环卡死主线程(启动 OOM/设置打不开)。
+  // 启动只加载图片【元数据】(name/ext/createdAt),【不把任何 base64 载入内存】。图片体积大,若把全部图片
+  // 常驻内存(无论 base64 还是 blob),图片一多就把 WebView2 渲染进程撑爆(out of memory);且 blob: 对象 URL
+  // 在本应用的 Tauri/WebView2 自定义协议源下 <img> 无法加载(试过 CSP+DOMPurify 放行仍不显示)。
+  // 因此改为真·懒加载:渲染某条笔记时,才按需从 IDB 取该图 base64、以 data: URL 填入 <img src>(data: 在本
+  // 环境验证可正常显示)。切走笔记后其 <img> 随 DOM 释放 → 内存只驻留【当前视图可见的图】,根治 OOM。
+  // 逐张读 key(极小),记录元数据即可;base64 留在 IDB 供渲染/导出按需取回。
   try {
     const keys = await idbGetAllKeys('images');
     let i = 0;
@@ -139,23 +139,11 @@ async function initImagesIdb() {
       let rec = null;
       try { rec = await idbGet('images', id); } catch (e) { continue; }
       if (!rec) continue;
-      images[id] = { name: rec.name, ext: rec.ext, createdAt: rec.createdAt, dataUrl: _imgDataUrlToObjectURL(rec.dataUrl) };
-      rec = null; // 释放该张 base64,避免峰值堆积
-      if (++i % 8 === 0) await new Promise(r => setTimeout(r, 0)); // 让出主线程 + 给 GC 回收上一批临时对象的机会
+      images[id] = { name: rec.name, ext: rec.ext, createdAt: rec.createdAt }; // 无 dataUrl:按需从 IDB 取
+      rec = null;
+      if (++i % 20 === 0) await new Promise(r => setTimeout(r, 0)); // 让出主线程,避免长循环卡死
     }
   } catch (e) { logError(e, 'idb-load'); }
-}
-
-// base64 dataUrl → blob 对象 URL(把二进制移出 JS 堆)。失败/非 base64 则原样返回,保证图片仍能显示。
-function _imgDataUrlToObjectURL(dataUrl) {
-  try {
-    const m = /^data:([^;]+);base64,(.+)$/.exec(dataUrl || '');
-    if (!m) return dataUrl || '';
-    const bin = atob(m[2]);
-    const bytes = new Uint8Array(bin.length);
-    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-    return URL.createObjectURL(new Blob([bytes], { type: m[1] }));
-  } catch (e) { return dataUrl || ''; }
 }
 
 // 新增图片统一入口:base64 写 IDB(持久化+导出用),内存只放 blob 对象 URL(省内存)。
@@ -165,16 +153,73 @@ function addImageRecord(id, base64DataUrl, meta) {
   const createdAt = meta.createdAt || Date.now();
   const name = meta.name || ('image' + ext);
   if (_idb) { try { idbPut('images', { id, name, ext, createdAt, dataUrl: base64DataUrl }); } catch (e) { logError(e, 'idb-put'); } }
-  images[id] = { name, ext, createdAt, dataUrl: _imgDataUrlToObjectURL(base64DataUrl) };
+  // 把 base64 放入小 LRU(供插入后即时渲染 + 避开 IDB 异步写入竞态),但【不常驻 images[id]】——否则批量
+  // 插入/导入/压缩会把成百上千张图的 base64 堆在内存里再次 OOM。images[id] 只存元数据,渲染按需取回。
+  _cacheImgB64(id, base64DataUrl);
+  images[id] = { name, ext, createdAt };
   return images[id];
 }
 
-// 导出/写盘需要 base64:内存现在是 blob: URL,从 IDB 取回持久化的 base64。
+// 近期插入/压缩图片的小 LRU 缓存(id → base64 data:)。只为"刚写入、可能马上要渲染"的图提供同步命中,
+// 上限很小,不会随图片总数增长。渲染/导出优先查它,未命中再走 IDB。
+const _imgB64Cache = new Map();
+const _IMG_B64_CACHE_MAX = 12;
+function _cacheImgB64(id, b64) {
+  try {
+    if (!b64) return;
+    if (_imgB64Cache.has(id)) _imgB64Cache.delete(id);
+    _imgB64Cache.set(id, b64);
+    while (_imgB64Cache.size > _IMG_B64_CACHE_MAX) { const k = _imgB64Cache.keys().next().value; _imgB64Cache.delete(k); }
+  } catch (e) {}
+}
+
+// 取图片 base64(data: URL):先查小 LRU,再查内存 dataUrl(兜底),否则从 IDB 按需取回。渲染/导出/写盘共用。
 async function getImageBase64(id) {
+  const c = _imgB64Cache.get(id);
+  if (c) return c;
   const img = images[id];
   if (img && typeof img.dataUrl === 'string' && img.dataUrl.startsWith('data:')) return img.dataUrl;
   try { const rec = await idbGet('images', id); if (rec && rec.dataUrl) return rec.dataUrl; } catch (e) {}
   return null;
+}
+
+// ── 懒加载图片 ──
+// 渲染出的 <img data-imgid="xxx">(无 src) 进入 DOM 后,这里按需从 IDB 取该图 base64、以 data: URL 填 src。
+// 只有真正渲染到页面上的图才会解码进内存;切走笔记后其 <img> 随 DOM 回收 → 内存只驻留当前可见的图,根治 OOM。
+async function hydrateLazyImg(el) {
+  if (!el || el.__imgHydrating || el.getAttribute('src')) return;
+  const id = el.getAttribute('data-imgid');
+  if (!id) return;
+  el.__imgHydrating = true;
+  try {
+    const b64 = await getImageBase64(id);
+    if (b64) el.src = b64;
+    else el.setAttribute('alt', (el.getAttribute('alt') || '') + ' [图片缺失]');
+  } catch (e) {}
+}
+function hydrateLazyImages(root) {
+  try {
+    const scope = (root && root.querySelectorAll) ? root : document;
+    scope.querySelectorAll('img[data-imgid]:not([src])').forEach(hydrateLazyImg);
+  } catch (e) {}
+}
+// 用一个 MutationObserver 统一水合所有渲染入口(renderMarkdown/笔记列表缩略图等)新插入的懒加载图,
+// 避免在每个 innerHTML 赋值处逐一手动调用。
+function startLazyImageObserver() {
+  try {
+    if (!window.MutationObserver || !document.body) return;
+    hydrateLazyImages(document);
+    const obs = new MutationObserver(muts => {
+      for (const mut of muts) {
+        for (const node of mut.addedNodes) {
+          if (!node || node.nodeType !== 1) continue;
+          if (node.matches && node.matches('img[data-imgid]')) hydrateLazyImg(node);
+          if (node.querySelectorAll) { const list = node.querySelectorAll('img[data-imgid]'); for (let k = 0; k < list.length; k++) hydrateLazyImg(list[k]); }
+        }
+      }
+    });
+    obs.observe(document.body, { childList: true, subtree: true });
+  } catch (e) {}
 }
 
 // 批量删除所有画板笔记(画板功能已移除)。画板 content 是内嵌图片的大 JSON,逐个删会在 saveData/
@@ -743,8 +788,9 @@ function noteListPreviewHtml(n) {
   if (n.type === 'drawing') {
     const ref = n.thumb && /^img:([a-z0-9]+)$/i.test(n.thumb) ? n.thumb.slice(4) : null;
     const img = ref && images[ref];
-    if (img && img.dataUrl) {
-      return `<div class="note-preview note-preview-thumb"><img src="${img.dataUrl}" alt="画板缩略图" style="max-width:100%;max-height:90px;border-radius:6px;border:1px solid var(--rule-soft);"></div>`;
+    if (img) {
+      // 懒加载:data-imgid 由 hydrateLazyImages 从 IDB 填 src(列表 innerHTML 不过 DOMPurify,直接用)
+      return `<div class="note-preview note-preview-thumb"><img data-imgid="${ref}" alt="画板缩略图" style="max-width:100%;max-height:90px;border-radius:6px;border:1px solid var(--rule-soft);"></div>`;
     }
     return `<div class="note-preview" style="font-style:italic;color:var(--ink-mute);">空白画板</div>`;
   }
@@ -2090,11 +2136,14 @@ function applyNotePreview(note, contentOverride) {
 function renderMarkdown(mdText) {
   if (!mdText) return '<p style="color:var(--ink-mute);font-style:italic">空白页…</p>';
 
-  // 1. img:<id> → data URL
+  // 1. img:<id> → 图片。内存已有 data: 的(本会话新插入)直接内联;其余输出懒加载占位 <img data-imgid>,
+  //    渲染入 DOM 后由 hydrateLazyImages 从 IDB 取 base64 填 src(见 MutationObserver)。用 data: 而非 blob:
+  //    是因为 blob: 在本环境 <img> 加载不出来。
   let processed = mdText.replace(/!\[([^\]]*)\]\(img:([a-z0-9]+)\)/gi, (m, alt, id) => {
-    const img = images[id];
-    if (!img || !img.dataUrl) return `*[图片缺失:${id}]*`;
-    return `![${alt}](${img.dataUrl})`;
+    if (!images[id]) return `*[图片缺失:${id}]*`;
+    const cached = _imgB64Cache.get(id);
+    if (cached) return `![${alt}](${cached})`; // 刚插入/压缩的图,LRU 命中,直接内联即时显示
+    return `<img class="mn-img" data-imgid="${id}" alt="${escapeHtml(alt)}" loading="lazy" decoding="async">`;
   });
 
   // 2. ==高亮== (markdown-it 不原生支持)
@@ -2324,7 +2373,7 @@ async function handleImageInsert(file, target) {
     const id = uid();
     const ext = detectExtFromDataUrl(dataUrl);
     const baseName = (file.name || 'image' + ext).replace(/[\[\]()]/g, '');
-    addImageRecord(id, dataUrl, { name: baseName, ext }); // base64→IDB, 内存存 blob URL
+    addImageRecord(id, dataUrl, { name: baseName, ext }); // base64→IDB + 小 LRU,渲染按需取回
     // 短引用，避免编辑区显示长 base64
     const md = `\n![${baseName}](img:${id})\n`;
     if (target === 'todo') {
@@ -2355,11 +2404,24 @@ function expandImageRefs(content, opts) {
     const img = images[id];
     if (!img) return m;
     if (opts.mode === 'zip') {
-      const ext = img.ext || detectExtFromDataUrl(img.dataUrl);
+      const ext = img.ext || '.png';
       return `![${alt}](${opts.prefix || ''}_assets/${id}${ext})`;
     }
-    return `![${alt}](${img.dataUrl})`;
+    // inline 模式:优先用预解析的 base64 映射(opts.imgMap),其次内存 data:(本会话新图);都没有则
+    // 保留 img:id 引用而非写出 undefined/blob(懒加载后旧图内存无 base64,需调用方 buildImgMap 预解析)。
+    const b64 = (opts.imgMap && opts.imgMap[id]) || _imgB64Cache.get(id) || (typeof img.dataUrl === 'string' && img.dataUrl.startsWith('data:') ? img.dataUrl : null);
+    return b64 ? `![${alt}](${b64})` : m;
   });
+}
+
+// 预解析一段内容里所有 img:<id> 的 base64(从内存或 IDB),供 inline 导出/剪贴板同步拼接使用。
+async function buildImgMap(content) {
+  const map = {};
+  const re = /!\[[^\]]*\]\(img:([a-z0-9]+)\)/gi; let m;
+  const ids = new Set();
+  while ((m = re.exec(content || '')) !== null) ids.add(m[1]);
+  for (const id of ids) { try { const b64 = await getImageBase64(id); if (b64) map[id] = b64; } catch (e) {} }
+  return map;
 }
 
 // 把 data URL / 相对路径资产引用转回 img:<id>
@@ -2569,9 +2631,11 @@ function downloadBlob(blob, filename) {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
-function exportNoteAsMarkdown(note) {
+async function exportNoteAsMarkdown(note) {
   if (!note) return;
-  const md = noteToMarkdown(note);
+  // 单文件导出:内联 base64 使 .md 自包含。旧图内存无 base64,先从 IDB 预解析。
+  const imgMap = await buildImgMap(note.content);
+  const md = noteToMarkdown(note, { mode: 'inline', imgMap });
   const blob = new Blob([md], { type: 'text/markdown;charset=utf-8' });
   downloadBlob(blob, safeName(note.title || 'untitled') + '.md');
   showToast('已导出为 Markdown');
@@ -3798,6 +3862,8 @@ async function init() {
   renderTagFilters();
   renderNotesList();
   switchView('all');
+  // 懒加载图片:监听 DOM,为渲染出的 <img data-imgid> 按需从 IDB 填 data: src(只解码可见图,省内存)
+  startLazyImageObserver();
   // 静态色点（待办状态点等）一次性 JS 强制上色，规避 WebView2 inline 解析漏洞
   paintDotColors(document);
 
@@ -4995,7 +5061,8 @@ function drawingToFile(note) {
 }
 
 // 待办 → markdown（带状态 front-matter）
-function todoToMarkdown(t) {
+function todoToMarkdown(t, opts) {
+  opts = opts || { mode: 'inline' };
   const lines = [
     '---',
     `text: ${(t.text || '').replace(/\n/g, ' ')}`,
@@ -5007,7 +5074,7 @@ function todoToMarkdown(t) {
     '---',
     ''
   ].filter(Boolean);
-  return lines.join('\n') + '\n' + expandImageRefs(t.content || '', { mode: 'inline' });
+  return lines.join('\n') + '\n' + expandImageRefs(t.content || '', opts);
 }
 
 // 写出全部数据到工作目录（app → disk）
@@ -5042,7 +5109,10 @@ async function workdirWriteAll(silent) {
       const rel = noteRelPath(n, usedPaths);
       idToPath[n.id] = rel;
       collectIds(n.content);
-      await fs.writeText(rel, noteToMarkdown(n, { mode: 'inline' }));
+      // 图片写 _assets/ 相对路径(而非内联 base64/blob):笔记在子目录,按深度补 ../ 指回根 _assets。
+      // 资产文件在下方单独写出;导入时 ingestAssetPathRefs 容忍任意 (../)*_assets/ 前缀转回 img:id。
+      const _prefix = '../'.repeat(Math.max(0, rel.split('/').length - 1));
+      await fs.writeText(rel, noteToMarkdown(n, { mode: 'zip', prefix: _prefix }));
     }
     // 待办（统一放 待办/ 子目录）
     const usedTodo = new Set();
@@ -5053,7 +5123,8 @@ async function workdirWriteAll(silent) {
       usedTodo.add(rel + '.md');
       if (t.id) todoIdToPath[t.id] = rel + '.md';
       collectIds(t.content);
-      await fs.writeText(rel + '.md', todoToMarkdown(t));
+      // 待办在 待办/ 下(深度1),图片用 ../_assets/ 相对路径
+      await fs.writeText(rel + '.md', todoToMarkdown(t, { mode: 'zip', prefix: '../' }));
     }
     // 清理旧文件：上次写过、但这次不再写（笔记/待办被移动、重命名、删除，或所在笔记本被删）的
     // 路径，从磁盘删掉，否则下次导入会把它们当新文件读回、"复活"已删的笔记本/笔记。
@@ -5914,14 +5985,15 @@ openAiCustomModal = function() {
 })();
 
 // ---------- 多模态：把笔记中的 img:<id> 解析为 vision-style content 数组 ----------
-function _resolveContentImages(content) {
+async function _resolveContentImages(content) {
   if (!content || typeof content !== 'string') return [];
   const out = [];
   const re = /!\[([^\]]*)\]\(img:([a-z0-9]+)\)/gi;
   let m;
   while ((m = re.exec(content)) !== null) {
-    const img = (typeof images === 'object' && images) ? images[m[2]] : null;
-    if (img && img.dataUrl) out.push({ alt: m[1], dataUrl: img.dataUrl });
+    if (!(typeof images === 'object' && images && images[m[2]])) continue;
+    const b64 = await getImageBase64(m[2]); // 懒加载:旧图内存无 dataUrl,按需从 IDB 取
+    if (b64) out.push({ alt: m[1], dataUrl: b64 });
   }
   return out;
 }
@@ -5929,7 +6001,7 @@ function _resolveContentImages(content) {
 async function buildMultimodalUserContent(provider, title, content, extraImages) {
   const header = (title ? `标题：${title}\n\n` : '') + (content || '(空)');
   if (!provider || !provider.multimodal) return header;
-  const imgs = _resolveContentImages(content);
+  const imgs = await _resolveContentImages(content);
   const extra = Array.isArray(extraImages) ? extraImages : [];
   if (!imgs.length && !extra.length) return header;
   const downscale = (typeof window._downscaleImage === 'function')
