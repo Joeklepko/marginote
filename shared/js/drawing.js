@@ -30,6 +30,7 @@
       '<div id="drawingBar" style="position:absolute; top:8px; right:12px; z-index:5; display:flex; gap:6px;">' +
       '  <button id="drawExportPng" class="icon-btn" data-tip="导出 PNG 到笔记" title="导出 PNG 到笔记" style="background:var(--paper);box-shadow:var(--shadow-soft);font-size:11px;width:auto;padding:0 8px;">PNG</button>' +
       '  <button id="drawExportSvg" class="icon-btn" data-tip="导出 SVG 到笔记" title="导出 SVG 到笔记" style="background:var(--paper);box-shadow:var(--shadow-soft);font-size:11px;width:auto;padding:0 8px;">SVG</button>' +
+      '  <button id="drawDelete" class="icon-btn" data-tip="删除此画板" title="删除此画板" style="background:var(--paper);box-shadow:var(--shadow-soft);font-size:11px;width:auto;padding:0 8px;">🗑 删除</button>' +
       '</div>' +
       '<iframe id="drawingFrame" title="Excalidraw 画图" ' +
       'style="border:0; width:100%; height:100%; display:block; background:var(--paper,#faf6ed);" ' +
@@ -43,8 +44,11 @@
     }
     const pBtn = wrap.querySelector('#drawExportPng');
     const sBtn = wrap.querySelector('#drawExportSvg');
+    const dBtn = wrap.querySelector('#drawDelete');
     if (pBtn) pBtn.addEventListener('click', function () { requestExport('png'); });
     if (sBtn) sBtn.addEventListener('click', function () { requestExport('svg'); });
+    // 删除当前画板：复用主程序的 deleteCurrent（工作目录下会移入回收站，可恢复）
+    if (dBtn) dBtn.addEventListener('click', function () { if (typeof window.deleteCurrent === 'function') window.deleteCurrent(); });
     return wrap;
   }
 
