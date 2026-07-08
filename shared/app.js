@@ -3620,6 +3620,10 @@ function closeStorageModal() { closeSettingsModal(); }
 async function checkAutoBackup() {
   const ab = getAutoBackup();
   if (!ab.intervalDays || ab.intervalDays <= 0) return;
+  // 已绑定工作目录时,笔记/待办已作为真实文件实时存在磁盘,工作目录本身就是"活备份"。
+  // 再用 JSZip 把全部笔记+图片打成全量 zip 既冗余、又会在图片较多时把内存峰值抬高数倍,
+  // WebView2 渲染进程堆有限,极易触发 out of memory 崩溃。故绑定工作目录时跳过自动 zip 备份。
+  if (_workdirCfg && _workdirCfg.enabled) return;
   const elapsed = Date.now() - (ab.lastBackupAt || 0);
   if (elapsed < ab.intervalDays * 86400000) return;
   try {
