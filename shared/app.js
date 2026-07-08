@@ -158,6 +158,39 @@ async function getImageBase64(id) {
   return null;
 }
 
+// 批量删除所有画板笔记(画板功能已移除)。画板 content 是内嵌图片的大 JSON,逐个删会在 saveData/
+// workdirWriteAll 处理大内容时卡死;一次性清理只 saveData 一次,更稳。工作目录下移入回收站可恢复。
+async function deleteAllDrawings() {
+  const draws = notes.filter(n => n.type === 'drawing');
+  if (!draws.length) { showToast('没有画板笔记'); return; }
+  showModal('删除所有画板？', `将删除 ${draws.length} 个画板笔记（画板功能已移除，内容为旧的 Excalidraw 数据）。绑定工作目录时会移入回收站，可恢复。`, async () => {
+    const onWorkdir = _workdirCfg && _workdirCfg.enabled && typeof fsApi === 'function' && fsApi() && window.trash;
+    if (onWorkdir) {
+      try {
+        const fs = fsApi();
+        if (fs && await fs.hasDir()) {
+          for (const n of draws) {
+            const p = n._srcPath || drawingRelPath(n);
+            try { await window.trash.moveToTrash({ path: p, type: 'note', name: (n.title || '未命名画板') + '.excalidraw' }); } catch (e) {}
+          }
+        }
+      } catch (e) { logError(e, 'del-all-draw'); }
+    }
+    const ids = new Set(draws.map(n => n.id));
+    notes = notes.filter(n => !ids.has(n.id));
+    if (currentNote && ids.has(currentNote.id)) {
+      currentNote = null;
+      const _dw = document.getElementById('drawingWrap'); if (_dw) _dw.style.display = 'none';
+      const es = document.getElementById('emptyState'); if (es) es.style.display = 'flex';
+      const ew = document.getElementById('editorWrap'); if (ew) ew.style.display = 'none';
+      document.getElementById('app').classList.remove('show-editor');
+    }
+    saveData();
+    renderNotesList(); renderNotebooks(); renderTagFilters();
+    showToast(`已删除 ${draws.length} 个画板`);
+  });
+}
+
 // 一次性压缩所有现有图片(最长边 2560px)以降低内存占用。顺序处理,峰值只占一张图,避免压缩过程本身 OOM。
 // 有损(转 JPEG)、opt-in(用户点按钮才执行)。
 async function compressAllImages() {
@@ -5347,6 +5380,8 @@ function bindWorkDir() {
   if (trashBtn) trashBtn.addEventListener('click', openTrashModal);
   const cimgBtn = document.getElementById('compressImagesBtn');
   if (cimgBtn) cimgBtn.addEventListener('click', compressAllImages);
+  const delDrawBtn = document.getElementById('deleteAllDrawingsBtn');
+  if (delDrawBtn) delDrawBtn.addEventListener('click', deleteAllDrawings);
   const trashClose = document.getElementById('trashCloseBtn');
   if (trashClose) trashClose.addEventListener('click', closeTrashModal);
 }
