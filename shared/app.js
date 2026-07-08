@@ -158,6 +158,35 @@ async function getImageBase64(id) {
   return null;
 }
 
+// 一次性压缩所有现有图片(最长边 2560px)以降低内存占用。顺序处理,峰值只占一张图,避免压缩过程本身 OOM。
+// 有损(转 JPEG)、opt-in(用户点按钮才执行)。
+async function compressAllImages() {
+  if (typeof _downscaleImage !== 'function') { showToast('图片压缩不可用'); return; }
+  const ids = Object.keys(images);
+  if (!ids.length) { showToast('没有可压缩的图片'); return; }
+  showModal('压缩现有图片？', `将把 ${ids.length} 张图片按最长边 2560px 重新压缩，明显降低内存占用（会略微损失清晰度，不可撤销）。`, async () => {
+    showToast('正在压缩图片…');
+    let done = 0, shrunk = 0;
+    for (const id of ids) {
+      try {
+        const b64 = await getImageBase64(id);
+        if (!b64) { done++; continue; }
+        const small = await _downscaleImage(b64, 2560, 0.85);
+        if (small && small.length < b64.length) {
+          const old = images[id];
+          try { if (old && typeof old.dataUrl === 'string' && old.dataUrl.startsWith('blob:')) URL.revokeObjectURL(old.dataUrl); } catch (e) {}
+          addImageRecord(id, small, { name: old && old.name, ext: detectExtFromDataUrl(small), createdAt: old && old.createdAt });
+          shrunk++;
+        }
+        done++;
+      } catch (e) { logError(e, 'compress-img:' + id); }
+    }
+    if (typeof workdirWriteAll === 'function' && _workdirCfg && _workdirCfg.enabled) { try { await workdirWriteAll(true); } catch (e) {} }
+    if (currentNote) { try { applyNotePreview(currentNote); } catch (e) {} }
+    showToast(`完成：处理 ${done} 张，压缩 ${shrunk} 张`);
+  });
+}
+
 async function persistImage(id) {
   if (!_idb) return;
   try { await idbPut('images', { id, ...images[id] }); }
@@ -2259,7 +2288,10 @@ function mimeFromExt(ext) {
 async function handleImageInsert(file, target) {
   if (!file || !file.type.startsWith('image/')) return;
   try {
-    const dataUrl = await readFileAsDataURL(file);
+    let dataUrl = await readFileAsDataURL(file);
+    // 限制图片尺寸(最长边 2560px)：一张 4000×3000 的大截图解码成位图约 48MB，图片一多就把堆外内存
+    // (WebView2 渲染进程，很可能 32 位)撑爆导致 out of memory。降采样后解码位图小得多。
+    try { if (typeof _downscaleImage === 'function') dataUrl = await _downscaleImage(dataUrl, 2560, 0.85); } catch (e) {}
     const id = uid();
     const ext = detectExtFromDataUrl(dataUrl);
     const baseName = (file.name || 'image' + ext).replace(/[\[\]()]/g, '');
@@ -5313,6 +5345,8 @@ function bindWorkDir() {
   if (offBtn) offBtn.addEventListener('click', forgetWorkDir);
   const trashBtn = document.getElementById('openTrashBtn');
   if (trashBtn) trashBtn.addEventListener('click', openTrashModal);
+  const cimgBtn = document.getElementById('compressImagesBtn');
+  if (cimgBtn) cimgBtn.addEventListener('click', compressAllImages);
   const trashClose = document.getElementById('trashCloseBtn');
   if (trashClose) trashClose.addEventListener('click', closeTrashModal);
 }
