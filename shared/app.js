@@ -4083,6 +4083,23 @@ document.getElementById('openFileBtn').addEventListener('click', openLocalFile);
   });
 
   // 操作按钮
+  const editorMoreBtn = document.getElementById('editorMoreBtn');
+  const editorMoreMenu = document.getElementById('editorMoreMenu');
+  const closeEditorMoreMenu = () => {
+    editorMoreMenu?.classList.remove('show');
+    editorMoreBtn?.setAttribute('aria-expanded', 'false');
+  };
+  editorMoreBtn?.addEventListener('click', e => {
+    e.stopPropagation();
+    const open = editorMoreMenu?.classList.toggle('show');
+    editorMoreBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
+  });
+  editorMoreMenu?.addEventListener('click', e => {
+    if (e.target.closest('button')) closeEditorMoreMenu();
+  });
+  document.addEventListener('click', e => {
+    if (!e.target.closest('#editorMoreMenu') && !e.target.closest('#editorMoreBtn')) closeEditorMoreMenu();
+  });
   document.getElementById('starBtn').addEventListener('click', toggleStar);
   document.getElementById('modeBtn').addEventListener('click', togglePreview);
   const htmlBtn = document.getElementById('htmlModeBtn');

@@ -702,7 +702,6 @@
   }
   .rail-item .inline-rename-input { font-size: 12px; max-width: 100px; }
   /* AI 面板内嵌侧栏（旧版分组列表）在新版中由左侧栏承担，隐藏 */
-  #assistantWrap .assistant-sidebar { display: none; }
   #assistantWrap .assistant-main { flex: 1; }
 
   .masthead {
@@ -1117,7 +1116,41 @@
     margin-left: 16px;
     padding-left: 16px;
     border-left: 1px solid var(--rule);
+    position: relative;
   }
+
+  .editor-more-menu {
+    position: absolute;
+    top: calc(100% + 8px);
+    right: 34px;
+    z-index: 120;
+    display: none;
+    width: 190px;
+    padding: 6px;
+    background: var(--paper);
+    border: 1px solid var(--rule);
+    border-radius: 8px;
+    box-shadow: var(--shadow-deep);
+  }
+  .editor-more-menu.show { display: grid; gap: 2px; }
+  .editor-more-item {
+    width: 100%;
+    min-height: 34px;
+    padding: 7px 9px;
+    border: none;
+    border-radius: 6px;
+    background: transparent;
+    color: var(--ink-soft);
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    cursor: pointer;
+    font: 12px/1.3 var(--font-ui);
+    text-align: left;
+  }
+  .editor-more-item:hover,
+  .editor-more-item.active { background: var(--bg-warm); color: var(--ink); }
+  .editor-more-item svg { width: 15px; height: 15px; flex-shrink: 0; }
 
   .icon-btn {
     width: 34px;
@@ -1894,6 +1927,22 @@
   }
   .assistant-msg .action-pill.ok { color: #0d9488; border-color: rgba(13, 148, 136, 0.3); }
   .assistant-msg .action-pill.err { color: var(--accent); border-color: rgba(184, 67, 31, 0.3); }
+  .assistant-receipts { display: grid; gap: 6px; margin-bottom: 10px; }
+  .assistant-receipt {
+    display: flex; align-items: center; gap: 9px;
+    padding: 8px 10px; border: 1px solid var(--rule-soft); border-radius: 7px;
+    background: var(--bg-warm); font-size: 12px;
+  }
+  .assistant-receipt.ok { border-left: 3px solid #0d9488; }
+  .assistant-receipt.err { border-left: 3px solid #dc2626; }
+  .assistant-receipt-icon { color: #0d9488; font-weight: 700; }
+  .assistant-receipt.err .assistant-receipt-icon { color: #dc2626; }
+  .assistant-receipt-text { flex: 1; min-width: 0; color: var(--ink-soft); }
+  .assistant-receipt-open {
+    border: none; background: transparent; color: var(--accent); cursor: pointer;
+    padding: 3px 5px; font: 12px var(--font-ui); white-space: nowrap;
+  }
+  .assistant-receipt-open:hover { text-decoration: underline; }
   /* 工具执行过程折叠 */
   .tool-exec-log { margin-bottom: 8px; }
   .tool-exec-log summary {
@@ -2071,6 +2120,7 @@
   /* ====== 响应式 ====== */
   @media (max-width: 1280px) {
     .editor-content { padding: 32px 64px 80px; }
+    .word-count { display: none; }
   }
   @media (max-width: 1024px) {
     .app { grid-template-columns: 220px 280px 1fr; }
@@ -3355,7 +3405,7 @@
   }
   .app.reading-mode .reading-progress { display: block; }
 
-  /* ====== AI 助手：内嵌右侧编辑区 + 竖列侧栏 ====== */
+  /* ====== AI 助手：内嵌右侧编辑区 ====== */
   #assistantWrap { display: none; flex-direction: column; height: 100%; overflow: hidden; }
   .editor.assistant-active #assistantWrap { display: flex; }
   .editor.assistant-active > *:not(#assistantWrap):not(.reading-exit-btn):not(.reading-progress) { display: none !important; }
@@ -3391,47 +3441,8 @@
   }
   .assistant-header-actions button:hover { color: var(--ink); border-color: var(--ink-soft); }
 
-  /* 主体：侧栏 + 聊天区 */
+  /* 主体聊天区；分组与对话统一由中侧栏管理 */
   .assistant-body { display: flex; flex: 1; min-height: 0; overflow: hidden; }
-
-  .assistant-sidebar {
-    width: 160px; border-right: 1px solid var(--rule);
-    display: flex; flex-direction: column; background: var(--bg-warm);
-    flex-shrink: 0; overflow: hidden; font-size: 12px;
-  }
-  .assistant-sidebar-head { padding: 8px 10px; border-bottom: 1px solid var(--rule-soft); }
-  .assistant-sidebar-head button {
-    width: 100%; padding: 5px 8px; background: var(--paper);
-    border: 1px solid var(--rule); border-radius: 5px; cursor: pointer;
-    font-size: 11px; color: var(--ink-soft); display: flex; align-items: center;
-    gap: 4px; justify-content: center; transition: all 0.12s;
-  }
-  .assistant-sidebar-head button:hover { color: var(--accent); border-color: var(--accent); background: var(--bg-warm); }
-  .assistant-sidebar-head button svg { width: 11px; height: 11px; }
-
-  .assistant-group-list { flex: 1; overflow-y: auto; padding: 4px 0; }
-  .assistant-group-item {
-    display: flex; align-items: center; gap: 6px; padding: 7px 10px;
-    cursor: pointer; transition: all 0.12s; border-left: 3px solid transparent;
-    font-size: 12px; color: var(--ink-soft); position: relative;
-  }
-  .assistant-group-item:hover { background: var(--rule-soft); color: var(--ink); }
-  .assistant-group-item.active { background: var(--paper); border-left-color: var(--accent); color: var(--ink); font-weight: 500; }
-  .assistant-group-item .group-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .assistant-group-item .group-meta {
-    font-size: 9px; color: var(--ink-mute); flex-shrink: 0;
-    font-family: 'JetBrains Mono', monospace;
-  }
-  .assistant-group-item .group-actions { display: none; gap: 2px; flex-shrink: 0; }
-  .assistant-group-item:hover .group-actions { display: flex; }
-  .assistant-group-item:hover .group-meta { display: none; }
-  .assistant-group-item .group-action-btn {
-    width: 20px; height: 20px; border: none; background: transparent;
-    color: var(--ink-mute); border-radius: 3px; cursor: pointer;
-    display: grid; place-items: center; transition: all 0.12s;
-  }
-  .assistant-group-item .group-action-btn:hover { background: var(--rule); color: var(--ink); }
-  .assistant-group-item .group-action-btn svg { width: 10px; height: 10px; }
 
   .assistant-main { flex: 1; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
 
@@ -3953,45 +3964,22 @@
               <circle cx="12" cy="12" r="3" stroke-linecap="round" stroke-linejoin="round"/>
             </svg>
           </button>
-          <button class="icon-btn" id="htmlModeBtn" data-tip="HTML 模式（预览以网页渲染）">
-            <svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" d="M16 18l6-6-6-6M8 6l-6 6 6 6M14 4l-4 16"/>
-            </svg>
-          </button>
-          <button class="icon-btn" id="splitBtn" data-tip="双栏对照">
-            <svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
-              <rect x="3" y="4" width="18" height="16" rx="2"/>
-              <path stroke-linecap="round" d="M12 4v16"/>
-            </svg>
-          </button>
           <button class="icon-btn" id="outlineBtn" data-tip="大纲">
             <svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
               <path stroke-linecap="round" d="M4 6h12M4 12h16M4 18h10"/>
             </svg>
           </button>
-          <button class="icon-btn" id="readingBtn" data-tip="阅读模式 (Esc 退出)">
-            <svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" d="M2 4h7a4 4 0 014 4v12a3 3 0 00-3-3H2zM22 4h-7a4 4 0 00-4 4v12a3 3 0 013-3h8z"/>
-            </svg>
+          <button class="icon-btn" id="editorMoreBtn" data-tip="更多操作" aria-haspopup="menu" aria-expanded="false">
+            <svg fill="currentColor" viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="19" cy="12" r="1.7"/></svg>
           </button>
-          <button class="icon-btn" id="copyBtn" data-tip="复制全文">
-            <svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
-              <rect x="9" y="9" width="13" height="13" rx="2" ry="2" stroke-linecap="round" stroke-linejoin="round"/>
-              <path stroke-linecap="round" stroke-linejoin="round" d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/>
-            </svg>
-          </button>
-          <button class="icon-btn" id="historyBtn" data-tip="历史版本">
-            <svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" d="M3 12a9 9 0 1 0 3-6.7L3 8"/>
-              <path stroke-linecap="round" stroke-linejoin="round" d="M3 3v5h5M12 7v5l3 2"/>
-            </svg>
-          </button>
-          <button class="icon-btn" id="exportMdBtn" data-tip="导出为 Markdown">
-            <svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/>
-              <path stroke-linecap="round" stroke-linejoin="round" d="M14 2v6h6M12 18v-6M9 15l3 3 3-3"/>
-            </svg>
-          </button>
+          <div class="editor-more-menu" id="editorMoreMenu" role="menu">
+            <button class="editor-more-item" id="htmlModeBtn" role="menuitem"><svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M16 18l6-6-6-6M8 6l-6 6 6 6M14 4l-4 16"/></svg><span>HTML 模式</span></button>
+            <button class="editor-more-item" id="splitBtn" role="menuitem"><svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path stroke-linecap="round" d="M12 4v16"/></svg><span>双栏对照</span></button>
+            <button class="editor-more-item" id="readingBtn" role="menuitem"><svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M2 4h7a4 4 0 014 4v12a3 3 0 00-3-3H2zM22 4h-7a4 4 0 00-4 4v12a3 3 0 013-3h8z"/></svg><span>阅读模式</span></button>
+            <button class="editor-more-item" id="copyBtn" role="menuitem"><svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2"/><path stroke-linecap="round" d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg><span>复制全文</span></button>
+            <button class="editor-more-item" id="historyBtn" role="menuitem"><svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path stroke-linecap="round" d="M3 12a9 9 0 1 0 3-6.7L3 8M3 3v5h5M12 7v5l3 2"/></svg><span>历史版本</span></button>
+            <button class="editor-more-item" id="exportMdBtn" role="menuitem"><svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8zM14 2v6h6M12 18v-6M9 15l3 3 3-3"/></svg><span>导出 Markdown</span></button>
+          </div>
           <button class="icon-btn danger" id="deleteBtn" data-tip="删除">
             <svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.87 12.14A2 2 0 0116.14 21H7.86a2 2 0 01-1.99-1.86L5 7m5 4v6m4-6v6M3 7h18M9 7V4a1 1 0 011-1h4a1 1 0 011 1v3"/>
@@ -4103,15 +4091,6 @@
         </div>
       </div>
       <div class="assistant-body">
-        <div class="assistant-sidebar" id="assistantSidebar">
-          <div class="assistant-sidebar-head">
-            <button id="assistantNewGroupBtn" title="新建对话">
-              <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" d="M12 5v14M5 12h14"/></svg>
-              新对话
-            </button>
-          </div>
-          <div class="assistant-group-list" id="assistantGroupList"></div>
-        </div>
         <div class="assistant-main">
           <div class="assistant-chat" id="assistantChat"></div>
           <div class="assistant-attach-row" id="assistantAttachments"></div>

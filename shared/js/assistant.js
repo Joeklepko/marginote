@@ -1559,6 +1559,18 @@ function renderAssistantChat() {
   box.querySelectorAll('.result-item[data-note-id]').forEach(el => {
     el.addEventListener('click', () => { const n = notes.find(x => x.id === el.dataset.noteId); if (n) { hideAssistantPanel(); selectNote(n); } });
   });
+  box.querySelectorAll('.assistant-receipt-open[data-target-type]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const id = btn.dataset.targetId;
+      if (btn.dataset.targetType === 'note') {
+        const n = notes.find(x => x.id === id && !x.deleted);
+        if (n) { hideAssistantPanel(); selectNote(n); }
+      } else if (btn.dataset.targetType === 'todo') {
+        const t = todos.find(x => x.id === id);
+        if (t) { hideAssistantPanel(); switchView(t.done ? 'todo:done' : 'todo:active'); selectTodo(t); }
+      }
+    });
+  });
   box.scrollTop = box.scrollHeight;
 }
 
@@ -1569,6 +1581,17 @@ function renderAssistantMessage(m) {
     ? renderMarkdown(m.content)
     : escapeHtml(m.content || '');
   let html = `<div class="assistant-msg ${role}"><span class="role">${roleLabel}</span><div class="bubble">`;
+  const receipts = (m.toolLog || []).filter(t => t.isWrite);
+  if (receipts.length) {
+    html += '<div class="assistant-receipts">';
+    for (const t of receipts) {
+      const targetButton = t.ok && t.targetType && t.targetId
+        ? `<button class="assistant-receipt-open" data-target-type="${escapeHtml(t.targetType)}" data-target-id="${escapeHtml(t.targetId)}">打开${t.targetType === 'note' ? '笔记' : '待办'}</button>`
+        : '';
+      html += `<div class="assistant-receipt ${t.ok ? 'ok' : 'err'}"><span class="assistant-receipt-icon">${t.ok ? '✓' : '!'}</span><span class="assistant-receipt-text">${escapeHtml(t.ok ? (t.summary || '操作已完成') : ('写入失败：' + (t.summary || t.tool)))}</span>${targetButton}</div>`;
+    }
+    html += '</div>';
+  }
   // 工具执行过程（新格式：折叠展示）
   if (m.toolLog && m.toolLog.length) {
     const okCount = m.toolLog.filter(t => t.ok).length;
@@ -1698,6 +1721,19 @@ function summarizeActionResult(name, result) {
   if (name === 'pomodoro') return result.started ? `番茄钟已开始 ${result.duration}分钟` : result.stopped ? '番茄钟已停止' : (result.active ? `剩余 ${result.remaining} 分钟` : '无进行中的番茄钟');
   if (name === 'sub_agent') return `${result.completed || 0} 个子任务已完成`;
   return '';
+}
+
+const ASSISTANT_WRITE_TOOLS = new Set(['create_note','update_note','delete_note','quick_note','create_todo','quick_todo','update_todo','delete_todo','create_notebook','delete_notebook','rename_notebook','move_note','move_note_to_folder','batch_move_notes','batch_update_notes','batch_complete_todos','batch_delete_notes','batch_delete_todos','auto_title_notes','merge_notes','star_note','add_tags','remove_tags','append_to_note','duplicate_note','create_folder','create_from_template','translate_note','clean_text','optimize_text','save_memory','delete_memory']);
+
+function assistantToolTarget(name, result) {
+  if (!result?.id) return {};
+  if (['create_note','quick_note','update_note','append_to_note','duplicate_note','translate_note','clean_text','optimize_text'].includes(name)) {
+    return { targetType: 'note', targetId: String(result.id) };
+  }
+  if (['create_todo','quick_todo','update_todo'].includes(name)) {
+    return { targetType: 'todo', targetId: String(result.id) };
+  }
+  return {};
 }
 
 // 为 AI 上下文生成精简摘要（去掉 id/color 等模型不需要的字段，保留关键信息）
@@ -1937,7 +1973,7 @@ async function runAssistantTurn(userInput) {
         try {
           const result = await runAssistantTool(name, args);
           const summary = summarizeActionResult(name, result);
-          toolLog.push({ tool: name, summary, ok: true });
+          toolLog.push({ tool: name, summary, ok: true, isWrite: ASSISTANT_WRITE_TOOLS.has(name), ...assistantToolTarget(name, result) });
           if (name === 'search_notes' && Array.isArray(result)) for (const r of result) allSearchResults.push({ kind: 'note', id: r.id, title: r.title, snippet: r.snippet, updatedAt: r.updatedAt });
           else if (name === 'search_todos' && Array.isArray(result)) for (const r of result) allSearchResults.push({ kind: 'todo', id: r.id, title: r.text, snippet: r.done ? '已完成' : '进行中', dueAt: r.dueAt });
           else if (name === 'list_notebooks' && Array.isArray(result)) for (const r of result) allSearchResults.push({ kind: 'notebook', id: r.id, title: r.name });
@@ -1950,7 +1986,7 @@ async function runAssistantTurn(userInput) {
           ctx.push({ role: 'user', content: '【结果】' + name + ': ' + contextResult });
           setAssistantTyping(true, `执行中 (${toolLog.length} 步)…`);
         } catch (e) {
-          toolLog.push({ tool: name, summary: e.message || String(e), ok: false });
+          toolLog.push({ tool: name, summary: e.message || String(e), ok: false, isWrite: ASSISTANT_WRITE_TOOLS.has(name) });
           ctx.push({ role: 'assistant', content: JSON.stringify({ actions: [{ tool: name }] }) });
           ctx.push({ role: 'user', content: '【错误】' + name + ': ' + (e.message || e) });
         }
@@ -1994,8 +2030,7 @@ async function runAssistantTurn(userInput) {
       }
     }
 
-    const WRITE_TOOLS = new Set(['create_note','update_note','delete_note','quick_note','create_todo','update_todo','delete_todo','create_notebook','delete_notebook','rename_notebook','move_note','move_note_to_folder','batch_move_notes','batch_update_notes','batch_complete_todos','batch_delete_notes','batch_delete_todos','auto_title_notes','merge_notes','star_note','add_tags','remove_tags','append_to_note','duplicate_note','create_folder','create_from_template','translate_note','clean_text','optimize_text','save_memory','delete_memory']);
-    const wroteSomething = toolLog.some(t => t.ok && WRITE_TOOLS.has(t.tool));
+    const wroteSomething = toolLog.some(t => t.ok && ASSISTANT_WRITE_TOOLS.has(t.tool));
     if (wroteSomething) {
       try { if (typeof workdirWriteAll === 'function') await workdirWriteAll(true); } catch {}
     }
@@ -2243,20 +2278,6 @@ function bindAssistantUi() {
   // 新建会话（中侧栏）
   const newSessionBtn = document.getElementById('newAssistantSessionBtn');
   if (newSessionBtn) newSessionBtn.addEventListener('click', () => {
-    const g = getActiveGroup();
-    if (!g) return;
-    const s = createAssistantSession(g.id, '新会话');
-    if (s) {
-      setTimeout(() => {
-        const item = document.querySelector(`.ai-session-item[data-sid="${s.id}"]`);
-        if (item) startInlineRename(item, '.session-name', s.name, (val) => renameAssistantSession(g.id, s.id, val));
-      }, 0);
-    }
-  });
-
-  // 新建对话（助手侧栏头部 "+新对话" 按钮）
-  const assistantNewGrpBtn = document.getElementById('assistantNewGroupBtn');
-  if (assistantNewGrpBtn) assistantNewGrpBtn.addEventListener('click', () => {
     const g = getActiveGroup();
     if (!g) return;
     const s = createAssistantSession(g.id, '新会话');
