@@ -1,6 +1,6 @@
 [package]
 name = "marginote"
-version = "1.2.2"
+version = "1.2.3"
 description = "Marginote 桌面版 — 本地优先的 Markdown 笔记 + 待办 + AI 助手"
 authors = ["Marginote"]
 edition = "2021"

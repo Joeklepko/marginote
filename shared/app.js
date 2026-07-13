@@ -538,6 +538,7 @@ let currentTagFilter = 'all';
 let saveTimer = null;
 let isPreviewMode = false;
 let modalCallback = null;
+let modalCancelCallback = null;
 let editingNotebook = null; // 当前编辑中的笔记本（null = 新建）
 let editingFolder = null;   // 当前编辑中的文件夹
 let pickedColor = NOTEBOOK_COLORS[0];
@@ -2270,11 +2271,12 @@ function showToast(msg) {
   t._timer = setTimeout(() => t.classList.remove('show'), 3000);
 }
 
-function showModal(title, text, callback) {
+function showModal(title, text, callback, cancelCallback) {
   document.getElementById('modalTitle').textContent = title;
   document.getElementById('modalText').textContent = text;
   document.getElementById('modalBg').classList.add('show');
   modalCallback = callback;
+  modalCancelCallback = typeof cancelCallback === 'function' ? cancelCallback : null;
 }
 
 // ===================== 工具栏格式化 =====================
@@ -4183,18 +4185,23 @@ document.getElementById('openFileBtn').addEventListener('click', openLocalFile);
 
   // 通用模态框
   document.getElementById('modalCancel').addEventListener('click', () => {
+    if (modalCancelCallback) modalCancelCallback();
     document.getElementById('modalBg').classList.remove('show');
     modalCallback = null;
+    modalCancelCallback = null;
   });
   document.getElementById('modalConfirm').addEventListener('click', () => {
     if (modalCallback) modalCallback();
     document.getElementById('modalBg').classList.remove('show');
     modalCallback = null;
+    modalCancelCallback = null;
   });
   document.getElementById('modalBg').addEventListener('click', e => {
     if (e.target.id === 'modalBg') {
+      if (modalCancelCallback) modalCancelCallback();
       document.getElementById('modalBg').classList.remove('show');
       modalCallback = null;
+      modalCancelCallback = null;
     }
   });
 
@@ -4241,6 +4248,7 @@ document.getElementById('openFileBtn').addEventListener('click', openLocalFile);
     if (mod && e.key === 'i' && document.activeElement.id === 'contentInput') { e.preventDefault(); applyFormat('italic'); }
     if (mod && e.key === 'p') { e.preventDefault(); togglePreview(); }
     if (e.key === 'Escape') {
+      if (modalCancelCallback) modalCancelCallback();
       document.getElementById('modalBg').classList.remove('show');
       document.getElementById('notebookModalBg').classList.remove('show');
       document.getElementById('folderModalBg').classList.remove('show');
@@ -4249,6 +4257,7 @@ document.getElementById('openFileBtn').addEventListener('click', openLocalFile);
       hideMoveMenu();
       hideAiMenu();
       modalCallback = null;
+      modalCancelCallback = null;
       editingNotebook = null;
       editingFolder = null;
     }
@@ -4611,6 +4620,9 @@ callAi = async function(messages, opts) {
     }
   }
   const body = { model: p.model, messages, temperature: (opts && opts.temperature) ?? p.temperature ?? 0.7, stream: true };
+  // 流式路径也必须尊重调用方的输出预算；旧逻辑只在非流式请求带 max_tokens，
+  // 本地模型可能长时间生成无关内容，既慢又更容易挤占后续上下文。
+  if (opts && opts.max_tokens) body.max_tokens = opts.max_tokens;
   _aiAbortCtrl = new AbortController();
   const cancelBtn = document.getElementById('aiCancelBtn');
   if (cancelBtn) cancelBtn.classList.add('show');
@@ -4631,7 +4643,16 @@ callAi = async function(messages, opts) {
     const ct = res.headers.get('content-type') || '';
     if (!ct.includes('event-stream')) {
       const data = await res.json();
-      const c = data?.choices?.[0]?.message?.content;
+      const msg = data?.choices?.[0]?.message;
+      let c = msg?.content;
+      if ((!c || typeof c !== 'string') && Array.isArray(msg?.tool_calls) && msg.tool_calls.length) {
+        const actions = msg.tool_calls.map(call => {
+          let args = {};
+          try { args = JSON.parse(call?.function?.arguments || '{}'); } catch {}
+          return { tool: call?.function?.name, args };
+        }).filter(action => action.tool);
+        if (actions.length) c = JSON.stringify({ reply: '', actions });
+      }
       if (typeof c === 'string' && opts?.onDelta) await _simulateStreamEmit(c, opts.onDelta);
       return typeof c === 'string' ? stripThinking(c) : '';
     }
@@ -6272,4 +6293,3 @@ init()
 
 // AI 助手代码已移到 js/assistant.js
 const _ASSISTANT_MOVED = 'see js/assistant.js';
-

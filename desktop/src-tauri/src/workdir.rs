@@ -8,7 +8,7 @@
 use base64::Engine;
 use serde::Serialize;
 use std::fs;
-use std::path::{Component, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use tauri::AppHandle;
 use tauri_plugin_dialog::DialogExt;
 
@@ -39,9 +39,9 @@ fn workdir_root(app: &AppHandle) -> Option<PathBuf> {
 }
 
 // 把相对路径规范化并拼到根；拒绝 `..` / 绝对路径逃逸
-fn resolve_rel(root: &PathBuf, rel: &str) -> Result<PathBuf, String> {
+fn resolve_rel(root: &Path, rel: &str) -> Result<PathBuf, String> {
     let relp = PathBuf::from(rel.replace('\\', "/"));
-    let mut out = root.clone();
+    let mut out = root.to_path_buf();
     for comp in relp.components() {
         match comp {
             Component::Normal(seg) => out.push(seg),
@@ -55,7 +55,7 @@ fn resolve_rel(root: &PathBuf, rel: &str) -> Result<PathBuf, String> {
     Ok(out)
 }
 
-fn walk(base: &PathBuf, dir: &PathBuf, out: &mut Vec<FsEntry>) {
+fn walk(base: &Path, dir: &Path, out: &mut Vec<FsEntry>) {
     let entries = match fs::read_dir(dir) {
         Ok(e) => e,
         Err(_) => return,

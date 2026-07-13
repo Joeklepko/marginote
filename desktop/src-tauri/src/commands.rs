@@ -57,8 +57,10 @@ pub async fn cmd_fetch(
     let method = method.unwrap_or_else(|| "POST".into()).to_uppercase();
 
     // 构建 Client（按需带代理）
+    // 27B 级本地模型在首次加载或长笔记推理时可能超过 60 秒。该路径用于桌面端
+    // HTTP/代理请求，适度放宽总超时，前端仍可显示执行状态并处理失败。
     let mut builder = reqwest::Client::builder()
-        .timeout(Duration::from_secs(60))
+        .timeout(Duration::from_secs(180))
         .danger_accept_invalid_certs(false);
 
     if let Some(p) = proxy {

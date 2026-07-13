@@ -4,7 +4,7 @@
 
 ## 构建
 
-正常构建走 GitHub Actions（推送 `dev_exe` 分支自动出包，见 `.github/workflows/build-windows.yml`）。
+正常构建走 GitHub Actions（推送 `dev` 分支自动出包，见 `.github/workflows/build-windows.yml`）。工作流使用 `package-lock.json` 锁定的项目内 Tauri CLI，避免全局最新版带来的构建漂移。
 
 本地构建（仅 Windows）：
 
@@ -19,6 +19,14 @@ npx tauri build                      # 输出在 src-tauri/target/release/bundle
 - Rust stable（`rustup toolchain install stable`）
 - Visual Studio Build Tools（含 MSVC + Windows SDK）
 - Node 20+
+
+在 Ubuntu 上可做 Rust 编译和 Linux 桌面冒烟验证，但 NSIS `.exe` 仍应在 Windows 或上述 GitHub Actions 中构建。Ubuntu 24.04 的 Tauri 2 依赖为：
+
+```bash
+sudo apt update
+sudo apt install libwebkit2gtk-4.1-dev build-essential curl wget file \
+  libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev
+```
 
 ## 目录
 

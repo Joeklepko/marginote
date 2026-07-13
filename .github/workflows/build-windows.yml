@@ -21,6 +21,8 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20'
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
 
       - name: Setup Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -30,19 +32,21 @@ jobs:
         with:
           workspaces: 'desktop/src-tauri -> target'
 
-      - name: Install Tauri CLI
-        run: npm install -g @tauri-apps/cli@latest
+      - name: Install desktop dependencies
+        working-directory: desktop
+        run: npm ci
 
       - name: Generate icons (if missing)
+        working-directory: desktop
         shell: pwsh
         run: |
-          if (-not (Test-Path desktop/src-tauri/icons/icon.ico)) {
-            tauri icon shared/icons/icon128.png -o desktop/src-tauri/icons
+          if (-not (Test-Path src-tauri/icons/icon.ico)) {
+            npm exec tauri -- icon ../shared/icons/icon128.png -o src-tauri/icons
           }
 
       - name: Build Tauri app
         working-directory: desktop
-        run: tauri build
+        run: npm run build
 
       - name: Upload installer artifact
         uses: actions/upload-artifact@v4

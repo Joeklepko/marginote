@@ -29,6 +29,10 @@
     --rule-soft: #e8e0cf;
     --accent: #b8431f;
     --accent-soft: #c9532a;
+    --accent-tint: #f6e5dc;
+    --success: #0f766e;
+    --danger: #b91c1c;
+    --focus-ring: rgba(184, 67, 31, 0.2);
     --highlight: #f5d76e;
     --shadow-soft: 0 1px 0 rgba(26, 24, 20, 0.04), 0 8px 24px -12px rgba(26, 24, 20, 0.12);
     --shadow-deep: 0 2px 0 rgba(26, 24, 20, 0.04), 0 24px 48px -16px rgba(26, 24, 20, 0.18);
@@ -343,7 +347,7 @@
     border-radius: 5px;
     cursor: pointer;
     transition: all 0.12s ease;
-    font-family: 'Fraunces', 'Noto Serif SC', serif;
+    font-family: var(--font-ui);
     font-size: 13px;
     width: 100%;
     text-align: left;
@@ -446,7 +450,7 @@
     border-radius: 5px;
     cursor: pointer;
     transition: all 0.12s ease;
-    font-family: 'Fraunces', 'Noto Serif SC', serif;
+    font-family: var(--font-ui);
     font-size: 12px;
     width: 100%;
     text-align: left;
@@ -788,7 +792,7 @@
     background: var(--paper);
     border: 1px solid var(--rule);
     border-radius: 6px;
-    font-family: 'Fraunces', 'Noto Serif SC', serif;
+    font-family: var(--font-ui);
     font-size: 14px;
     color: var(--ink);
     outline: none;
@@ -807,7 +811,7 @@
     color: var(--ink);
     border: none;
     border-radius: 8px;
-    font-family: 'Fraunces', 'Noto Serif SC', serif;
+    font-family: var(--font-ui);
     font-size: 13px;
     font-weight: 500;
     letter-spacing: 0.02em;
@@ -1579,7 +1583,7 @@
     color: var(--paper);
     padding: 10px 20px;
     border-radius: 8px;
-    font-family: 'Fraunces', 'Noto Serif SC', serif;
+    font-family: var(--font-ui);
     font-size: 13px;
     box-shadow: var(--shadow-deep);
     opacity: 0;
@@ -1895,9 +1899,9 @@
   .assistant-msg.bot .bubble strong { font-weight: 600; }
   .assistant-msg.bot .bubble em { font-style: italic; }
   .assistant-msg.user .bubble {
-    background: #dbeafe;
-    color: #1e3a5f;
-    border-color: #93c5fd;
+    background: var(--accent-tint);
+    color: var(--ink);
+    border-color: var(--rule);
     white-space: pre-wrap;
   }
   .assistant-msg.system .bubble {
@@ -1937,6 +1941,8 @@
   .assistant-receipt.err { border-left: 3px solid #dc2626; }
   .assistant-receipt-icon { color: #0d9488; font-weight: 700; }
   .assistant-receipt.err .assistant-receipt-icon { color: #dc2626; }
+  .assistant-receipt.cancelled { border-left: 3px solid var(--ink-mute); }
+  .assistant-receipt.cancelled .assistant-receipt-icon { color: var(--ink-mute); }
   .assistant-receipt-text { flex: 1; min-width: 0; color: var(--ink-soft); }
   .assistant-receipt-open {
     border: none; background: transparent; color: var(--accent); cursor: pointer;
@@ -1976,7 +1982,15 @@
   .assistant-msg .result-item:last-child { border-bottom: none; }
   .assistant-msg .result-item:hover { color: var(--accent); }
   .assistant-msg .result-item .title { font-weight: 500; }
+  .assistant-msg .result-item .snippet {
+    color: var(--ink-soft); font-size: 12px; line-height: 1.55; margin-top: 3px;
+    display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;
+  }
   .assistant-msg .result-item .meta { color: var(--ink-mute); font-size: 10px; font-family: 'JetBrains Mono', monospace; margin-top: 2px; }
+  .assistant-turn-meta {
+    margin-top: 6px; padding: 0 2px; color: var(--ink-mute);
+    font: 10px/1.5 var(--font-ui-mono); letter-spacing: 0.01em;
+  }
   .assistant-input-row {
     display: flex;
     gap: 8px;
@@ -2017,6 +2031,9 @@
     min-height: 36px;
   }
   .assistant-send-btn:hover { opacity: 0.9; }
+  .assistant-send-btn:disabled, .assistant-attach-btn:disabled {
+    opacity: 0.55; cursor: not-allowed; transform: none; box-shadow: none;
+  }
   .assistant-attach-btn {
     width: 36px; height: 36px;
     border: 1px solid var(--rule);
@@ -2046,10 +2063,12 @@
     font-size: 12px;
   }
   .assistant-empty .examples li {
-    padding: 4px 0;
+    padding: 7px 10px; margin: 5px 0; border: 1px solid var(--rule-soft);
+    border-radius: 7px; background: var(--paper);
     cursor: pointer;
+    transition: border-color .15s, background .15s, transform .15s;
   }
-  .assistant-empty .examples li:hover { color: var(--accent); }
+  .assistant-empty .examples li:hover { color: var(--accent); border-color: var(--rule); background: var(--bg-warm); transform: translateY(-1px); }
   .assistant-typing {
     display: inline-flex;
     gap: 3px;
@@ -2097,7 +2116,7 @@
     border: 1px solid var(--rule);
     background: transparent;
     border-radius: 6px;
-    font-family: 'Fraunces', 'Noto Serif SC', serif;
+    font-family: var(--font-ui);
     font-size: 13px;
     cursor: pointer;
     transition: all 0.2s;
@@ -2153,6 +2172,8 @@
     --rule-soft: #2f2a23;
     --accent: #e07a3d;
     --accent-soft: #ec9054;
+    --accent-tint: #3b281e;
+    --focus-ring: rgba(224, 122, 61, 0.24);
     --highlight: #d4a843;
     color-scheme: dark;
     background-image:
@@ -2985,8 +3006,9 @@
   [contenteditable]:focus,
   [contenteditable]:focus-visible {
     outline: none;
-    box-shadow: none;
+    box-shadow: 0 0 0 3px var(--focus-ring);
   }
+  .content-input:focus, .title-input:focus, .tag-input:focus { box-shadow: none; }
   @media (prefers-reduced-motion: reduce) {
     * { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
   }
@@ -3416,6 +3438,16 @@
     flex-shrink: 0; background: var(--bg);
   }
   .assistant-title { font-size: 14px; font-weight: 600; color: var(--ink); }
+  .assistant-status {
+    display: inline-flex; align-items: center; gap: 5px; min-width: 0; max-width: 160px;
+    color: var(--ink-mute); font: 10px/1.4 var(--font-ui-mono); white-space: nowrap;
+    overflow: hidden; text-overflow: ellipsis;
+  }
+  .assistant-status::before {
+    content: ''; width: 6px; height: 6px; border-radius: 50%; background: var(--success); flex-shrink: 0;
+  }
+  .assistant-status.busy::before { background: var(--accent); animation: assistant-status-pulse 1.2s ease-in-out infinite; }
+  @keyframes assistant-status-pulse { 50% { opacity: .35; transform: scale(.75); } }
   .assistant-model-select {
     flex: 1; min-width: 0; max-width: 200px;
     padding: 3px 6px; font-size: 12px; border: 1px solid var(--rule);
@@ -3447,10 +3479,13 @@
   .assistant-main { flex: 1; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
 
   #assistantWrap .assistant-chat {
-    flex: 1; overflow-y: auto; padding: 14px 18px;
+    flex: 1; overflow-y: auto; padding: 20px clamp(18px, 4vw, 56px);
     display: flex; flex-direction: column; gap: 12px;
     background: var(--bg); min-height: 0;
   }
+  #assistantWrap .assistant-msg { width: min(92%, 820px); }
+  #assistantWrap .assistant-msg.user { width: auto; max-width: min(80%, 720px); }
+  #assistantWrap .assistant-empty { width: min(100%, 680px); }
 
   #assistantWrap .assistant-attach-row {
     display: flex; align-items: center; gap: 6px;
@@ -4085,6 +4120,7 @@
           <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M15 18l-6-6 6-6"/></svg>
         </button>
         <span class="assistant-title">AI 助手</span>
+        <span class="assistant-status" id="assistantStatus" role="status" aria-live="polite">就绪</span>
         <select id="assistantModelSelect" class="assistant-model-select" title="切换模型"></select>
         <div class="assistant-header-actions">
           <button id="assistantClearBtn">清空</button>
@@ -4633,6 +4669,7 @@
 <script src="app.js"></script>
 <script src="js/trash.js"></script>
 <script src="js/drawing.js"></script>
+<script src="js/assistant-core.js"></script>
 <script src="js/assistant.js"></script>
 </body>
 </html>
