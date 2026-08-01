@@ -36,6 +36,20 @@ jobs:
         working-directory: desktop
         run: npm ci
 
+      - name: Test shared JavaScript logic
+        shell: bash
+        run: node --test test/*.test.js
+
+      - name: Test CLI
+        run: cargo test --manifest-path desktop/cli/Cargo.toml
+
+      - name: Prepare CLI sidecar for desktop checks
+        working-directory: desktop
+        run: npm run build:cli
+
+      - name: Test desktop bridge
+        run: cargo test --manifest-path desktop/src-tauri/Cargo.toml
+
       - name: Generate icons (if missing)
         working-directory: desktop
         shell: pwsh
@@ -47,6 +61,10 @@ jobs:
       - name: Build Tauri app
         working-directory: desktop
         run: npm run build
+
+      - name: Add standalone CLI asset
+        shell: pwsh
+        run: Copy-Item desktop/src-tauri/binaries/marginote-cli-x86_64-pc-windows-msvc.exe desktop/src-tauri/target/release/bundle/nsis/marginote-cli.exe
 
       - name: Upload installer artifact
         uses: actions/upload-artifact@v4

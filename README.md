@@ -6,7 +6,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
 [![Manifest V3](https://img.shields.io/badge/Manifest-V3-blue.svg)](https://developer.chrome.com/docs/extensions/mv3/intro/)
-[![Version](https://img.shields.io/badge/version-1.2.2-green.svg)](./extension/manifest.json)
+[![Version](https://img.shields.io/badge/version-1.2.4-green.svg)](./extension/manifest.json)
 [![Chrome](https://img.shields.io/badge/Chrome-supported-success.svg)](https://www.google.com/chrome/)
 [![Edge](https://img.shields.io/badge/Edge-supported-success.svg)](https://www.microsoft.com/edge)
 [![Windows](https://img.shields.io/badge/Windows-.exe-blue.svg)](https://github.com/Joeklepko/marginote/releases)
@@ -27,6 +27,7 @@
 | ✅ **待办** | 优先级、截止时间、**系统级提醒**（提前 N 分 × 重复 K 次 × 间隔 M 分） |
 | 🎨 **主题** | 10+ 内置主题（浅色 / 深色 / 护眼 / 莫兰迪 / 高对比），可自定义 |
 | 🤖 **AI 优化** | 一键润色 / 翻译 / 摘要 / 续写，多 Provider（DeepSeek / Kimi / OpenAI / Ollama / 自建反代） |
+| 🧰 **CLI / Agent** | Windows 安装包内置 `marginote-cli`，Claude Code 等 agent 可直接查询/更新笔记与待办 |
 | 🖼️ **图片** | 拖拽 / 粘贴直接入笔，base64 内嵌或 `_assets/` 目录 |
 | 💾 **备份** | 一键导出 zip（笔记 + 图片 + 待办 + 配置），定期自动备份到下载目录 |
 | 🔍 **搜索** | 全文 + 标题 + 标签 + 笔记本范围过滤 |
@@ -47,9 +48,20 @@
 - ▶️ 可选开机自启（在「设置 → 桌面」勾选）
 - 🔁 与 Chrome 扩展数据互通（导出 zip 互导）
 - 💾 仅 ~12MB 安装包，启动 < 1 秒（基于 Tauri + WebView2）
+- 🧰 自带 `marginote-cli`，支持稳定 JSON 输出、未启动时自动后台拉起 Marginote
 
 > 首次安装 Windows SmartScreen 会警告"未知发布者"，点 **「更多信息」→「仍要运行」**。
 > 这是因为我们暂未购买 EV 代码签名证书。
+
+安装完成后新开一个终端即可让本地 agent 访问同一份数据：
+
+```powershell
+marginote-cli status
+marginote-cli note list --query "项目" --json
+marginote-cli note create "来自 agent" --content "接口已联调完成" --notebook 工作 --tag agent --json
+```
+
+完整命令、Claude Code 配置建议与安全模型见 [Marginote CLI 文档](docs/cli.md)。
 
 ### 方式 B · Chrome 扩展（推荐开发者 / Linux/macOS）
 

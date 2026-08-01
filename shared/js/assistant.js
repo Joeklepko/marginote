@@ -465,7 +465,7 @@ const ASSISTANT_TOOLS = {
         const n = item.note;
         const nb = notebooks.find(x => x.id === n.notebookId);
         const snippetQuery = (item.tokens || []).slice().sort((a, b) => b.length - a.length).join(' ');
-        return { id: n.id, title: n.title || '(无标题)', snippet: extractSnippet(n.content, snippetQuery || q, _ctxLimit(240, 700, 1000)), notebookName: nb?.name || '', tags: n.tags || [], updatedAt: n.updatedAt, relevance: Math.round((item.score || 0) * 10) / 10 };
+        return { id: n.id, title: n.title || '(无标题)', snippet: extractSnippet(n.content, snippetQuery || q, _ctxLimit(240, 700, 1000)), notebookName: nb?.name || '', tags: n.tags || [], starred: !!n.starred, updatedAt: n.updatedAt, relevance: Math.round((item.score || 0) * 10) / 10 };
       });
     }
   },
@@ -489,8 +489,8 @@ const ASSISTANT_TOOLS = {
     }
   },
   create_note: {
-    desc: '新建笔记。{title, content?, notebookName?}',
-    run: ({ title, content, notebookName }) => {
+    desc: '新建笔记。{title, content?, notebookName?, tags?[], starred?}',
+    run: ({ title, content, notebookName, tags, starred }) => {
       let nb = null;
       if (notebookName) {
         nb = notebooks.find(x => x.name === notebookName) || null;
@@ -499,27 +499,28 @@ const ASSISTANT_TOOLS = {
         nb = notebooks[0] || null;
         if (!nb) { nb = { id: uid(), name: '默认', color: '#525252', createdAt: Date.now() }; notebooks.push(nb); }
       }
-      const note = { id: uid(), notebookId: nb.id, folderId: null, title: String(title || '无标题'), content: String(content || ''), tags: [], starred: false, deleted: false, createdAt: Date.now(), updatedAt: Date.now() };
+      const cleanTags = Array.isArray(tags) ? [...new Set(tags.map(tag => String(tag).trim()).filter(Boolean))].slice(0, 50) : [];
+      const note = { id: uid(), notebookId: nb.id, folderId: null, title: String(title || '无标题'), content: String(content || ''), tags: cleanTags, starred: !!starred, deleted: false, createdAt: Date.now(), updatedAt: Date.now() };
       notes.unshift(note);
       saveData();
       renderNotebooks();
       renderNotesList();
-      return { id: note.id, title: note.title, notebookId: nb.id, notebookName: nb.name };
+      return { id: note.id, title: note.title, notebookId: nb.id, notebookName: nb.name, tags: note.tags, starred: note.starred };
     }
   },
   create_todo: {
-    desc: '新建待办。{text, dueAt?:ISO8601, remindBeforeMin?}',
-    run: ({ text, dueAt, remindBeforeMin }) => {
+    desc: '新建待办。{text, content?, dueAt?:ISO8601, remindBeforeMin?, remindCount?, remindIntervalMin?}',
+    run: ({ text, content, dueAt, remindBeforeMin, remindCount, remindIntervalMin }) => {
       if (!text) throw new Error('text 必填');
       let dueDate = null;
       if (dueAt) { const d = new Date(dueAt); if (!isNaN(d.getTime())) dueDate = d.getTime(); }
-      const t = { id: uid(), text: String(text), content: '', done: false, dueDate, remindBeforeMin: parseInt(remindBeforeMin, 10) || 0, remindCount: 1, remindIntervalMin: 5, createdAt: Date.now(), completedAt: null };
+      const t = { id: uid(), text: String(text), content: String(content || ''), done: false, dueDate, remindBeforeMin: Math.max(0, parseInt(remindBeforeMin, 10) || 0), remindCount: Math.max(1, parseInt(remindCount, 10) || 1), remindIntervalMin: Math.max(1, parseInt(remindIntervalMin, 10) || 5), createdAt: Date.now(), completedAt: null };
       todos.push(t);
       saveData();
       try { scheduleTodoReminders(t); } catch {}
       renderTodos();
       renderTodoCounts();
-      return { id: t.id, text: t.text, dueAt: dueDate ? new Date(dueDate).toISOString() : null, remindBeforeMin: t.remindBeforeMin };
+      return { id: t.id, text: t.text, content: t.content, dueAt: dueDate ? new Date(dueDate).toISOString() : null, remindBeforeMin: t.remindBeforeMin, remindCount: t.remindCount, remindIntervalMin: t.remindIntervalMin };
     }
   },
   update_note: {
@@ -538,8 +539,8 @@ const ASSISTANT_TOOLS = {
     }
   },
   update_todo: {
-    desc: '修改待办。{id?, text?, content?, done?, dueAt?}不传id用附件',
-    run: ({ id, text, content, done, dueAt }) => {
+    desc: '修改待办。{id?, text?, content?, done?, dueAt?, remindBeforeMin?, remindCount?, remindIntervalMin?}不传id用附件',
+    run: ({ id, text, content, done, dueAt, remindBeforeMin, remindCount, remindIntervalMin }) => {
       if (!id && pendingAttachments.length) { const att = pendingAttachments.find(a => a.type === 'todo'); if (att) id = att.id; }
       const t = todos.find(x => x.id === id);
       if (!t) throw new Error('待办未找到：' + (id || '(未指定)'));
@@ -547,10 +548,14 @@ const ASSISTANT_TOOLS = {
       if (typeof content === 'string') t.content = content;
       if (typeof done === 'boolean') { t.done = done; if (done) t.completedAt = Date.now(); else t.completedAt = null; }
       if (dueAt !== undefined) { const d = new Date(dueAt); if (!isNaN(d.getTime())) t.dueDate = d.getTime(); else t.dueDate = null; }
+      if (remindBeforeMin !== undefined) t.remindBeforeMin = Math.max(0, parseInt(remindBeforeMin, 10) || 0);
+      if (remindCount !== undefined) t.remindCount = Math.max(1, parseInt(remindCount, 10) || 1);
+      if (remindIntervalMin !== undefined) t.remindIntervalMin = Math.max(1, parseInt(remindIntervalMin, 10) || 5);
       saveData();
+      try { scheduleTodoReminders(t); } catch {}
       renderTodos();
       renderTodoCounts();
-      return { id: t.id, text: t.text, done: !!t.done };
+      return { id: t.id, text: t.text, done: !!t.done, dueAt: t.dueDate ? new Date(t.dueDate).toISOString() : null, remindBeforeMin: t.remindBeforeMin, remindCount: t.remindCount, remindIntervalMin: t.remindIntervalMin };
     }
   },
   create_notebook: {
@@ -952,20 +957,26 @@ const ASSISTANT_TOOLS = {
       if (id) t = todos.find(x => x.id === id);
       else if (text) t = todos.filter(x => !x.done).find(x => x.text.includes(text));
       if (!t) throw new Error('未找到待办');
-      t.done = true; t.updatedAt = Date.now();
-      saveData(); if (typeof renderTodos === 'function') renderTodos();
-      return { id: t.id, text: t.text };
+      t.done = true; t.completedAt = Date.now(); t.updatedAt = Date.now();
+      saveData();
+      try { scheduleTodoReminders(t); } catch {}
+      if (typeof renderTodos === 'function') renderTodos();
+      if (typeof renderTodoCounts === 'function') renderTodoCounts();
+      return { id: t.id, text: t.text, done: true };
     }
   },
   delete_todo: {
     desc: '删除待办。{id?或text?模糊匹配}',
-    run: ({ id, text }) => {
+    run: async ({ id, text }) => {
       let idx = -1;
       if (id) idx = todos.findIndex(x => x.id === id);
       else if (text) idx = todos.findIndex(x => x.text.includes(text));
       if (idx < 0) throw new Error('未找到待办');
       const removed = todos.splice(idx, 1)[0];
-      saveData(); if (typeof renderTodos === 'function') renderTodos();
+      saveData();
+      try { await clearAlarmsByPrefix(`mtodo:${removed.id}:`); syncRemindersToExt(); } catch {}
+      if (typeof renderTodos === 'function') renderTodos();
+      if (typeof renderTodoCounts === 'function') renderTodoCounts();
       return { id: removed.id, text: removed.text };
     }
   },

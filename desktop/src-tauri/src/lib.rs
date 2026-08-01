@@ -3,6 +3,7 @@
 
 use tauri::{Manager, WindowEvent};
 
+mod cli_bridge;
 mod commands;
 mod scheduler;
 mod storage;
@@ -44,6 +45,8 @@ pub fn run() {
             commands::cmd_unregister_hotkey,
             commands::cmd_get_app_paths,
             commands::cmd_set_window_theme,
+            cli_bridge::cmd_cli_take_requests,
+            cli_bridge::cmd_cli_complete,
             workdir::cmd_workdir_pick,
             workdir::cmd_workdir_status,
             workdir::cmd_workdir_forget,
@@ -57,6 +60,10 @@ pub fn run() {
             workdir::cmd_workdir_move,
         ])
         .setup(|app| {
+            // 本机 CLI 桥：仅监听 127.0.0.1，连接信息和随机令牌写入应用数据目录。
+            if let Err(e) = cli_bridge::start(app.handle()) {
+                eprintln!("CLI bridge start failed: {e}");
+            }
             // 安装托盘
             if let Err(e) = tray::install(app.handle()) {
                 eprintln!("tray install failed: {e}");
@@ -70,6 +77,10 @@ pub fn run() {
                         let _ = w_clone.hide();
                     }
                 });
+                // CLI 在应用未运行时会用该参数启动后台实例。
+                if std::env::args().any(|arg| arg == "--cli-background") {
+                    let _ = w.hide();
+                }
             }
             Ok(())
         })

@@ -30,8 +30,10 @@ node_modules/
 
 # Tauri build output
 desktop/src-tauri/target/
+desktop/cli/target/
 desktop/src-tauri/gen/
 desktop/dist/
+desktop/src-tauri/binaries/
 
 # Rust
 **/Cargo.lock.bak

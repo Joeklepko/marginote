@@ -5,6 +5,34 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.4] - 2026-08-01
+
+Windows 桌面版新增面向 Claude Code、Codex 等本地 agent 的正式 CLI，并与内置 AI 助手共享实时数据和业务规则。
+
+### 新功能
+
+- **`marginote-cli.exe` 随安装包分发**：提供笔记、待办、笔记本的查询 / 创建 / 修改 / 追加 / 完成 / 删除，以及统一搜索、能力自发现和受控原始工具调用；Release 同时附带独立 CLI 文件。
+- **Agent 友好协议**：所有命令支持 `--json` 固定信封；`schema --json` 可离线发现命令与白名单工具；明确退出码，正文支持参数、UTF-8 文件和 stdin。
+- **开箱即用**：NSIS 安装时把 CLI 加入当前用户 PATH，卸载时自动清理；Marginote 未运行时 CLI 自动拉起后台实例。
+
+### 架构与安全
+
+- **复用内置 AI 工具**：CLI 请求由 WebView 内现有 `ASSISTANT_TOOLS` 执行，应用界面、内置 AI、工作目录和待办提醒看到的是同一次变更。
+- **安全本机桥**：Rust 仅监听 `127.0.0.1` 随机端口，每次启动生成 256-bit 随机令牌；不直接并发修改 WebView2 LevelDB。
+- **独立 CLI crate / Tauri sidecar**：CLI 无 GUI 运行时依赖，通过构建脚本自动生成带 target triple 的 sidecar，Windows CI 可复现打包。
+- **隐藏窗口可用**：请求事件可唤醒托盘后台 WebView，并有启动竞态轮询兜底。
+
+### 完善
+
+- `create_note` 支持标签和收藏；`create_todo` / `update_todo` 支持正文、提醒次数与间隔。
+- CLI 更新待办后会重新调度提醒，删除待办会同步清理已注册闹钟。
+- 新增 CLI 分发层单测、Rust 桥单测和完整中文使用文档。
+
+### 发布
+
+- Chrome 扩展：v1.2.4
+- Windows 桌面版：v1.2.4（内置 `marginote-cli.exe`）
+
 ## [1.2.3] - 2026-06-30
 
 AI 助手体验优化 + 批量删除 + prompt 精简 + 对话气泡美化；并整合多模型健壮性、128K 上下文、流式与记忆管理优化；笔记自动归类、中文搜索召回、多行输入框。

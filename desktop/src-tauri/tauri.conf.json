@@ -1,12 +1,12 @@
 {
   "$schema": "https://schema.tauri.app/config/2.0.0",
   "productName": "Marginote",
-  "version": "1.2.3",
+  "version": "1.2.4",
   "identifier": "com.marginote.app",
   "build": {
     "frontendDist": "../../shared",
     "devUrl": null,
-    "beforeBuildCommand": "",
+    "beforeBuildCommand": "node scripts/prepare-sidecar.mjs",
     "beforeDevCommand": ""
   },
   "app": {
@@ -33,6 +33,7 @@
   "bundle": {
     "active": true,
     "targets": ["nsis"],
+    "externalBin": ["binaries/marginote-cli"],
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -45,7 +46,8 @@
         "installerIcon": "icons/icon.ico",
         "installMode": "currentUser",
         "languages": ["English"],
-        "displayLanguageSelector": false
+        "displayLanguageSelector": false,
+        "installerHooks": "./windows/hooks.nsh"
       }
     },
     "shortDescription": "本地优先 Markdown 笔记 + 待办 + AI 助手",

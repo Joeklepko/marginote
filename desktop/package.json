@@ -1,10 +1,11 @@
 {
   "name": "marginote-desktop",
   "private": true,
-  "version": "1.2.3",
+  "version": "1.2.4",
   "description": "Marginote Tauri 桌面壳。仅供 @tauri-apps/cli 使用。",
   "scripts": {
     "tauri": "tauri",
+    "build:cli": "node scripts/prepare-sidecar.mjs",
     "build": "tauri build",
     "dev": "tauri dev"
   },
