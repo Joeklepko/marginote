@@ -1604,7 +1604,7 @@ function selectNote(note) {
 
   const modeBtn = document.getElementById('modeBtn');
   modeBtn.classList.remove('active');
-  modeBtn.setAttribute('data-tip', '编辑');
+  updateNoteModeButton();
 
   // 默认预览模式
   applyNotePreview(note);
@@ -2035,15 +2035,28 @@ function togglePreview() {
     ta.style.display = 'none';
     pv.style.display = 'block';
     modeBtn.classList.remove('active');
-    modeBtn.setAttribute('data-tip', '编辑');
   } else {
     ta.style.display = '';
     pv.style.display = 'none';
     modeBtn.classList.add('active');
-    modeBtn.setAttribute('data-tip', '预览');
     ta.focus();
     ta.setSelectionRange(ta.value.length, ta.value.length);
   }
+  updateNoteModeButton();
+}
+
+function updateNoteModeButton() {
+  const button = document.getElementById('modeBtn');
+  if (!button) return;
+  const action = isPreviewMode ? '编辑' : '预览';
+  const label = document.getElementById('modeBtnLabel');
+  if (label) label.textContent = action;
+  const previewIcon = button.querySelector('[data-mode-icon="preview"]');
+  const editIcon = button.querySelector('[data-mode-icon="edit"]');
+  if (previewIcon) previewIcon.hidden = isPreviewMode;
+  if (editIcon) editIcon.hidden = !isPreviewMode;
+  button.setAttribute('data-tip', action);
+  button.setAttribute('aria-label', `切换为${action}模式`);
 }
 
 function copyContent() {
@@ -4102,6 +4115,27 @@ document.getElementById('openFileBtn').addEventListener('click', openLocalFile);
   document.addEventListener('click', e => {
     if (!e.target.closest('#editorMoreMenu') && !e.target.closest('#editorMoreBtn')) closeEditorMoreMenu();
   });
+  const editorToolbar = editorMoreBtn?.closest('.editor-toolbar');
+  const syncEditorActionsLayout = () => {
+    if (!editorToolbar) return;
+    const core = window.MarginoteEditorUiCore;
+    const width = editorToolbar.getBoundingClientRect().width;
+    const expanded = core && typeof core.shouldExpandEditorActions === 'function'
+      ? core.shouldExpandEditorActions(width)
+      : width >= 1120;
+    const compact = core && typeof core.shouldUseCompactToolbar === 'function'
+      ? core.shouldUseCompactToolbar(width)
+      : (width > 0 && width < 900);
+    editorToolbar.classList.toggle('actions-expanded', !!expanded);
+    editorToolbar.classList.toggle('actions-compact', !!compact);
+    if (expanded) closeEditorMoreMenu();
+  };
+  if (editorToolbar && typeof ResizeObserver === 'function') {
+    const editorActionsObserver = new ResizeObserver(syncEditorActionsLayout);
+    editorActionsObserver.observe(editorToolbar);
+  }
+  window.addEventListener('resize', syncEditorActionsLayout);
+  requestAnimationFrame(syncEditorActionsLayout);
   document.getElementById('starBtn').addEventListener('click', toggleStar);
   document.getElementById('modeBtn').addEventListener('click', togglePreview);
   const htmlBtn = document.getElementById('htmlModeBtn');
@@ -4973,27 +5007,8 @@ function bindV12() {
   const sb = document.getElementById('splitBtn');
   if (sb) sb.addEventListener('click', toggleSplitView);
 
-  // 双击切换 编辑/预览：
-  //   预览模式下双击渲染文字 -> 切回编辑
-  //   编辑模式下双击非输入区空白 -> 切到预览
-  const FORM_SEL = 'input, textarea, select, button, .icon-btn, .tag-pill, .tag-input-wrap, .editor-toolbar, .modal, .outline-panel';
-  function bindDblToggle(rootId, previewId, isPreviewFn, toggleFn, isActiveFn) {
-    const root = document.getElementById(rootId);
-    if (!root) return;
-    root.addEventListener('dblclick', (e) => {
-      if (!isActiveFn()) return;
-      const t = e.target;
-      const previewEl = document.getElementById(previewId);
-      const inPreview = previewEl && previewEl.contains(t);
-      if (isPreviewFn() && inPreview) {
-        toggleFn();
-      } else if (!isPreviewFn() && !t.closest(FORM_SEL)) {
-        toggleFn();
-      }
-    });
-  }
-  bindDblToggle('editor',         'preview',     () => isPreviewMode,     togglePreview,     () => !!currentNote);
-  bindDblToggle('todoEditorWrap', 'todoPreview', () => isTodoPreviewMode, toggleTodoPreview, () => !!currentTodo);
+  // 编辑 / 预览只由右上角按钮或快捷键切换。
+  // 不再绑定 dblclick，确保双击选词、复制不会改变模式。
 
   // 搜索 placeholder 加语法提示
   const si = document.getElementById('searchInput');
@@ -5573,6 +5588,7 @@ function enterReadingMode() {
   ta.style.display = 'none';
   app.classList.add('reading-mode');
   document.getElementById('readingBtn').classList.add('active');
+  applyEditorZoom();
   document.querySelector('.editor').scrollTop = 0;
   updateReadingProgress();
 }
@@ -5582,6 +5598,7 @@ function exitReadingMode() {
   if (!app.classList.contains('reading-mode')) return;
   app.classList.remove('reading-mode');
   document.getElementById('readingBtn').classList.remove('active');
+  clearReadingZoomLayout();
   // 恢复进入前的预览/编辑状态
   if (!isPreviewMode) {
     document.getElementById('preview').style.display = 'none';
@@ -5795,32 +5812,80 @@ if (_origRenderTodos_v121) {
 const EDITOR_ZOOM_KEY = 'marginote.editorZoom';
 let _editorZoom = (function() {
   const n = parseFloat(localStorage.getItem(EDITOR_ZOOM_KEY));
-  return isFinite(n) && n > 0 ? Math.max(0.5, Math.min(3, n)) : 1.0;
+  const core = window.MarginoteEditorUiCore;
+  return core && typeof core.normalizeEditorZoom === 'function'
+    ? core.normalizeEditorZoom(n)
+    : (isFinite(n) && n > 0 ? Math.max(0.5, Math.min(3, n)) : 1.0);
 })();
 function applyEditorZoom() {
   document.documentElement.style.setProperty('--editor-zoom', _editorZoom.toFixed(2));
+  const value = document.getElementById('readingZoomValue');
+  if (value) value.textContent = `${Math.round(_editorZoom * 100)}%`;
+  if (document.getElementById('app')?.classList.contains('reading-mode')) applyReadingZoomLayout();
 }
-function bumpEditorZoom(delta) {
-  const next = Math.max(0.5, Math.min(3, Math.round((_editorZoom + delta) * 100) / 100));
-  if (next === _editorZoom) return;
+function applyReadingZoomLayout() {
+  const surface = document.querySelector('#editorWrap > .editor-content');
+  if (!surface) return;
+  const core = window.MarginoteEditorUiCore;
+  const layout = core && typeof core.readingLayout === 'function'
+    ? core.readingLayout(_editorZoom)
+    : {
+        zoom: _editorZoom.toFixed(2),
+        width: `calc(${(100 / _editorZoom).toFixed(4)}% - ${(64 / _editorZoom).toFixed(2)}px)`,
+        maxWidth: `${(760 / _editorZoom).toFixed(2)}px`,
+        padding: `${(80 / _editorZoom).toFixed(2)}px ${(32 / _editorZoom).toFixed(2)}px ${(160 / _editorZoom).toFixed(2)}px`
+      };
+  surface.style.zoom = layout.zoom;
+  surface.style.width = layout.width;
+  surface.style.maxWidth = layout.maxWidth;
+  surface.style.padding = layout.padding;
+}
+function clearReadingZoomLayout() {
+  const surface = document.querySelector('#editorWrap > .editor-content');
+  if (!surface) return;
+  surface.style.removeProperty('zoom');
+  surface.style.removeProperty('width');
+  surface.style.removeProperty('max-width');
+  surface.style.removeProperty('padding');
+}
+function setEditorZoom(value) {
+  const core = window.MarginoteEditorUiCore;
+  const next = core && typeof core.normalizeEditorZoom === 'function'
+    ? core.normalizeEditorZoom(value)
+    : Math.max(0.5, Math.min(3, Math.round(Number(value) * 100) / 100));
+  if (next === _editorZoom) {
+    applyEditorZoom();
+    return;
+  }
   _editorZoom = next;
   applyEditorZoom();
   try { localStorage.setItem(EDITOR_ZOOM_KEY, String(_editorZoom)); } catch {}
   if (typeof showToast === 'function') showToast(`编辑区缩放 ${Math.round(_editorZoom * 100)}%`);
 }
-function bindEditorZoomTargets() {
-  const ids = ['contentInput', 'preview', 'todoEditContent', 'todoPreview'];
-  ids.forEach(id => {
-    const el = document.getElementById(id);
-    if (!el || el.dataset.zoomBound === '1') return;
-    el.dataset.zoomBound = '1';
-    el.addEventListener('wheel', (e) => {
-      if (!(e.ctrlKey || e.metaKey)) return;
-      e.preventDefault();
-      bumpEditorZoom(e.deltaY < 0 ? 0.1 : -0.1);
-    }, { passive: false });
-  });
+function bumpEditorZoom(delta) {
+  const core = window.MarginoteEditorUiCore;
+  const next = core && typeof core.nextEditorZoom === 'function'
+    ? core.nextEditorZoom(_editorZoom, delta)
+    : Math.max(0.5, Math.min(3, Math.round((_editorZoom + delta) * 100) / 100));
+  setEditorZoom(next);
 }
+function bindEditorZoomTargets() {
+  const editor = document.getElementById('editor');
+  if (!editor || editor.dataset.zoomBound === '1') return;
+  editor.dataset.zoomBound = '1';
+  editor.addEventListener('wheel', (e) => {
+    if (!(e.ctrlKey || e.metaKey)) return;
+    const reading = document.getElementById('app')?.classList.contains('reading-mode');
+    const inContent = e.target.closest && e.target.closest('#editorWrap .editor-content, #todoEditorWrap .editor-content');
+    if (!reading && !inContent) return;
+    e.preventDefault();
+    bumpEditorZoom(e.deltaY < 0 ? 0.1 : -0.1);
+  }, { passive: false });
+}
+
+document.getElementById('readingZoomOut')?.addEventListener('click', () => bumpEditorZoom(-0.1));
+document.getElementById('readingZoomIn')?.addEventListener('click', () => bumpEditorZoom(0.1));
+document.getElementById('readingZoomReset')?.addEventListener('click', () => setEditorZoom(1));
 
 // ---------- AI 指令管理 modal ----------
 function openAiActionManager() {
@@ -6014,6 +6079,7 @@ openAiCustomModal = function() {
     #contentInput, #preview, #todoEditContent, #todoPreview {
       zoom: var(--editor-zoom, 1);
     }
+    #app.reading-mode #preview { zoom: 1 !important; }
     .ai-action-row textarea:focus, .ai-action-row input:focus {
       outline: none;
       border-color: var(--accent, #888) !important;
