@@ -227,10 +227,8 @@ const FONT_TARGET_SELECTOR =
   + '.modal h3, .modal p, .modal label, .modal-btn, '
   + 'h1, h2, h3, h4, h5, h6, .nb-name, .toast';
 
-// 字号目标：[选择器, 16px 基准下的目标 size]
+// 普通界面字号目标：[选择器, 16px 基准下的目标 size]
 const FONT_SIZE_TARGETS = [
-  ['.editor, .content-input', 16],
-  ['.preview, .preview p, .preview li', 16],
   ['.note-title', 14],
   ['.note-preview', 13],
   ['.todo-text', 14],
@@ -238,8 +236,34 @@ const FONT_SIZE_TARGETS = [
   ['.rail-item-label', 13],
 ];
 
+// 编辑正文单独叠加 Ctrl+滚轮缩放。必须继续走 inline !important：
+// WebView2 release 下字体模块本身也是 inline !important，样式表里的 CSS zoom / font-size 无法可靠覆盖。
+const EDITOR_FONT_SIZE_TARGETS = [
+  ['.content-input', 16],
+  ['.preview, .preview p, .preview li', 16],
+  ['.title-input', 22],
+];
+
 let _currentFontStack = null;
 let _currentFontPx = 16;
+let _currentEditorZoom = 1;
+
+function paintEditorZoomStyles(scope) {
+  const root = scope || document;
+  const fontRatio = _currentFontPx / 16;
+  EDITOR_FONT_SIZE_TARGETS.forEach(([sel, base]) => {
+    const px = Math.round(base * fontRatio * _currentEditorZoom * 100) / 100;
+    root.querySelectorAll(sel).forEach(el => {
+      el.style.setProperty('font-size', px + 'px', 'important');
+    });
+  });
+}
+
+function setEditorContentZoom(value) {
+  const n = Number(value);
+  _currentEditorZoom = Number.isFinite(n) ? Math.max(0.5, Math.min(3, n)) : 1;
+  paintEditorZoomStyles(document);
+}
 
 // 给作用域内所有目标元素直写 font-family / font-size。
 // 在 init 调一次，每次 applyFont/applyFontSize 调一次，每次动态 render 后调一次。
@@ -261,6 +285,7 @@ function paintFontStyles(scope) {
       el.style.setProperty('font-size', px + 'px', 'important');
     });
   });
+  paintEditorZoomStyles(root);
 }
 
 function applyFont(name) {

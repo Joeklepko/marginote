@@ -1123,6 +1123,35 @@
     position: relative;
   }
 
+  .editor-zoom-controls {
+    height: 30px;
+    display: flex;
+    align-items: stretch;
+    overflow: hidden;
+    margin-right: 4px;
+    border: 1px solid var(--rule-soft);
+    border-radius: 8px;
+    background: color-mix(in srgb, var(--bg-warm) 55%, transparent);
+    flex-shrink: 0;
+  }
+  .editor-zoom-controls button {
+    min-width: 28px;
+    height: 100%;
+    padding: 0 7px;
+    border: none;
+    background: transparent;
+    color: var(--ink-soft);
+    cursor: pointer;
+    font: 13px/1 var(--font-ui);
+  }
+  .editor-zoom-controls button:hover { background: var(--bg-warm); color: var(--ink); }
+  .editor-zoom-controls .editor-zoom-value {
+    min-width: 46px;
+    border-left: 1px solid var(--rule-soft);
+    border-right: 1px solid var(--rule-soft);
+    font-size: 10px;
+  }
+
   .editor-more-menu {
     position: absolute;
     top: calc(100% + 8px);
@@ -1508,13 +1537,13 @@
     letter-spacing: -0.02em;
     font-weight: 500;
   }
-  .preview h1 { font-size: 26px; }
+  .preview h1 { font-size: 1.625em; }
   .preview h2 {
-    font-size: 20px;
+    font-size: 1.25em;
     border-bottom: 1px solid var(--rule);
     padding-bottom: 6px;
   }
-  .preview h3 { font-size: 17px; font-style: italic; color: var(--accent); }
+  .preview h3 { font-size: 1.0625em; font-style: italic; color: var(--accent); }
   .preview p { margin: 0.55em 0; }
   .preview strong { color: var(--ink); font-weight: 600; }
   .preview em { font-style: italic; color: var(--ink); }
@@ -1537,7 +1566,7 @@
     background: var(--bg-warm);
     padding: 2px 6px;
     border-radius: 4px;
-    font-size: 14px;
+    font-size: 0.875em;
     color: var(--accent);
     border: 1px solid var(--rule-soft);
   }
@@ -1548,7 +1577,7 @@
     border-radius: 8px;
     overflow-x: auto;
     margin: 0.9em 0;
-    font-size: 13px;
+    font-size: 0.8125em;
     line-height: 1.5;
     white-space: pre;
     border: 1px solid var(--rule);
@@ -1569,14 +1598,14 @@
   }
   .preview ul, .preview ol { margin: 0.55em 0; padding-left: 24px; }
   .preview li { margin: 0.2em 0; }
-  .preview h4 { font-size: 16px; margin: 0.85em 0 0.3em; font-weight: 600; color: var(--ink); }
-  .preview h5 { font-size: 14px; margin: 0.75em 0 0.25em; font-weight: 600; color: var(--ink-soft); }
-  .preview h6 { font-size: 12px; margin: 0.75em 0 0.25em; font-weight: 600; color: var(--ink-mute); text-transform: uppercase; letter-spacing: 0.05em; }
+  .preview h4 { font-size: 1em; margin: 0.85em 0 0.3em; font-weight: 600; color: var(--ink); }
+  .preview h5 { font-size: 0.875em; margin: 0.75em 0 0.25em; font-weight: 600; color: var(--ink-soft); }
+  .preview h6 { font-size: 0.75em; margin: 0.75em 0 0.25em; font-weight: 600; color: var(--ink-mute); text-transform: uppercase; letter-spacing: 0.05em; }
   .preview table {
     border-collapse: collapse;
     margin: 0.8em 0;
     width: 100%;
-    font-size: 13px;
+    font-size: 0.8125em;
     overflow-x: auto;
     display: block;
     font-family: 'JetBrains Mono', ui-monospace, Consolas, 'Liberation Mono',
@@ -3414,9 +3443,10 @@
     overflow-y: auto;
   }
   .app.reading-mode .editor-content {
-    max-width: 760px;
+    width: 88vw;
+    max-width: 1920px;
     margin: 0 auto;
-    padding: 80px 32px 160px;
+    padding: 72px clamp(32px, 4.5vw, 96px) 160px;
   }
   .app.reading-mode .editor-content.split { display: block; }
   .app.reading-mode .editor-content.split .preview {
@@ -3432,7 +3462,7 @@
     background: transparent;
     margin-bottom: 24px;
   }
-  .app.reading-mode .preview { font-size: 18px; line-height: 1.9; }
+  .app.reading-mode .preview { line-height: 1.9; }
 
   .reading-exit-btn {
     position: fixed;
@@ -4061,6 +4091,13 @@
         </div>
 
         <div class="editor-actions">
+          <div class="editor-zoom-controls" id="editorZoomControls" aria-label="编辑区缩放">
+            <button id="editorZoomOut" type="button" aria-label="缩小编辑区">−</button>
+            <button class="editor-zoom-value" id="editorZoomReset" type="button" title="恢复 100%" aria-label="恢复编辑区为 100%">
+              <span id="editorZoomValue">100%</span>
+            </button>
+            <button id="editorZoomIn" type="button" aria-label="放大编辑区">+</button>
+          </div>
           <button class="icon-btn" id="moveBtn" data-tip="移动到笔记本">
             <svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" d="M3 7v13a1 1 0 001 1h16a1 1 0 001-1V9a1 1 0 00-1-1h-8l-2-3H4a1 1 0 00-1 1v1z"/>

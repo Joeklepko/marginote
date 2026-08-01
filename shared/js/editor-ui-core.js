@@ -4,8 +4,8 @@
   if (typeof module === 'object' && module.exports) module.exports = api;
   if (root) root.MarginoteEditorUiCore = api;
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
-  const ACTIONS_EXPANDED_MIN_WIDTH = 1120;
-  const COMPACT_TOOLBAR_MAX_WIDTH = 900;
+  const ACTIONS_EXPANDED_MIN_WIDTH = 1280;
+  const COMPACT_TOOLBAR_MAX_WIDTH = 1040;
   const MIN_ZOOM = 0.5;
   const MAX_ZOOM = 3;
 
@@ -29,13 +29,15 @@
     return normalizeEditorZoom(normalizeEditorZoom(current) + Number(delta || 0));
   }
 
-  function readingLayout(zoom) {
-    const value = normalizeEditorZoom(zoom);
+  function readingLayout(viewportWidth) {
+    const viewport = Number(viewportWidth);
+    const safeViewport = Number.isFinite(viewport) && viewport > 0 ? Math.max(320, viewport) : 1280;
+    const width = Math.min(1920, safeViewport * 0.88);
+    const horizontalPadding = Math.max(32, Math.min(96, safeViewport * 0.045));
     return {
-      zoom: value.toFixed(2),
-      width: `calc(${(100 / value).toFixed(4)}% - ${(64 / value).toFixed(2)}px)`,
-      maxWidth: `${(760 / value).toFixed(2)}px`,
-      padding: `${(80 / value).toFixed(2)}px ${(32 / value).toFixed(2)}px ${(160 / value).toFixed(2)}px`
+      width: Math.round(width * 100) / 100,
+      horizontalPadding: Math.round(horizontalPadding * 100) / 100,
+      contentWidth: Math.round(Math.max(0, width - horizontalPadding * 2) * 100) / 100
     };
   }
 

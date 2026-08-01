@@ -4122,10 +4122,10 @@ document.getElementById('openFileBtn').addEventListener('click', openLocalFile);
     const width = editorToolbar.getBoundingClientRect().width;
     const expanded = core && typeof core.shouldExpandEditorActions === 'function'
       ? core.shouldExpandEditorActions(width)
-      : width >= 1120;
+      : width >= 1280;
     const compact = core && typeof core.shouldUseCompactToolbar === 'function'
       ? core.shouldUseCompactToolbar(width)
-      : (width > 0 && width < 900);
+      : (width > 0 && width < 1040);
     editorToolbar.classList.toggle('actions-expanded', !!expanded);
     editorToolbar.classList.toggle('actions-compact', !!compact);
     if (expanded) closeEditorMoreMenu();
@@ -5589,6 +5589,7 @@ function enterReadingMode() {
   app.classList.add('reading-mode');
   document.getElementById('readingBtn').classList.add('active');
   applyEditorZoom();
+  applyReadingViewportLayout();
   document.querySelector('.editor').scrollTop = 0;
   updateReadingProgress();
 }
@@ -5598,7 +5599,7 @@ function exitReadingMode() {
   if (!app.classList.contains('reading-mode')) return;
   app.classList.remove('reading-mode');
   document.getElementById('readingBtn').classList.remove('active');
-  clearReadingZoomLayout();
+  clearReadingViewportLayout();
   // 恢复进入前的预览/编辑状态
   if (!isPreviewMode) {
     document.getElementById('preview').style.display = 'none';
@@ -5819,31 +5820,37 @@ let _editorZoom = (function() {
 })();
 function applyEditorZoom() {
   document.documentElement.style.setProperty('--editor-zoom', _editorZoom.toFixed(2));
-  const value = document.getElementById('readingZoomValue');
-  if (value) value.textContent = `${Math.round(_editorZoom * 100)}%`;
-  if (document.getElementById('app')?.classList.contains('reading-mode')) applyReadingZoomLayout();
+  if (typeof setEditorContentZoom === 'function') {
+    setEditorContentZoom(_editorZoom);
+  } else {
+    const fallbackPx = Math.round(16 * _editorZoom * 100) / 100;
+    document.querySelectorAll('.content-input, .preview').forEach(el => {
+      el.style.setProperty('font-size', fallbackPx + 'px', 'important');
+    });
+  }
+  const label = `${Math.round(_editorZoom * 100)}%`;
+  const readingValue = document.getElementById('readingZoomValue');
+  const editorValue = document.getElementById('editorZoomValue');
+  if (readingValue) readingValue.textContent = label;
+  if (editorValue) editorValue.textContent = label;
 }
-function applyReadingZoomLayout() {
+function applyReadingViewportLayout() {
   const surface = document.querySelector('#editorWrap > .editor-content');
   if (!surface) return;
   const core = window.MarginoteEditorUiCore;
   const layout = core && typeof core.readingLayout === 'function'
-    ? core.readingLayout(_editorZoom)
+    ? core.readingLayout(window.innerWidth)
     : {
-        zoom: _editorZoom.toFixed(2),
-        width: `calc(${(100 / _editorZoom).toFixed(4)}% - ${(64 / _editorZoom).toFixed(2)}px)`,
-        maxWidth: `${(760 / _editorZoom).toFixed(2)}px`,
-        padding: `${(80 / _editorZoom).toFixed(2)}px ${(32 / _editorZoom).toFixed(2)}px ${(160 / _editorZoom).toFixed(2)}px`
+        width: Math.min(1920, window.innerWidth * 0.88),
+        horizontalPadding: Math.max(32, Math.min(96, window.innerWidth * 0.045))
       };
-  surface.style.zoom = layout.zoom;
-  surface.style.width = layout.width;
-  surface.style.maxWidth = layout.maxWidth;
-  surface.style.padding = layout.padding;
+  surface.style.width = layout.width + 'px';
+  surface.style.maxWidth = 'none';
+  surface.style.padding = `72px ${layout.horizontalPadding}px 160px`;
 }
-function clearReadingZoomLayout() {
+function clearReadingViewportLayout() {
   const surface = document.querySelector('#editorWrap > .editor-content');
   if (!surface) return;
-  surface.style.removeProperty('zoom');
   surface.style.removeProperty('width');
   surface.style.removeProperty('max-width');
   surface.style.removeProperty('padding');
@@ -5860,7 +5867,10 @@ function setEditorZoom(value) {
   _editorZoom = next;
   applyEditorZoom();
   try { localStorage.setItem(EDITOR_ZOOM_KEY, String(_editorZoom)); } catch {}
-  if (typeof showToast === 'function') showToast(`编辑区缩放 ${Math.round(_editorZoom * 100)}%`);
+  if (typeof showToast === 'function') {
+    const reading = document.getElementById('app')?.classList.contains('reading-mode');
+    showToast(`${reading ? '阅读' : '编辑区'}缩放 ${Math.round(_editorZoom * 100)}%`);
+  }
 }
 function bumpEditorZoom(delta) {
   const core = window.MarginoteEditorUiCore;
@@ -5886,6 +5896,12 @@ function bindEditorZoomTargets() {
 document.getElementById('readingZoomOut')?.addEventListener('click', () => bumpEditorZoom(-0.1));
 document.getElementById('readingZoomIn')?.addEventListener('click', () => bumpEditorZoom(0.1));
 document.getElementById('readingZoomReset')?.addEventListener('click', () => setEditorZoom(1));
+document.getElementById('editorZoomOut')?.addEventListener('click', () => bumpEditorZoom(-0.1));
+document.getElementById('editorZoomIn')?.addEventListener('click', () => bumpEditorZoom(0.1));
+document.getElementById('editorZoomReset')?.addEventListener('click', () => setEditorZoom(1));
+window.addEventListener('resize', () => {
+  if (document.getElementById('app')?.classList.contains('reading-mode')) applyReadingViewportLayout();
+});
 
 // ---------- AI 指令管理 modal ----------
 function openAiActionManager() {
@@ -6076,10 +6092,6 @@ openAiCustomModal = function() {
     [draggable="true"].rail-item, [draggable="true"].todo-row, [draggable="true"].ai-session-item {
       -webkit-user-drag: element;
     }
-    #contentInput, #preview, #todoEditContent, #todoPreview {
-      zoom: var(--editor-zoom, 1);
-    }
-    #app.reading-mode #preview { zoom: 1 !important; }
     .ai-action-row textarea:focus, .ai-action-row input:focus {
       outline: none;
       border-color: var(--accent, #888) !important;
