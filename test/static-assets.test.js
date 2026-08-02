@@ -69,6 +69,27 @@ assert.doesNotMatch(desktopHtml, /id=["']cliStatusBar["']/, '桌面版不应继�
 const desktopApp = fs.readFileSync('shared/app.js', 'utf8');
 assert.match(desktopApp, /await loadDesktopWorkdirData\(\)/, '桌面启动必须先读取 Markdown 工作目录');
 assert.match(desktopApp, /localStorage\.removeItem\(STORAGE_KEY\)/, '文件迁移成功后应清理受配额限制的旧主数据');
+const desktopLoadStart = desktopApp.indexOf('async function loadDesktopWorkdirData()');
+const desktopLoadEnd = desktopApp.indexOf('\nfunction saveData()', desktopLoadStart);
+const desktopLoadSource = desktopApp.slice(desktopLoadStart, desktopLoadEnd);
+assert.ok(
+  desktopLoadSource.indexOf('loadData({ raw, legacyRaw') < desktopLoadSource.indexOf('initImagesIdb({ persistMigration: false })'),
+  '桌面升级必须先恢复旧主数据，再水合 IDB 图片元数据'
+);
+assert.ok(
+  desktopLoadSource.indexOf('await workdirWriteAllNow') < desktopLoadSource.indexOf('await verifyWorkdirMigration(fs)')
+    && desktopLoadSource.indexOf('await verifyWorkdirMigration(fs)') < desktopLoadSource.indexOf('localStorage.removeItem(STORAGE_KEY)'),
+  '只有笔记、待办和图片通过落盘校验后才能清理旧数据'
+);
+assert.doesNotMatch(
+  desktopApp.slice(desktopApp.indexOf('async function initImagesIdb'), desktopApp.indexOf('// 新增图片统一入口')),
+  /if \(_idb\) return/,
+  '图片仓已打开时仍需要可重入地恢复元数据'
+);
+assert.ok(
+  desktopApp.indexOf('bindEssentialSettingsEvents();') < desktopApp.indexOf('await initDesktopReminderActions()'),
+  '设置入口必须在可选异步服务之前可用'
+);
 assert.match(desktopApp, /await persistMainDataDurably\(state\)/, 'AI\/CLI 事务必须等待独立文件真正落盘');
 assert.match(desktopApp, /deletedNoteFiles: deletedNoteIdToPath/, '回收站笔记正文也必须保存为独立文件');
 assert.match(desktopApp, /`remindBeforeMin: \$\{/, '待办独立文件必须包含提醒提前量');

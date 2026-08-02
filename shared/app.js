@@ -109,12 +109,14 @@ function idbDelete(store, key) {
   });
 }
 
-async function initImagesIdb() {
-  try {
-    _idb = await openIdb();
-  } catch (e) {
-    logError(e, 'idb-open');
-    return;
+async function initImagesIdb(options = {}) {
+  if (!_idb) {
+    try {
+      _idb = await openIdb();
+    } catch (e) {
+      logError(e, 'idb-open');
+      return;
+    }
   }
   // localStorage 容量不足时，损坏主数据可能无法在同一存储区复制备份。
   // 先把原始文本放到独立的 IndexedDB meta store，再允许后续保存覆盖主键。
@@ -137,14 +139,21 @@ async function initImagesIdb() {
     }
   }
   // 迁移：localStorage 已有 images 全部搬到 IDB，并从 saveData 写入中剔除
-  const localImageIds = Object.keys(images);
+  // 只迁移真正携带图片体的旧记录。不能用仅含 name/ext 的元数据
+  // put 覆盖已有 IDB 记录，否则会把其中的 dataUrl 永久擦除。
+  const localImageIds = Object.keys(images).filter(id => {
+    const value = images[id] && images[id].dataUrl;
+    return typeof value === 'string' && value.startsWith('data:image/');
+  });
   if (localImageIds.length > 0) {
+    let allMigrated = true;
     for (const id of localImageIds) {
       try { await idbPut('images', { id, ...images[id] }); }
-      catch (e) { logError(e, 'idb-migrate'); }
+      catch (e) { allMigrated = false; logError(e, 'idb-migrate'); }
     }
-    // saveData 之后会从 localStorage 主表移除（saveData 已不写 images）
-    saveData();
+    // 所有图片都确认进入 IDB 后才可从 localStorage 主表移除；
+    // 任意一张失败都保留原快照，等待下次重试。
+    if (allMigrated && options.persistMigration !== false) saveData();
   }
   // 启动只加载图片【元数据】(name/ext/createdAt),【不把任何 base64 载入内存】。图片体积大,若把全部图片
   // 常驻内存(无论 base64 还是 blob),图片一多就把 WebView2 渲染进程撑爆(out of memory);且 blob: 对象 URL
@@ -824,6 +833,17 @@ function persistMainDataNow() {
 }
 
 async function loadDesktopWorkdirData() {
+  const raw = localStorage.getItem(STORAGE_KEY);
+  const legacyRaw = localStorage.getItem(LEGACY_KEY);
+  const hasLegacyData = !!(raw || legacyRaw);
+  // 必须先恢复旧主数据和图片索引。即使工作目录不可访问或迁移写盘失败，
+  // 用户仍能看到旧笔记、主题和 AI 设置，基础界面也必须继续初始化。
+  const loaded = loadData({ raw, legacyRaw, persist: false, initializeDefaults: false });
+  if (!loaded.ok || (_dataRecoveryInfo && !_dataRecoveryInfo.backedUp)) {
+    _mainDataStorageMode = 'blocked';
+    return false;
+  }
+  await initImagesIdb({ persistMigration: false });
   try {
     const fs = fsApi();
     if (!fs || typeof fs.ensureDir !== 'function') throw new Error('桌面文件存储接口不可用');
@@ -837,17 +857,8 @@ async function loadDesktopWorkdirData() {
     const hasDiskLibrary = entries.some(entry => !entry.dir && (
       entry.path === WORKDIR_META || /\.(md|markdown|excalidraw)$/i.test(entry.path)
     ));
-    const raw = localStorage.getItem(STORAGE_KEY);
-    const legacyRaw = localStorage.getItem(LEGACY_KEY);
-    const hasLegacyData = !!(raw || legacyRaw);
-    const loaded = loadData({
-      raw,
-      legacyRaw,
-      persist: false,
-      initializeDefaults: !hasDiskLibrary && !hasLegacyData,
-    });
-    if (!loaded.ok || (_dataRecoveryInfo && !_dataRecoveryInfo.backedUp)) {
-      throw new Error('旧版主数据无法安全迁移，原数据已保留');
+    if (!hasDiskLibrary && !hasLegacyData) {
+      loadData({ raw: null, legacyRaw: null, persist: false, initializeDefaults: true });
     }
 
     _mainDataStorageMode = 'workdir';
@@ -856,12 +867,50 @@ async function loadDesktopWorkdirData() {
     // 迁移提交成功前绝不删除旧 WebView 数据。writeAll 的单文件原子写可让
     // 300+ 条 CLI 批量记录不再受 localStorage 配额限制。
     await workdirWriteAllNow(true, { throwOnError: true });
+    await verifyWorkdirMigration(fs);
     try { localStorage.removeItem(STORAGE_KEY); localStorage.removeItem(LEGACY_KEY); } catch {}
+    return true;
   } catch (error) {
     _mainDataStorageMode = 'blocked';
     showToast('本地文件库初始化失败，已停止写入：' + (error.message || error));
-    throw error;
+    logError(error, 'desktop-workdir-startup');
+    return false;
   }
+}
+
+async function verifyWorkdirMigration(fs) {
+  const metaText = await fs.readText(WORKDIR_META);
+  if (!metaText) throw new Error('工作目录元数据未成功落盘');
+  let meta;
+  try { meta = JSON.parse(metaText); }
+  catch { throw new Error('工作目录元数据写入后无法读回'); }
+  const entries = await fs.list();
+  const presentPaths = entries.filter(entry => !entry.dir).map(entry => entry.path);
+  const referencedImageIds = new Set();
+  const collectImageIds = value => {
+    const re = /!\[[^\]]*\]\(img:([a-z0-9]+)\)/gi;
+    let match;
+    while ((match = re.exec(value || '')) !== null) referencedImageIds.add(match[1]);
+  };
+  notes.forEach(note => collectImageIds(note.content));
+  todos.forEach(todo => collectImageIds(todo.content));
+  const requiredAssets = [];
+  for (const id of referencedImageIds) {
+    const image = images[id];
+    if (!image) continue;
+    // 历史上已经损坏的引用不应让整个笔记库永久只读；
+    // 但 IDB 中仍然存在的图片必须验证落盘，防止升级造成新的丢图。
+    if (await getImageBase64(id)) requiredAssets.push(`_assets/${id}${image.ext || '.png'}`);
+  }
+  const result = window.MarginoteWorkdirCore.verifySnapshot({
+    meta,
+    presentPaths,
+    activeNoteIds: notes.filter(note => note && note.id && !note.deleted).map(note => note.id),
+    deletedNoteIds: notes.filter(note => note && note.id && note.deleted).map(note => note.id),
+    todoIds: todos.filter(todo => todo && todo.id).map(todo => todo.id),
+    requiredAssetPaths: requiredAssets
+  });
+  if (!result.ok) throw new Error(`工作目录迁移校验失败：${result.issues.slice(0, 3).join('；')}`);
 }
 
 function saveData() {
@@ -2766,7 +2815,8 @@ function safeName(s) {
   let name = String(s || 'untitled')
     .replace(/[\u0000-\u001f\/\\:*?"<>|]/g, '_')
     .replace(/[. ]+$/g, '')
-    .slice(0, 80) || 'untitled';
+    // 给 Windows 原子写入产生的临时文件名留出 MAX_PATH 余量。
+    .slice(0, 48) || 'untitled';
   // Windows 保留设备名不能直接作为文件/目录名；仅在确有必要时加后缀。
   if (/^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i.test(name)) name += '_';
   return name;
@@ -2778,16 +2828,16 @@ function noteToMarkdown(note, opts) {
   const folder = getFolder(note.folderId);
   const lines = [
     '---',
-    `title: ${(note.title || '无题').replace(/\n/g, ' ')}`,
-    nb ? `notebook: ${nb.name}` : '',
-    folder ? `folder: ${folder.name}` : '',
+    `title: ${(note.title || '无题').replace(/[\r\n]+/g, ' ')}`,
+    nb ? `notebook: ${String(nb.name || '').replace(/[\r\n]+/g, ' ')}` : '',
+    folder ? `folder: ${String(folder.name || '').replace(/[\r\n]+/g, ' ')}` : '',
     `tags: [${(note.tags || []).map(t => JSON.stringify(t)).join(', ')}]`,
     `starred: ${!!note.starred}`,
     note.deleted ? 'deleted: true' : '',
-    note.deletedAt ? `deletedAt: ${new Date(note.deletedAt).toISOString()}` : '',
+    note.deletedAt ? `deletedAt: ${window.MarginoteWorkdirCore.safeIso(note.deletedAt)}` : '',
     note.deletedBy ? `deletedBy: ${String(note.deletedBy).replace(/\n/g, ' ')}` : '',
-    `createdAt: ${new Date(note.createdAt).toISOString()}`,
-    `updatedAt: ${new Date(note.updatedAt).toISOString()}`,
+    `createdAt: ${window.MarginoteWorkdirCore.safeIso(note.createdAt, note.updatedAt)}`,
+    `updatedAt: ${window.MarginoteWorkdirCore.safeIso(note.updatedAt, note.createdAt)}`,
     `id: ${note.id}`,
     '---',
     ''
@@ -4285,6 +4335,18 @@ function migrateInlineImages() {
   if (changed) saveData();
 }
 
+function bindEssentialSettingsEvents() {
+  const bindOnce = (id, event, handler) => {
+    const element = document.getElementById(id);
+    if (!element || element.dataset.mnEssentialBound === 'true') return;
+    element.dataset.mnEssentialBound = 'true';
+    element.addEventListener(event, handler);
+  };
+  bindOnce('settingsBtn', 'click', () => openSettingsModal('appearance'));
+  bindOnce('settingsModalClose', 'click', closeSettingsModal);
+  bindOnce('settingsModalCloseX', 'click', closeSettingsModal);
+}
+
 async function init() {
   // 桌面版先加载真实 Markdown 工作目录并完成一次安全迁移；扩展/网页仍
   // 使用各自的浏览器存储。CLI 必须等待该阶段结束，避免写入空内存快照。
@@ -4294,11 +4356,14 @@ async function init() {
   try {
     if (desktopBootstrap) {
       if (window.mn && window.mn.ready) await window.mn.ready;
-      await initImagesIdb();
       await loadDesktopWorkdirData();
     } else {
       loadData();
     }
+  } catch (error) {
+    _mainDataStorageMode = desktopBootstrap ? 'blocked' : _mainDataStorageMode;
+    logError(error, 'startup-main-data');
+    setTimeout(() => showToast('本地数据初始化异常，已保留原数据并暂停写入'), 0);
   } finally {
     if (_resolveDesktopDataReady) _resolveDesktopDataReady(_mainDataStorageMode !== 'blocked');
   }
@@ -4310,6 +4375,8 @@ async function init() {
   let savedTheme = localStorage.getItem(THEME_KEY) || 'light';
   if (savedTheme === 'mono') savedTheme = 'light';
   applyTheme(THEMES[savedTheme] ? savedTheme : 'light');
+  // 设置是恢复配置的基础入口，不应被提醒、图片或工作目录的异步初始化阻塞。
+  bindEssentialSettingsEvents();
 
   renderNotebooks();
   renderTagFilters();
@@ -4322,9 +4389,9 @@ async function init() {
     setTimeout(() => showToast(message), 0);
   }
   // 懒加载图片:监听 DOM,为渲染出的 <img data-imgid> 按需从 IDB 填 data: src(只解码可见图,省内存)
-  startLazyImageObserver();
+  try { startLazyImageObserver(); } catch (error) { logError(error, 'startup-lazy-images'); }
   // 静态色点（待办状态点等）一次性 JS 强制上色，规避 WebView2 inline 解析漏洞
-  paintDotColors(document);
+  try { paintDotColors(document); } catch (error) { logError(error, 'startup-colors'); }
 
   // 日期
   const today = new Date();
@@ -4338,25 +4405,23 @@ async function init() {
     document.body.classList.add('is-desktop');
     const resetWorkdirBtn = document.getElementById('forgetWorkDirBtn');
     if (resetWorkdirBtn) resetWorkdirBtn.textContent = '↺ 默认目录';
-    initDesktopSettings();
+    initDesktopSettings().catch(error => logError(error, 'startup-desktop-settings'));
     // 未绑定工作目录时醒目引导设置（pickWorkDir 会导入+写出完成迁移）。延迟到首屏之后，避免打断。
     setTimeout(promptWorkdirSetupIfNeeded, 1200);
   }
   // 桌面/Windows 把 Mac 的 ⌘ 改成 Ctrl（需先知道平台，故放在 bridge 就绪后）
-  applyShortcutLabels();
-  await initDesktopReminderActions();
-  await initImagesIdb();
-  migrateInlineImages();
-  migrateLegacyRestoreLabel();
-  renderNotesList();   // 图片仓就绪后重渲染一次，让笔记缩略图/内联图正常显示
-  await rescheduleAllAlarms();
+  try { applyShortcutLabels(); } catch (error) { logError(error, 'startup-shortcuts'); }
+  try { await initDesktopReminderActions(); } catch (error) { logError(error, 'startup-reminder-actions'); }
+  try { await initImagesIdb(); } catch (error) { logError(error, 'startup-images'); }
+  try { migrateInlineImages(); } catch (error) { logError(error, 'startup-inline-images'); }
+  try { migrateLegacyRestoreLabel(); } catch (error) { logError(error, 'startup-restore-label'); }
+  try { renderNotesList(); } catch (error) { logError(error, 'startup-note-images'); }
+  try { await rescheduleAllAlarms(); } catch (error) { logError(error, 'startup-reminders'); }
   // 自动备份延迟到 UI 渲染完
   setTimeout(checkAutoBackup, 1500);
 
   // 统一设置模态框
-  document.getElementById('settingsBtn').addEventListener('click', () => openSettingsModal('appearance'));
-  document.getElementById('settingsModalClose').addEventListener('click', closeSettingsModal);
-  document.getElementById('settingsModalCloseX').addEventListener('click', closeSettingsModal);
+  bindEssentialSettingsEvents();
   // settingsModalBg click-to-close removed
   document.querySelectorAll('#settingsTabs .settings-tab').forEach(btn => {
     btn.addEventListener('click', () => setSettingsTab(btn.dataset.tab));
@@ -5557,15 +5622,15 @@ function todoToMarkdown(t, opts) {
   opts = opts || { mode: 'inline' };
   const lines = [
     '---',
-    `text: ${(t.text || '').replace(/\n/g, ' ')}`,
+    `text: ${(t.text || '').replace(/[\r\n]+/g, ' ')}`,
     `done: ${!!t.done}`,
-    t.dueDate ? `dueDate: ${new Date(t.dueDate).toISOString()}` : '',
+    t.dueDate ? `dueDate: ${window.MarginoteWorkdirCore.safeIso(t.dueDate)}` : '',
     `remindBeforeMin: ${Math.max(0, Number(t.remindBeforeMin) || 0)}`,
     `remindCount: ${Math.max(1, Number(t.remindCount) || 1)}`,
     `remindIntervalMin: ${Math.max(1, Number(t.remindIntervalMin) || 5)}`,
-    t.remindSnoozedUntil ? `remindSnoozedUntil: ${new Date(t.remindSnoozedUntil).toISOString()}` : '',
-    `createdAt: ${new Date(t.createdAt || Date.now()).toISOString()}`,
-    t.completedAt ? `completedAt: ${new Date(t.completedAt).toISOString()}` : '',
+    t.remindSnoozedUntil ? `remindSnoozedUntil: ${window.MarginoteWorkdirCore.safeIso(t.remindSnoozedUntil)}` : '',
+    `createdAt: ${window.MarginoteWorkdirCore.safeIso(t.createdAt)}`,
+    t.completedAt ? `completedAt: ${window.MarginoteWorkdirCore.safeIso(t.completedAt)}` : '',
     `id: ${t.id}`,
     '---',
     ''

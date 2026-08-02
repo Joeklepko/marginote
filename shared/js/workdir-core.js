@@ -65,6 +65,39 @@
     return value.dir + value.stem + '-' + number + value.ext;
   }
 
+  function safeIso(value, fallback) {
+    const candidate = value == null || value === '' ? NaN : new Date(value).getTime();
+    const fallbackTime = fallback == null || fallback === '' ? NaN : new Date(fallback).getTime();
+    const time = Number.isFinite(candidate)
+      ? candidate
+      : (Number.isFinite(fallbackTime) ? fallbackTime : Date.now());
+    return new Date(time).toISOString();
+  }
+
+  function verifySnapshot(input) {
+    input = input || {};
+    const meta = input.meta && typeof input.meta === 'object' ? input.meta : {};
+    const presentPaths = new Set(input.presentPaths || []);
+    const issues = [];
+    const groups = [
+      ['笔记', input.activeNoteIds || [], meta.noteFiles],
+      ['回收站笔记', input.deletedNoteIds || [], meta.deletedNoteFiles],
+      ['待办', input.todoIds || [], meta.todoFiles]
+    ];
+    for (const [label, ids, mappingValue] of groups) {
+      const mapping = mappingValue && typeof mappingValue === 'object' ? mappingValue : {};
+      for (const id of ids) {
+        const path = mapping[id];
+        if (!path) issues.push(`${label} ${id} 缺少文件映射`);
+        else if (!presentPaths.has(path)) issues.push(`${label} ${id} 的文件不存在：${path}`);
+      }
+    }
+    for (const path of input.requiredAssetPaths || []) {
+      if (!presentPaths.has(path)) issues.push(`图片资产不存在：${path}`);
+    }
+    return { ok: issues.length === 0, issues };
+  }
+
   // 为界面实体分配稳定的磁盘路径。已有实体在名称/目录未改变时保留原路径；
   // 新实体遇到重名或外部文件时使用 -2、-3，避免新增内容导致旧文件整体改名。
   function allocateStablePaths(items, previous, reservedPaths) {
@@ -93,7 +126,7 @@
     return result;
   }
 
-  const api = { planReconciliation, allocateStablePaths, isCompatiblePath, withSuffix };
+  const api = { planReconciliation, allocateStablePaths, isCompatiblePath, withSuffix, safeIso, verifySnapshot };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   if (root) root.MarginoteWorkdirCore = api;
 })(typeof window !== 'undefined' ? window : null);

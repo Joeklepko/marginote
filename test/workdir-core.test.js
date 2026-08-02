@@ -1,4 +1,4 @@
-const { planReconciliation, allocateStablePaths, isCompatiblePath } = require('../shared/js/workdir-core.js');
+const { planReconciliation, allocateStablePaths, isCompatiblePath, safeIso, verifySnapshot } = require('../shared/js/workdir-core.js');
 const assert = require('node:assert/strict');
 
 let plan = planReconciliation({
@@ -64,3 +64,30 @@ assert.equal(new Set(Object.values(bulkPaths)).size, 350, '350 篇同名笔记�
 assert.equal(bulkPaths['issue-0'], '问题分析/未命名问题.md');
 assert.equal(bulkPaths['issue-349'], '问题分析/未命名问题-350.md');
 assert.deepEqual(allocateStablePaths(bulkItems, bulkPaths), bulkPaths, '批量写入后路径必须保持稳定');
+
+assert.equal(safeIso(0, 1234), '1970-01-01T00:00:00.000Z');
+assert.equal(safeIso('invalid', 1234), '1970-01-01T00:00:01.234Z');
+
+const completeSnapshot = verifySnapshot({
+  meta: {
+    noteFiles: { n1: '工作/笔记.md' },
+    deletedNoteFiles: { n2: '回收站/旧笔记.md' },
+    todoFiles: { t1: '待办/任务.md' }
+  },
+  presentPaths: ['工作/笔记.md', '回收站/旧笔记.md', '待办/任务.md', '_assets/img1.png'],
+  activeNoteIds: ['n1'],
+  deletedNoteIds: ['n2'],
+  todoIds: ['t1'],
+  requiredAssetPaths: ['_assets/img1.png']
+});
+assert.equal(completeSnapshot.ok, true, '只有实体和图片全部落盘才允许完成迁移');
+
+const incompleteSnapshot = verifySnapshot({
+  meta: { noteFiles: { n1: '工作/笔记.md' } },
+  presentPaths: ['工作/笔记.md'],
+  activeNoteIds: ['n1', 'n2'],
+  requiredAssetPaths: ['_assets/img1.png']
+});
+assert.equal(incompleteSnapshot.ok, false);
+assert.ok(incompleteSnapshot.issues.some(issue => issue.includes('n2')));
+assert.ok(incompleteSnapshot.issues.some(issue => issue.includes('_assets/img1.png')));
