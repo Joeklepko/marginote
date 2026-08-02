@@ -12,8 +12,6 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Mutex;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-#[cfg(target_os = "windows")]
-use tauri::Manager;
 use tauri::{AppHandle, Emitter};
 use tokio::task::JoinHandle;
 
