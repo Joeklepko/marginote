@@ -5,7 +5,7 @@
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   if (root) root.MarginoteRepositoryCore = api;
 })(typeof window !== 'undefined' ? window : null, function () {
-  const COLLECTIONS = ['notebooks', 'folders', 'notes', 'todos'];
+  const COLLECTIONS = ['notebooks', 'folders', 'notes', 'todos', 'memories'];
   let nextId = 0;
 
   function clone(value) {
@@ -27,7 +27,8 @@
   function indexById(items) {
     const index = new Map();
     for (const item of items || []) {
-      if (item && item.id != null) index.set(String(item.id), item);
+      const identity = item && (item.id != null ? item.id : item.key);
+      if (identity != null) index.set(String(identity), item);
     }
     return index;
   }

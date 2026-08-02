@@ -227,7 +227,7 @@ pub struct AppPaths {
     pub data_dir: String,
     /// marginote.dat 全路径（mn.platform.storage 写在这里）
     pub kv_file: String,
-    /// WebView2 实例目录（笔记 / 待办 bulk 数据走 localStorage 实际落地点）
+    /// WebView2 实例目录（仅保存界面偏好和小型缓存）
     pub webview_dir: String,
 }
 

@@ -9,7 +9,7 @@ use base64::Engine;
 use serde::Serialize;
 use std::fs;
 use std::path::{Component, Path, PathBuf};
-use tauri::AppHandle;
+use tauri::{AppHandle, Manager};
 use tauri_plugin_dialog::DialogExt;
 
 use crate::{atomic_file, storage};
@@ -117,6 +117,35 @@ fn walk(base: &Path, dir: &Path, out: &mut Vec<FsEntry>) {
 }
 
 // ---------- 命令 ----------
+
+// 桌面版始终使用真实文件作为主数据。若用户尚未选择目录，默认创建
+// “文档/Marginote”；文档目录不可用时退回应用数据目录下的 Marginote。
+// 已绑定的有效目录始终优先，绝不擅自迁移用户选择过的位置。
+#[tauri::command]
+pub async fn cmd_workdir_ensure(app: AppHandle) -> Result<String, String> {
+    if let Some(root) = workdir_root(&app) {
+        return Ok(root.to_string_lossy().to_string());
+    }
+
+    let base = app
+        .path()
+        .document_dir()
+        .or_else(|_| app.path().app_data_dir())
+        .map_err(|e| format!("无法确定默认工作目录: {e}"))?;
+    let root = base.join("Marginote");
+    fs::create_dir_all(&root)
+        .map_err(|e| format!("无法创建默认工作目录 {}: {e}", root.display()))?;
+    let root = root
+        .canonicalize()
+        .map_err(|e| format!("无法解析默认工作目录 {}: {e}", root.display()))?;
+    let full = root.to_string_lossy().to_string();
+    storage::set(
+        &app,
+        WORKDIR_KEY.into(),
+        serde_json::Value::String(full.clone()),
+    )?;
+    Ok(full)
+}
 
 // 弹原生目录选择器；选中则持久化并返回绝对路径（None=用户取消）
 #[tauri::command]

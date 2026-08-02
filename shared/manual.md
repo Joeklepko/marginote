@@ -368,7 +368,7 @@ AI 助手会根据本轮请求自动选择一个边界明确的 Skill：笔记�
 
 ## 十三、安全与隐私
 
-- 所有数据存浏览器本地（IndexedDB + localStorage）
+- Windows 桌面版按“笔记本目录/笔记文件”保存：每篇笔记、每条待办都是独立本地文件，目录名和文件名与界面一致；图片存于工作目录 `_assets/`。浏览器扩展版使用 IndexedDB + localStorage。
 - 不上传任何服务器
 - AI 调用直连用户配置的 provider
 - AI Key 存浏览器本地，请保护好设备

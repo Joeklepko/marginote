@@ -25,12 +25,20 @@ const assert = require('node:assert/strict');
   assert.deepEqual(committed.changeSet.changes[0].fields, ['content', 'title']);
   assert.equal(commits.length, 1);
 
+  state.memories = [];
+  const memoryCommit = await repo.run('test:memory', async () => {
+    state.memories.push({ key: 'language', value: '中文' });
+  });
+  assert.equal(memoryCommit.changeSet.changes[0].collection, 'memories');
+  assert.equal(memoryCommit.changeSet.changes[0].id, 'language');
+  assert.equal(persistCount, 2);
+
   await assert.rejects(repo.run('test:rollback', async () => {
     state.notes.push({ id: 'n2', title: '不应保留' });
     throw new Error('boom');
   }), /boom/);
   assert.equal(state.notes.some(note => note.id === 'n2'), false);
-  assert.equal(persistCount, 1);
+  assert.equal(persistCount, 2);
   assert.equal(rollbacks.at(-1).status, 'rolled_back');
 
   let failingState = { notebooks: [], folders: [], notes: [{ id: 'n1', title: '原始' }], todos: [] };

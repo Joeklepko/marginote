@@ -66,6 +66,18 @@ for (const controlId of ['windowMinimizeBtn', 'windowMaximizeBtn', 'windowCloseB
 }
 assert.doesNotMatch(desktopHtml, /id=["']cliStatusBar["']/, '桌面版不应继续占用底部空间展示 CLI 状态栏');
 
+const desktopApp = fs.readFileSync('shared/app.js', 'utf8');
+assert.match(desktopApp, /await loadDesktopWorkdirData\(\)/, '桌面启动必须先读取 Markdown 工作目录');
+assert.match(desktopApp, /localStorage\.removeItem\(STORAGE_KEY\)/, '文件迁移成功后应清理受配额限制的旧主数据');
+assert.match(desktopApp, /await persistMainDataDurably\(state\)/, 'AI\/CLI 事务必须等待独立文件真正落盘');
+assert.match(desktopApp, /deletedNoteFiles: deletedNoteIdToPath/, '回收站笔记正文也必须保存为独立文件');
+assert.match(desktopApp, /`remindBeforeMin: \$\{/, '待办独立文件必须包含提醒提前量');
+assert.match(desktopApp, /`remindIntervalMin: \$\{/, '待办独立文件必须包含重复提醒间隔');
+assert.doesNotMatch(desktopApp, /platform\.mainData|loadDesktopMainData/, '桌面版不得退回聚合主数据 JSON');
+const desktopCommands = fs.readFileSync('desktop/src-tauri/src/lib.rs', 'utf8');
+assert.match(desktopCommands, /workdir::cmd_workdir_ensure/, '桌面端必须能自动创建默认 Markdown 工作目录');
+assert.doesNotMatch(desktopCommands, /cmd_main_data_(?:get|set)/, '桌面端不得注册聚合主数据 JSON 命令');
+
 const tauriConfig = JSON.parse(fs.readFileSync('desktop/src-tauri/tauri.conf.json', 'utf8'));
 assert.equal(tauriConfig.app.windows[0].decorations, false, '桌面窗口应取消独立原生标题栏');
 assert.equal(tauriConfig.bundle.windows.nsis.compression, 'zlib', 'Windows 安装器应使用偏安装速度的 zlib');

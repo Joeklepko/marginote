@@ -550,6 +550,11 @@ function confirmRestoreSelectedVersion() {
 const STORAGE_KEY = 'marginote.data.v2';
 const LEGACY_KEY = 'marginote.notes.v1';
 let _dataRecoveryInfo = null;
+let _mainDataStorageMode = 'local'; // local(extension/web) | workdir(desktop) | blocked
+let _lastWorkdirWrite = Promise.resolve();
+let _lastWorkdirWriteError = '';
+let _resolveDesktopDataReady;
+window.MarginoteDesktopDataReady = new Promise(resolve => { _resolveDesktopDataReady = resolve; });
 
 function preserveInvalidMainData(raw, reason) {
   if (!raw || _dataRecoveryInfo) return _dataRecoveryInfo;
@@ -649,10 +654,24 @@ async function fhVerifyPermission(handle, write) {
   return false;
 }
 
-function loadData() {
+function createLocalDataSnapshot(state) {
+  const source = state || { notebooks, folders, notes, todos };
+  return {
+    schemaVersion: window.MarginoteDataCore.CURRENT_SCHEMA_VERSION,
+    notebooks: source.notebooks || [],
+    folders: source.folders || [],
+    notes: source.notes || [],
+    todos: source.todos || []
+  };
+}
+
+function loadData(options = {}) {
   let raw = null;
+  let loadedOk = true;
   try {
-    raw = localStorage.getItem(STORAGE_KEY);
+    raw = Object.prototype.hasOwnProperty.call(options, 'raw')
+      ? options.raw
+      : localStorage.getItem(STORAGE_KEY);
     if (raw) {
       const parsed = window.MarginoteDataCore
         ? window.MarginoteDataCore.parsePersistedData(raw)
@@ -664,15 +683,21 @@ function loadData() {
       notes = Array.isArray(data.notes) ? data.notes : [];
       todos = Array.isArray(data.todos) ? data.todos : [];
       images = data.images && typeof data.images === 'object' && !Array.isArray(data.images) ? data.images : {};
-      if (parsed.issues && parsed.issues.length) preserveInvalidMainData(raw, parsed.issues.join('；'));
+      if (parsed.issues && parsed.issues.length) {
+        if (options.preserveIssues === false) logError(new Error(parsed.issues.join('；')), 'data-load-normalized');
+        else preserveInvalidMainData(raw, parsed.issues.join('；'));
+      }
     } else {
-      const legacy = localStorage.getItem(LEGACY_KEY);
+      const legacy = Object.prototype.hasOwnProperty.call(options, 'legacyRaw')
+        ? options.legacyRaw
+        : localStorage.getItem(LEGACY_KEY);
       if (legacy) {
         const legacyNotes = JSON.parse(legacy);
         notes = Array.isArray(legacyNotes) ? legacyNotes : [];
       }
     }
   } catch (e) {
+    loadedOk = false;
     preserveInvalidMainData(raw, e && e.message ? e.message : String(e));
     notebooks = [];
     folders = [];
@@ -681,8 +706,8 @@ function loadData() {
     images = {};
   }
 
-  // 初始化默认数据
-  if (notebooks.length === 0) {
+  // 新安装初始化默认结构；从已有工作目录启动时不能凭空注入示例笔记本。
+  if (notebooks.length === 0 && (options.initializeDefaults !== false || notes.length > 0)) {
     notebooks = [
       { id: uid(), name: '随笔', color: '#b8431f', createdAt: Date.now() },
       { id: uid(), name: '工作', color: '#0d9488', createdAt: Date.now() + 1 },
@@ -691,14 +716,14 @@ function loadData() {
   }
 
   // 给老笔记打上默认笔记本和 folderId
-  const defaultNbId = notebooks[0].id;
+  const defaultNbId = notebooks[0] && notebooks[0].id;
   notes.forEach(n => {
-    if (!n.notebookId) n.notebookId = defaultNbId;
+    if (!n.notebookId && defaultNbId) n.notebookId = defaultNbId;
     if (n.folderId === undefined) n.folderId = null;
   });
 
   // 初始化示例笔记
-  if (notes.length === 0) {
+  if (notes.length === 0 && options.initializeDefaults !== false) {
     notes = [
       {
         id: uid(),
@@ -743,7 +768,29 @@ function loadData() {
   }
 
   // 只有原始异常数据已有独立副本时，才允许用规范化/默认数据覆盖主键。
-  if (!_dataRecoveryInfo || _dataRecoveryInfo.backedUp) saveData();
+  if (options.persist !== false && (!_dataRecoveryInfo || _dataRecoveryInfo.backedUp)) saveData();
+  return { ok: loadedOk, hadSource: !!raw };
+}
+
+function reportWorkdirWriteFailure(error) {
+  const message = error && error.message ? error.message : String(error || '未知错误');
+  logError(error, 'saveData-workdir');
+  if (_lastWorkdirWriteError === message) return;
+  _lastWorkdirWriteError = message;
+  showToast('本地文件保存失败：' + message);
+}
+
+async function persistMainDataDurably(state) {
+  if (_mainDataStorageMode === 'workdir') {
+    clearTimeout(_workdirTimer);
+    _lastWorkdirWrite = queueWorkdirOperation(() => workdirWriteAllNow(true, { throwOnError: true }));
+    await _lastWorkdirWrite;
+    _lastWorkdirWriteError = '';
+    return true;
+  }
+  if (_mainDataStorageMode === 'blocked') throw new Error('本地工作目录不可写，已阻止覆盖');
+  if (!persistMainDataNow()) throw new Error('主数据提交失败');
+  return true;
 }
 
 function persistMainDataNow() {
@@ -752,17 +799,68 @@ function persistMainDataNow() {
     showToast('检测到异常数据且备份尚未完成，已暂停保存以保护原始内容');
     return false;
   }
+  if (_mainDataStorageMode === 'workdir') {
+    if (_workdirSyncDepth > 0) return true;
+    clearTimeout(_workdirTimer);
+    _workdirTimer = setTimeout(() => {
+      _lastWorkdirWrite = queueWorkdirOperation(() => workdirWriteAllNow(true, { throwOnError: true }));
+      _lastWorkdirWrite.then(() => { _lastWorkdirWriteError = ''; }, reportWorkdirWriteFailure);
+    }, 300);
+    return true;
+  }
+  if (_mainDataStorageMode === 'blocked') {
+    showToast('本地工作目录异常，已暂停保存以保护原始文件');
+    return false;
+  }
   try {
     // 图片不入 localStorage（改用 IndexedDB），主表只存元数据避免大对象阻塞
-    localStorage.setItem(STORAGE_KEY, JSON.stringify({
-      schemaVersion: window.MarginoteDataCore.CURRENT_SCHEMA_VERSION,
-      notebooks, folders, notes, todos
-    }));
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(createLocalDataSnapshot()));
     return true;
   } catch (e) {
     showToast('存储失败：可能超出本地存储容量');
     logError(e, 'saveData');
     return false;
+  }
+}
+
+async function loadDesktopWorkdirData() {
+  try {
+    const fs = fsApi();
+    if (!fs || typeof fs.ensureDir !== 'function') throw new Error('桌面文件存储接口不可用');
+    const ensured = await fs.ensureDir();
+    if (!ensured || !await fs.hasDir()) throw new Error('无法创建或访问本地工作目录');
+    _workdirCfg.enabled = true;
+    _workdirCfg.name = ensured.name || await fs.dirName();
+    saveWorkdirCfg();
+
+    const entries = await fs.list();
+    const hasDiskLibrary = entries.some(entry => !entry.dir && (
+      entry.path === WORKDIR_META || /\.(md|markdown|excalidraw)$/i.test(entry.path)
+    ));
+    const raw = localStorage.getItem(STORAGE_KEY);
+    const legacyRaw = localStorage.getItem(LEGACY_KEY);
+    const hasLegacyData = !!(raw || legacyRaw);
+    const loaded = loadData({
+      raw,
+      legacyRaw,
+      persist: false,
+      initializeDefaults: !hasDiskLibrary && !hasLegacyData,
+    });
+    if (!loaded.ok || (_dataRecoveryInfo && !_dataRecoveryInfo.backedUp)) {
+      throw new Error('旧版主数据无法安全迁移，原数据已保留');
+    }
+
+    _mainDataStorageMode = 'workdir';
+    await workdirImportAllNow(true, { reconcile: false, throwOnError: true });
+    if (!notebooks.length) ensureNotebookByName('随笔');
+    // 迁移提交成功前绝不删除旧 WebView 数据。writeAll 的单文件原子写可让
+    // 300+ 条 CLI 批量记录不再受 localStorage 配额限制。
+    await workdirWriteAllNow(true, { throwOnError: true });
+    try { localStorage.removeItem(STORAGE_KEY); localStorage.removeItem(LEGACY_KEY); } catch {}
+  } catch (error) {
+    _mainDataStorageMode = 'blocked';
+    showToast('本地文件库初始化失败，已停止写入：' + (error.message || error));
+    throw error;
   }
 }
 
@@ -773,8 +871,16 @@ function saveData() {
   return persistMainDataNow();
 }
 
+async function waitForMainDataSave() {
+  if (_mainDataStorageMode !== 'workdir') return;
+  clearTimeout(_workdirTimer);
+  _lastWorkdirWrite = queueWorkdirOperation(() => workdirWriteAllNow(true, { throwOnError: true }));
+  await _lastWorkdirWrite;
+  _lastWorkdirWriteError = '';
+}
+
 // 兼容旧名称
-function saveNotes() { saveData(); }
+function saveNotes() { return saveData(); }
 
 function uid() {
   return Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
@@ -1374,7 +1480,7 @@ function autoSaveTodo() {
   if (!currentTodo) return;
   document.getElementById('todoEditStatus').textContent = '保存中…';
   clearTimeout(todoSaveTimer);
-  todoSaveTimer = setTimeout(() => {
+  todoSaveTimer = setTimeout(async () => {
     currentTodo.text = document.getElementById('todoEditTitle').value.trim() || '无标题待办';
     currentTodo.content = document.getElementById('todoEditContent').value;
     const dueRaw = document.getElementById('todoEditDue').value;
@@ -1383,6 +1489,8 @@ function autoSaveTodo() {
     currentTodo.remindCount = parseInt(document.getElementById('todoEditRemindCount').value, 10) || 1;
     currentTodo.remindIntervalMin = parseInt(document.getElementById('todoEditRemindInterval').value, 10) || 5;
     saveData();
+    try { await waitForMainDataSave(); }
+    catch { document.getElementById('todoEditStatus').textContent = '保存失败'; return; }
     scheduleTodoReminders(currentTodo);
     document.getElementById('todoEditStatus').textContent = '已保存';
     refreshTodoEditState();
@@ -1953,6 +2061,8 @@ function autoSave() {
     currentNote.content = newContent;
     currentNote.updatedAt = Date.now();
     saveNotes();
+    try { await waitForMainDataSave(); }
+    catch { document.getElementById('editorStatus').textContent = '保存失败'; return; }
     document.getElementById('editorDate').textContent = formatFullDate(currentNote.updatedAt);
     document.getElementById('editorStatus').textContent = '已保存';
     updateActiveNoteListItem();
@@ -2653,11 +2763,13 @@ function attachMarkdownEditor(textareaId) {
 
 // ===================== 文件名 / Front-matter / Markdown 互转 =====================
 function safeName(s) {
-  return String(s || 'untitled')
-    .replace(/[\/\\:*?"<>|]/g, '_')
-    .replace(/\s+/g, ' ')
-    .trim()
+  let name = String(s || 'untitled')
+    .replace(/[\u0000-\u001f\/\\:*?"<>|]/g, '_')
+    .replace(/[. ]+$/g, '')
     .slice(0, 80) || 'untitled';
+  // Windows 保留设备名不能直接作为文件/目录名；仅在确有必要时加后缀。
+  if (/^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i.test(name)) name += '_';
+  return name;
 }
 
 function noteToMarkdown(note, opts) {
@@ -2671,6 +2783,9 @@ function noteToMarkdown(note, opts) {
     folder ? `folder: ${folder.name}` : '',
     `tags: [${(note.tags || []).map(t => JSON.stringify(t)).join(', ')}]`,
     `starred: ${!!note.starred}`,
+    note.deleted ? 'deleted: true' : '',
+    note.deletedAt ? `deletedAt: ${new Date(note.deletedAt).toISOString()}` : '',
+    note.deletedBy ? `deletedBy: ${String(note.deletedBy).replace(/\n/g, ' ')}` : '',
     `createdAt: ${new Date(note.createdAt).toISOString()}`,
     `updatedAt: ${new Date(note.updatedAt).toISOString()}`,
     `id: ${note.id}`,
@@ -2703,7 +2818,8 @@ function parseMarkdownFile(text) {
 }
 
 function ensureNotebookByName(name, color) {
-  if (!name) return notebooks[0];
+  if (!name && notebooks[0]) return notebooks[0];
+  if (!name) name = '随笔';
   let nb = notebooks.find(x => x.name === name);
   if (!nb) {
     nb = { id: uid(), name, color: color || NOTEBOOK_COLORS[notebooks.length % NOTEBOOK_COLORS.length], createdAt: Date.now() };
@@ -2919,7 +3035,7 @@ async function rollbackImport(snapshot) {
     delete images[id];
     try { await idbDelete('images', id); } catch (error) { logError(error, 'import-rollback-image'); }
   }
-  saveData();
+  await persistMainDataDurably();
 }
 
 function importFiles(files) {
@@ -2937,7 +3053,10 @@ function importFiles(files) {
       showToast(`导入失败，未修改现有数据：${first.file}（${first.message}）`);
       return;
     }
-    if (saveData() === false) {
+    try {
+      await persistMainDataDurably();
+    } catch (error) {
+      logError(error, 'import-persist');
       await rollbackImport(snapshot);
       renderNotebooks(); renderTagFilters(); renderNotesList(); renderTodoCounts();
       showToast('导入失败：主数据无法保存，已恢复原数据');
@@ -4044,11 +4163,16 @@ function refreshStorageTab() {
     infoEl.innerHTML = `
       <div><span class="key">运行模式</span><span class="val">${escapeHtml(info.mode)}</span></div>
       <div><span class="key">数据统计</span><span class="val">${statsLine}</span></div>
-      <div><span class="key">占用大小</span><span class="val">${formatBytes(size)} <span style="color:var(--ink-mute);font-size:10px;">(WebView2 localStorage)</span></span></div>
+      <div><span class="key">笔记文件目录</span><span class="val" id="storageWorkDir">加载中…</span></div>
+      <div><span class="key">界面配置缓存</span><span class="val">${formatBytes(size)} <span style="color:var(--ink-mute);font-size:10px;">(不含笔记/待办正文)</span></span></div>
       <div><span class="key">应用数据目录</span><span class="val" id="storagePathDataDir">加载中…</span></div>
       <div><span class="key">marginote.dat</span><span class="val" id="storagePathKvFile">加载中…</span></div>
-      <div><span class="key">localStorage</span><span class="val" id="storagePathWebview">加载中…</span></div>
+      <div><span class="key">WebView 配置目录</span><span class="val" id="storagePathWebview">加载中…</span></div>
     `;
+    const wd = document.getElementById('storageWorkDir');
+    if (wd) {
+      fsApi().dirName().then(path => { wd.textContent = path || '未就绪'; }).catch(() => { wd.textContent = '读取失败'; });
+    }
     window.mn.platform.desktop.getAppPaths().then(p => {
       if (!p) return;
       const dd = document.getElementById('storagePathDataDir');
@@ -4162,10 +4286,22 @@ function migrateInlineImages() {
 }
 
 async function init() {
-  // ── 首屏：同步加载 + 立即渲染真实内容，【不等】平台 bridge/图片仓/闹钟等异步初始化，
-  //    消除"先显示空笔记页、过一会才刷出数据"的启动闪烁。loadData/loadAiConfig 均走 localStorage(同步)。──
+  // 桌面版先加载真实 Markdown 工作目录并完成一次安全迁移；扩展/网页仍
+  // 使用各自的浏览器存储。CLI 必须等待该阶段结束，避免写入空内存快照。
   loadErrorLog();
-  loadData();
+  const desktopBootstrap = typeof window.__TAURI__ !== 'undefined'
+    || typeof window.__TAURI_INTERNALS__ !== 'undefined';
+  try {
+    if (desktopBootstrap) {
+      if (window.mn && window.mn.ready) await window.mn.ready;
+      await initImagesIdb();
+      await loadDesktopWorkdirData();
+    } else {
+      loadData();
+    }
+  } finally {
+    if (_resolveDesktopDataReady) _resolveDesktopDataReady(_mainDataStorageMode !== 'blocked');
+  }
   // 清理历史版本注入的「功能说明书」笔记（含 marginote 旧 ID）
   purgeLegacyManualNotes();
   loadAiConfig();
@@ -4200,6 +4336,8 @@ async function init() {
   if (isExtensionContext()) document.body.classList.add('is-ext');
   if (isDesktopContext()) {
     document.body.classList.add('is-desktop');
+    const resetWorkdirBtn = document.getElementById('forgetWorkDirBtn');
+    if (resetWorkdirBtn) resetWorkdirBtn.textContent = '↺ 默认目录';
     initDesktopSettings();
     // 未绑定工作目录时醒目引导设置（pickWorkDir 会导入+写出完成迁移）。延迟到首屏之后，避免打断。
     setTimeout(promptWorkdirSetupIfNeeded, 1200);
@@ -5280,9 +5418,9 @@ openStorageModal = function() {
 };
 
 // ==========================================================
-// v1.4 工作目录（双向）—— 笔记/待办以 .md 存在本地目录
+// 桌面主文件库 / 扩展可选工作目录——笔记/待办以独立文件存在本地目录
 // 扩展端走 mn.platform.fs（File System Access），桌面端走原生 Rust fs。
-// 与「本地文件夹同步」(v1.3 单向备份) 区别：工作目录是双向的——
+// Windows 桌面端把它作为唯一主数据源；扩展端仍可作为双向工作目录：
 //   · 启动 / 手动扫描：读目录里的 .md 合并进应用（拖入的 md 会出现）
 //   · 新增 / 修改：写回目录（卸载软件/扩展不删这些文件）
 // ==========================================================
@@ -5405,6 +5543,9 @@ function drawingToFile(note) {
     folderId: note.folderId || null,
     tags: note.tags || [],
     starred: !!note.starred,
+    deleted: !!note.deleted,
+    deletedBy: note.deletedBy || null,
+    deletedAt: note.deletedAt || null,
     createdAt: note.createdAt || Date.now(),
     updatedAt: note.updatedAt || Date.now()
   };
@@ -5419,6 +5560,10 @@ function todoToMarkdown(t, opts) {
     `text: ${(t.text || '').replace(/\n/g, ' ')}`,
     `done: ${!!t.done}`,
     t.dueDate ? `dueDate: ${new Date(t.dueDate).toISOString()}` : '',
+    `remindBeforeMin: ${Math.max(0, Number(t.remindBeforeMin) || 0)}`,
+    `remindCount: ${Math.max(1, Number(t.remindCount) || 1)}`,
+    `remindIntervalMin: ${Math.max(1, Number(t.remindIntervalMin) || 5)}`,
+    t.remindSnoozedUntil ? `remindSnoozedUntil: ${new Date(t.remindSnoozedUntil).toISOString()}` : '',
     `createdAt: ${new Date(t.createdAt || Date.now()).toISOString()}`,
     t.completedAt ? `completedAt: ${new Date(t.completedAt).toISOString()}` : '',
     `id: ${t.id}`,
@@ -5436,104 +5581,222 @@ function workdirWriteAll(silent) {
   return queueWorkdirOperation(() => workdirWriteAllNow(silent));
 }
 
-async function workdirWriteAllNow(silent) {
+function noteDiskRevision(note, rel) {
+  return JSON.stringify([
+    rel, note.type || 'note', note.title || '', note.notebookId || '', note.folderId || '',
+    Number(note.updatedAt) || 0, (note.content || '').length, note.tags || [], !!note.starred,
+    !!note.deleted, Number(note.deletedAt) || 0, note.deletedBy || ''
+  ]);
+}
+
+function todoDiskRevision(todo, rel) {
+  // 待办历史数据没有统一 updatedAt，因此这里包含完整字段；待办正文通常很短。
+  return JSON.stringify([
+    rel, todo.text || '', todo.content || '', !!todo.done, Number(todo.dueDate) || 0,
+    Number(todo.remindBeforeMin) || 0, Number(todo.remindCount) || 1,
+    Number(todo.remindIntervalMin) || 5, Number(todo.remindSnoozedUntil) || 0,
+    Number(todo.createdAt) || 0, Number(todo.completedAt) || 0
+  ]);
+}
+
+async function workdirWriteAllNow(silent, options = {}) {
   const fs = fsApi();
-  if (!fs) { if (!silent) showToast('当前环境不支持工作目录'); return false; }
-  if (!await fs.hasDir()) { if (!silent) showToast('未绑定工作目录或无权限'); return false; }
+  const fail = error => {
+    if (options.throwOnError) throw error instanceof Error ? error : new Error(String(error));
+    return false;
+  };
+  if (!fs) { if (!silent) showToast('当前环境不支持工作目录'); return fail('当前环境不支持工作目录'); }
+  if (!await fs.hasDir()) { if (!silent) showToast('未绑定工作目录或无权限'); return fail('未绑定工作目录或无权限'); }
+  const undo = [];
+  let committed = false;
   try {
     // 读取上次写入记录的文件路径映射，用于清理"移动/重命名/删除笔记或笔记本后遗留在旧路径"的文件。
     // 只依据 Marginote 自己写过的路径来删除，绝不动用户在工作目录里外部新增的 .md，避免误删。
-    let prevNoteFiles = {}, prevTodoFiles = {};
+    let previousMeta = {};
+    let prevNoteFiles = {}, prevTodoFiles = {}, prevDeletedNoteFiles = {};
     const previousMetaText = await fs.readText(WORKDIR_META);
     if (previousMetaText) {
-      let prev;
-      try { prev = JSON.parse(previousMetaText); }
+      try { previousMeta = JSON.parse(previousMetaText); }
       catch { throw new Error('工作目录元数据已损坏，已停止写入以避免覆盖；请先备份 _marginote/meta.json'); }
-      if (prev && prev.noteFiles && typeof prev.noteFiles === 'object') prevNoteFiles = prev.noteFiles;
-      if (prev && prev.todoFiles && typeof prev.todoFiles === 'object') prevTodoFiles = prev.todoFiles;
+      if (previousMeta.noteFiles && typeof previousMeta.noteFiles === 'object') prevNoteFiles = previousMeta.noteFiles;
+      if (previousMeta.todoFiles && typeof previousMeta.todoFiles === 'object') prevTodoFiles = previousMeta.todoFiles;
+      if (previousMeta.deletedNoteFiles && typeof previousMeta.deletedNoteFiles === 'object') prevDeletedNoteFiles = previousMeta.deletedNoteFiles;
     }
-    const usedPaths = new Set();
+    const entriesBefore = await fs.list();
+    const presentPaths = new Set(entriesBefore.filter(entry => !entry.dir).map(entry => entry.path));
+    const previousManaged = new Set([
+      ...Object.values(prevNoteFiles), ...Object.values(prevTodoFiles), ...Object.values(prevDeletedNoteFiles)
+    ].filter(Boolean));
+    for (const item of [...notes, ...todos]) {
+      if (item && item._srcPath) previousManaged.add(item._srcPath);
+    }
+    const reservedPaths = new Set([...presentPaths].filter(path => !previousManaged.has(path)));
     const usedImgIds = new Set();
     const collectIds = (text) => {
       const re = /!\[[^\]]*\]\(img:([a-z0-9]+)\)/gi; let m;
       while ((m = re.exec(text || '')) !== null) usedImgIds.add(m[1]);
     };
-    // 笔记（画板写 .excalidraw，普通笔记写 .md）
-    const idToPath = {};
-    for (const n of notes.filter(x => !x.deleted)) {
+    const activeNotes = notes.filter(note => !note.deleted);
+    const deletedNotes = notes.filter(note => note.deleted);
+    const previousNoteCandidates = { ...prevNoteFiles };
+    for (const note of activeNotes) {
+      if (!previousNoteCandidates[note.id] && note._srcPath) previousNoteCandidates[note.id] = note._srcPath;
+    }
+    const idToPath = window.MarginoteWorkdirCore.allocateStablePaths(
+      activeNotes.map(note => ({
+        id: note.id,
+        preferredPath: note.type === 'drawing' ? drawingRelPath(note) : noteRelPath(note)
+      })),
+      previousNoteCandidates,
+      reservedPaths
+    );
+    const occupiedAfterActive = new Set([...reservedPaths, ...Object.values(idToPath)]);
+    const deletedNoteIdToPath = window.MarginoteWorkdirCore.allocateStablePaths(
+      deletedNotes.map(note => ({
+        id: note.id,
+        preferredPath: `回收站/${safeName(note.title || '无题')}${note.type === 'drawing' ? '.excalidraw' : '.md'}`
+      })),
+      prevDeletedNoteFiles,
+      occupiedAfterActive
+    );
+    const usedTodo = new Set([...occupiedAfterActive, ...Object.values(deletedNoteIdToPath)]);
+    const previousTodoCandidates = { ...prevTodoFiles };
+    for (const todo of todos) {
+      if (todo && todo.id && !previousTodoCandidates[todo.id] && todo._srcPath) previousTodoCandidates[todo.id] = todo._srcPath;
+    }
+    const todoIdToPath = window.MarginoteWorkdirCore.allocateStablePaths(
+      todos.filter(todo => todo && todo.id).map(todo => ({ id: todo.id, preferredPath: `${TODO_DIR}/${safeName(todo.text || 'todo')}.md` })),
+      previousTodoCandidates,
+      usedTodo
+    );
+
+    const nextNoteRevisions = {};
+    const nextTodoRevisions = {};
+    const previousNoteRevisions = previousMeta.noteRevisions || {};
+    const previousTodoRevisions = previousMeta.todoRevisions || {};
+    const writeTextReversible = async (rel, text, action) => {
+      const before = await fs.readText(rel);
+      await requireWorkdirSuccess(fs.writeText(rel, text), action);
+      undo.push({ rel, before });
+    };
+
+    // 笔记（画板写 .excalidraw，普通笔记写 .md）。未变化的文件不重复写，
+    // 所以 CodeAgent 连续创建数百篇笔记不会退化成每次重写整个库。
+    for (const n of activeNotes) {
+      const rel = idToPath[n.id];
+      const revision = noteDiskRevision(n, rel);
+      nextNoteRevisions[n.id] = revision;
+      const unchanged = prevNoteFiles[n.id] === rel
+        && previousNoteRevisions[n.id] === revision
+        && presentPaths.has(rel);
+      n._srcPath = rel;
+      if (unchanged) { collectIds(n.content); continue; }
       if (n.type === 'drawing') {
-        const rel = drawingRelPath(n, usedPaths);
-        idToPath[n.id] = rel;
-        await requireWorkdirSuccess(fs.writeText(rel, drawingToFile(n)), `写入画板 ${rel}`);
+        await writeTextReversible(rel, drawingToFile(n), `写入画板 ${rel}`);
         continue;
       }
-      const rel = noteRelPath(n, usedPaths);
-      idToPath[n.id] = rel;
       collectIds(n.content);
       // 图片写 _assets/ 相对路径(而非内联 base64/blob):笔记在子目录,按深度补 ../ 指回根 _assets。
       // 资产文件在下方单独写出;导入时 ingestAssetPathRefs 容忍任意 (../)*_assets/ 前缀转回 img:id。
       const _prefix = '../'.repeat(Math.max(0, rel.split('/').length - 1));
-      await requireWorkdirSuccess(fs.writeText(rel, noteToMarkdown(n, { mode: 'zip', prefix: _prefix })), `写入笔记 ${rel}`);
+      await writeTextReversible(rel, noteToMarkdown(n, { mode: 'zip', prefix: _prefix }), `写入笔记 ${rel}`);
     }
-    // 待办（统一放 待办/ 子目录）
-    const usedTodo = new Set();
-    const todoIdToPath = {};
+
+    // 旧版软删除数据也逐篇迁入界面对应的“回收站”目录，不再把正文塞进 meta.json。
+    for (const n of deletedNotes) {
+      const rel = deletedNoteIdToPath[n.id];
+      const revision = noteDiskRevision(n, rel);
+      nextNoteRevisions[n.id] = revision;
+      const unchanged = prevDeletedNoteFiles[n.id] === rel
+        && previousNoteRevisions[n.id] === revision
+        && presentPaths.has(rel);
+      n._srcPath = rel;
+      if (unchanged) { collectIds(n.content); continue; }
+      const text = n.type === 'drawing' ? drawingToFile(n) : noteToMarkdown(n, { mode: 'zip', prefix: '../' });
+      await writeTextReversible(rel, text, `写入回收站笔记 ${rel}`);
+      collectIds(n.content);
+    }
+
+    // 待办（统一放 待办/ 子目录，每条待办一个文件）
     for (const t of todos) {
-      let base = safeName(t.text || 'todo'); let rel = TODO_DIR + '/' + base; let n = 1;
-      while (usedTodo.has(rel + '.md')) { n++; rel = TODO_DIR + '/' + base + '-' + n; }
-      usedTodo.add(rel + '.md');
-      if (t.id) todoIdToPath[t.id] = rel + '.md';
+      if (!t.id) continue;
+      const rel = todoIdToPath[t.id];
+      const revision = todoDiskRevision(t, rel);
+      nextTodoRevisions[t.id] = revision;
       collectIds(t.content);
+      const unchanged = prevTodoFiles[t.id] === rel
+        && previousTodoRevisions[t.id] === revision
+        && presentPaths.has(rel);
+      t._srcPath = rel;
+      if (unchanged) continue;
       // 待办在 待办/ 下(深度1),图片用 ../_assets/ 相对路径
-      await requireWorkdirSuccess(fs.writeText(rel + '.md', todoToMarkdown(t, { mode: 'zip', prefix: '../' })), `写入待办 ${rel}.md`);
+      await writeTextReversible(rel, todoToMarkdown(t, { mode: 'zip', prefix: '../' }), `写入待办 ${rel}`);
     }
-    // 清理旧文件：上次写过、但这次不再写（笔记/待办被移动、重命名、删除，或所在笔记本被删）的
-    // 路径，从磁盘删掉，否则下次导入会把它们当新文件读回、"复活"已删的笔记本/笔记。
-    // 仅删「不再被任何当前文件占用」的旧路径，兼顾笔记互换路径的情况，也不会删到外部文件。
-    const keepPaths = new Set([...Object.values(idToPath), ...usedTodo]);
-    for (const oldPath of [...Object.values(prevNoteFiles), ...Object.values(prevTodoFiles)]) {
-      if (oldPath && !keepPaths.has(oldPath)) { try { await fs.remove(oldPath); } catch {} }
+
+    // 即使笔记本/文件夹为空，也在磁盘上创建同名目录，保证目录结构与界面一致。
+    const desiredDirs = new Set([TODO_DIR, '回收站']);
+    for (const nb of notebooks) desiredDirs.add(safeName(nb.name));
+    for (const folder of folders) {
+      const nb = getNotebook(folder.notebookId);
+      if (nb) desiredDirs.add(`${safeName(nb.name)}/${safeName(folder.name)}`);
     }
-    // 再清理"变空的目录"：删笔记本/文件夹后其文件已被上面删掉，留下的空目录也一并移除，
-    // 让磁盘目录结构与应用一致。只删【完全不含任何文件】的目录(深层优先),不碰特殊目录,
-    // 因此绝不会删到用户放在目录里的外部文件（有文件的目录一律保留）。
-    try {
-      const after = await fs.list();
-      const dirsWithFiles = new Set();
-      for (const e of after) {
-        if (e.dir) continue;
-        const segs = e.path.split('/'); segs.pop();
-        let acc = '';
-        for (const s of segs) { acc = acc ? acc + '/' + s : s; dirsWithFiles.add(acc); }
-      }
-      const emptyDirs = after.filter(e => e.dir)
-        .map(e => e.path)
-        .filter(p => p && !p.startsWith('_') && p !== TODO_DIR && !p.startsWith(TODO_DIR + '/') && !dirsWithFiles.has(p))
-        .sort((a, b) => b.length - a.length);   // 先删深层子目录，避免父目录 remove_dir_all 递归误伤顺序
-      for (const d of emptyDirs) { try { await fs.remove(d); } catch {} }
-    } catch {}
+    const presentDirs = new Set(entriesBefore.filter(entry => entry.dir).map(entry => entry.path));
+    for (const dir of [...desiredDirs].sort((a, b) => a.length - b.length)) {
+      if (presentDirs.has(dir)) continue;
+      await requireWorkdirSuccess(fs.mkdir(dir), `创建目录 ${dir}`);
+    }
     // 图片资产
     for (const id of usedImgIds) {
       const img = images[id];
       if (!img) continue;
+      const ext = img.ext || '.png';
+      const assetPath = '_assets/' + id + ext;
+      if (presentPaths.has(assetPath)) continue;
       const b64 = await getImageBase64(id);   // 内存是 blob URL,写盘需从 IDB 取回 base64
       if (!b64) continue;
       const m = b64.match(/^data:[^;]+;base64,(.+)$/);
       if (!m) continue;
-      const ext = img.ext || detectExtFromDataUrl(b64);
-      await requireWorkdirSuccess(fs.writeBinary('_assets/' + id + ext, m[1]), `写入图片 ${id}${ext}`);
+      await requireWorkdirSuccess(fs.writeBinary(assetPath, m[1]), `写入图片 ${id}${ext}`);
     }
-    // 元数据：笔记本/文件夹/被删笔记/图片元信息/路径映射
-    await requireWorkdirSuccess(fs.writeText(WORKDIR_META, JSON.stringify({
+    // 元数据只保存结构、颜色、索引和校验信息；笔记/待办正文全部在独立文件中。
+    await writeTextReversible(WORKDIR_META, JSON.stringify({
       version: 'v1.4',
       exportedAt: Date.now(),
       notebooks, folders,
-      deletedNotes: notes.filter(n => n.deleted),
       memories: (typeof loadMemories === 'function' ? loadMemories() : []),   // AI 记忆随库持久化/跨设备同步
       imagesMeta: Object.fromEntries(Object.entries(images).map(([k, v]) => [k, { name: v.name, ext: v.ext, createdAt: v.createdAt }])),
       noteFiles: idToPath,
-      todoFiles: todoIdToPath
-    }, null, 2)), '写入工作目录元数据');
+      deletedNoteFiles: deletedNoteIdToPath,
+      todoFiles: todoIdToPath,
+      noteRevisions: nextNoteRevisions,
+      todoRevisions: nextTodoRevisions
+    }, null, 2), '写入工作目录元数据');
+    committed = true;
+
+    // 元数据提交后再清理旧路径。清理失败只留下可恢复的旧副本，不会破坏新提交。
+    const keepPaths = new Set([
+      ...Object.values(idToPath), ...Object.values(deletedNoteIdToPath), ...Object.values(todoIdToPath)
+    ]);
+    for (const oldPath of previousManaged) {
+      if (oldPath && !keepPaths.has(oldPath)) { try { await fs.remove(oldPath); } catch (error) { logError(error, 'workdir-clean-old'); } }
+    }
+
+    // 只清理由 Marginote 结构变化产生、且不再对应界面结构的空目录；当前空笔记本保留。
+    try {
+      const after = await fs.list();
+      const dirsWithFiles = new Set();
+      for (const entry of after) {
+        if (entry.dir) continue;
+        const segments = entry.path.split('/'); segments.pop();
+        let acc = '';
+        for (const segment of segments) { acc = acc ? acc + '/' + segment : segment; dirsWithFiles.add(acc); }
+      }
+      const emptyDirs = after.filter(entry => entry.dir).map(entry => entry.path)
+        .filter(path => path && !path.startsWith('_') && path !== TODO_DIR && path !== '回收站'
+          && !path.startsWith('回收站/') && !desiredDirs.has(path) && !dirsWithFiles.has(path))
+        .sort((a, b) => b.length - a.length);
+      for (const dir of emptyDirs) { try { await fs.remove(dir); } catch {} }
+    } catch {}
 
     clearWorkdirError();
     _workdirCfg.lastSyncAt = Date.now();
@@ -5542,9 +5805,17 @@ async function workdirWriteAllNow(silent) {
     if (!silent) showToast('已写入工作目录');
     return true;
   } catch (e) {
+    if (!committed) {
+      for (const item of undo.reverse()) {
+        try {
+          if (item.before == null) await fs.remove(item.rel);
+          else await fs.writeText(item.rel, item.before);
+        } catch (rollbackError) { logError(rollbackError, 'workdir-write-rollback'); }
+      }
+    }
     logError(e, 'workdir-write');
     recordWorkdirError(e, '写入');
-    return false;
+    return fail(e);
   }
 }
 
@@ -5555,7 +5826,7 @@ function workdirImportAll(silent) {
   return queueWorkdirOperation(() => workdirImportAllNow(silent));
 }
 
-async function workdirImportAllNow(silent) {
+async function workdirImportAllNow(silent, options = {}) {
   const fs = fsApi();
   if (!fs) { if (!silent) showToast('当前环境不支持工作目录'); return 0; }
   if (!await fs.hasDir()) { if (!silent) showToast('未绑定工作目录或无权限'); return 0; }
@@ -5574,6 +5845,14 @@ async function workdirImportAllNow(silent) {
     }
     if (Array.isArray(meta.folders)) {
       meta.folders.forEach(f => { if (!folders.find(x => x.id === f.id)) folders.push(f); });
+    }
+    // 兼容旧版把回收站正文塞进 meta.json 的格式；下一次成功写入会把它们
+    // 迁成“回收站/标题.md”独立文件，并从元数据中移除正文。
+    if (Array.isArray(meta.deletedNotes)) {
+      meta.deletedNotes.forEach(note => {
+        if (!note || !note.id || notes.some(existing => existing.id === note.id)) return;
+        notes.push({ ...note, deleted: true });
+      });
     }
     // AI 记忆合并：同 key 取 updatedAt 较新者，磁盘有、本地无的补入
     if (Array.isArray(meta.memories) && typeof loadMemories === 'function' && typeof saveMemories === 'function') {
@@ -5607,9 +5886,64 @@ async function workdirImportAllNow(silent) {
       }
     }
     const { toRead } = importPlan.planImport({ entries, loadedByPath });
-    const mdFiles = toRead.filter(e => /\.(md|markdown)$/i.test(e.path));
-    const drawFiles = toRead.filter(e => /\.excalidraw$/i.test(e.path));
+    // 元数据映射优先于目录名。这样用户把笔记本命名为“待办”“回收站”或
+    // “_marginote”时，文件仍按真实实体类型读取，不会被特殊目录规则误伤。
+    const mappedNotePaths = new Set(Object.values(meta.noteFiles || {}).filter(Boolean));
+    const mappedTodoPaths = new Set(Object.values(meta.todoFiles || {}).filter(Boolean));
+    const readByPath = new Map(toRead.map(entry => [entry.path, entry]));
+    for (const entry of entries) {
+      if (!entry.dir && (mappedNotePaths.has(entry.path) || mappedTodoPaths.has(entry.path))) {
+        readByPath.set(entry.path, entry);
+      }
+    }
+    const filesToRead = [...readByPath.values()];
+    const mdFiles = filesToRead.filter(e => /\.(md|markdown)$/i.test(e.path));
+    const drawFiles = filesToRead.filter(e => /\.excalidraw$/i.test(e.path));
     const assetFiles = entries.filter(e => !e.dir && /^_assets\//i.test(e.path));
+
+    // 新格式回收站笔记也逐文件读取。它们不参与普通目录扫描，避免在主列表复活。
+    const entryByPath = new Map(entries.filter(entry => !entry.dir).map(entry => [entry.path, entry]));
+    const deletedNoteFiles = (meta.deletedNoteFiles && typeof meta.deletedNoteFiles === 'object') ? meta.deletedNoteFiles : {};
+    for (const [mappedId, path] of Object.entries(deletedNoteFiles)) {
+      const entry = entryByPath.get(path);
+      if (!entry) continue;
+      const text = await fs.readText(path);
+      if (text == null) throw new Error(`回收站笔记无法读取：${path}`);
+      if (/\.excalidraw$/i.test(path)) {
+        let scene = {}; try { scene = JSON.parse(text); } catch {}
+        const mn = scene._mn || {};
+        try { delete scene._mn; } catch {}
+        const existing = notes.find(note => note.id === mappedId);
+        const note = {
+          ...(existing || {}), id: mappedId, type: 'drawing', title: mn.title || safeName(path.split('/').pop().replace(/\.excalidraw$/i, '')),
+          content: JSON.stringify(scene), notebookId: mn.notebookId || existing?.notebookId || null,
+          folderId: mn.folderId || existing?.folderId || null, tags: mn.tags || [], starred: !!mn.starred,
+          deleted: true, deletedBy: mn.deletedBy || existing?.deletedBy || 'app',
+          deletedAt: Number(mn.deletedAt || existing?.deletedAt) || Date.now(),
+          createdAt: Number(mn.createdAt) || Date.now(), updatedAt: Number(mn.updatedAt) || Date.now(),
+          _srcPath: path, _srcMtime: entry.mtime || 0
+        };
+        if (existing) Object.assign(existing, note); else notes.push(note);
+        continue;
+      }
+      const parsed = parseMarkdownFile(text);
+      const fm = parsed.meta;
+      const existing = notes.find(note => note.id === mappedId);
+      const nb = ensureNotebookByName(fm.notebook);
+      const folder = fm.folder ? ensureFolderByName(nb.id, fm.folder) : null;
+      const note = {
+        ...(existing || {}), id: mappedId, notebookId: nb.id, folderId: folder ? folder.id : null,
+        title: fm.title || path.split('/').pop().replace(/\.(md|markdown)$/i, ''),
+        content: ingestImageDataUrls(ingestAssetPathRefs(parsed.content)),
+        tags: Array.isArray(fm.tags) ? fm.tags : [], starred: !!fm.starred,
+        deleted: true, deletedBy: fm.deletedBy || existing?.deletedBy || 'app',
+        deletedAt: fm.deletedAt ? new Date(fm.deletedAt).getTime() : Number(existing?.deletedAt) || Date.now(),
+        createdAt: fm.createdAt ? new Date(fm.createdAt).getTime() : Date.now(),
+        updatedAt: fm.updatedAt ? new Date(fm.updatedAt).getTime() : Date.now(),
+        _srcPath: path, _srcMtime: entry.mtime || 0
+      };
+      if (existing) Object.assign(existing, note); else notes.push(note);
+    }
 
     // 资产先读入 images 映射（供 _assets 路径引用解析）
     for (const a of assetFiles) {
@@ -5629,8 +5963,9 @@ async function workdirImportAllNow(silent) {
       const text = await fs.readText(f.path);
       if (text == null) throw new Error(`工作目录中的文件无法读取：${f.path}`);
       const segs = f.path.split('/').filter(Boolean);
-      const isTodo = segs[0] === TODO_DIR;
       const { meta: fm, content } = parseMarkdownFile(text);
+      const isTodo = mappedTodoPaths.has(f.path)
+        || (segs[0] === TODO_DIR && !mappedNotePaths.has(f.path) && !fm.title);
       if (isTodo) {
         const id = fm.id || uid();
         seenTodoIds.add(id);
@@ -5641,9 +5976,15 @@ async function workdirImportAllNow(silent) {
           content: ingestImageDataUrls(ingestAssetPathRefs(content)),
           done: fm.done === true || fm.done === 'true',
           dueDate: fm.dueDate ? new Date(fm.dueDate).getTime() : null,
+          remindBeforeMin: Math.max(0, Number(fm.remindBeforeMin) || 0),
+          remindCount: Math.max(1, Number(fm.remindCount) || 1),
+          remindIntervalMin: Math.max(1, Number(fm.remindIntervalMin) || 5),
+          remindSnoozedUntil: fm.remindSnoozedUntil ? new Date(fm.remindSnoozedUntil).getTime() : 0,
           createdAt: fm.createdAt ? new Date(fm.createdAt).getTime() : Date.now(),
           completedAt: fm.completedAt ? new Date(fm.completedAt).getTime() : null
         };
+        todo._srcPath = f.path;
+        todo._srcMtime = f.mtime || 0;
         if (existing) { Object.assign(existing, todo); updated++; }
         else { todos.push(todo); added++; }
         continue;
@@ -5740,7 +6081,7 @@ async function workdirImportAllNow(silent) {
     });
     const missingNoteIds = new Set(reconcilePlan.missingNoteIds.filter(id => notes.some(n => n.id === id && !n.deleted)));
     const missingTodoIds = new Set(reconcilePlan.missingTodoIds.filter(id => todos.some(t => t.id === id)));
-    if (missingNoteIds.size || missingTodoIds.size) {
+    if (options.reconcile !== false && (missingNoteIds.size || missingTodoIds.size)) {
       const actualPlan = { missingNoteIds: [...missingNoteIds], missingTodoIds: [...missingTodoIds] };
       const recovery = await preserveWorkdirReconciliation(actualPlan);
       const reconciledAt = Date.now();
@@ -5769,7 +6110,9 @@ async function workdirImportAllNow(silent) {
       logError(new Error(`recovery=${recovery.key} location=${recovery.location}`), 'workdir-reconcile');
     }
 
-    if (saveData() === false) throw new Error('工作目录导入完成，但主数据保存失败');
+    if (_mainDataStorageMode === 'local' && options.persist !== false) {
+      if (!persistMainDataNow()) throw new Error('工作目录导入完成，但浏览器主数据保存失败');
+    }
     renderNotebooks();
     renderTagFilters();
     if (currentView.startsWith('todo:')) renderTodos(); else renderNotesList();
@@ -5783,6 +6126,7 @@ async function workdirImportAllNow(silent) {
   } catch (e) {
     logError(e, 'workdir-import');
     recordWorkdirError(e, '导入');
+    if (options.throwOnError) throw e;
     return 0;
   } finally {
     _workdirSyncDepth--;
@@ -5799,9 +6143,13 @@ async function pickWorkDir() {
     _workdirCfg.enabled = true;
     saveWorkdirCfg();
     showToast('已选择工作目录：' + res.name);
-    // 先把目录里已有 .md 导入，再把当前数据写回，达成双向合并
-    await workdirImportAll(true);
-    await workdirWriteAll(true);
+    // 先读所选目录中的独立文件，再把内存中尚未迁移的内容合并写回。
+    await queueWorkdirOperation(() => workdirImportAllNow(true, { reconcile: false, throwOnError: true }));
+    await queueWorkdirOperation(() => workdirWriteAllNow(true, { throwOnError: true }));
+    if (isDesktopContext()) {
+      _mainDataStorageMode = 'workdir';
+      try { localStorage.removeItem(STORAGE_KEY); localStorage.removeItem(LEGACY_KEY); } catch {}
+    }
     renderWorkDirInfo();
     showToast('工作目录已就绪 ✓');
   } catch (e) {
@@ -5813,12 +6161,27 @@ async function pickWorkDir() {
 
 async function forgetWorkDir() {
   const fs = fsApi();
-  showModal('停用工作目录？', '将不再把改动写入本地目录（已写出的文件保留在磁盘，不会删除）。', async () => {
-    try { if (fs) await fs.forget(); } catch {}
-    _workdirCfg = { enabled: false, lastSyncAt: 0, name: null, lastImportAt: 0, lastError: null };
-    saveWorkdirCfg();
+  const desktop = isDesktopContext();
+  showModal(desktop ? '恢复默认工作目录？' : '停用工作目录？', desktop
+    ? '桌面版必须使用本地文件保存。当前目录不会删除，之后的数据将写入“文档/Marginote”默认目录。'
+    : '将不再把改动写入本地目录（已写出的文件保留在磁盘，不会删除）。', async () => {
+    try {
+      if (fs) await fs.forget();
+      if (desktop && fs && typeof fs.ensureDir === 'function') {
+        const ensured = await fs.ensureDir();
+        _workdirCfg = { enabled: true, lastSyncAt: 0, name: ensured && ensured.name, lastImportAt: 0, lastError: null };
+        saveWorkdirCfg();
+        await queueWorkdirOperation(() => workdirWriteAllNow(true, { throwOnError: true }));
+        showToast('已切换到默认工作目录');
+      } else {
+        _workdirCfg = { enabled: false, lastSyncAt: 0, name: null, lastImportAt: 0, lastError: null };
+        saveWorkdirCfg();
+        showToast('已停用工作目录');
+      }
+    } catch (error) {
+      recordWorkdirError(error, '切换');
+    }
     renderWorkDirInfo();
-    showToast('已停用工作目录');
   });
 }
 
@@ -5830,7 +6193,7 @@ function renderWorkDirInfo() {
     return;
   }
   if (!_workdirCfg.enabled || !_workdirCfg.name) {
-    el.innerHTML = '<span style="color:var(--ink-mute);">未启用（数据仅存本机应用内）</span>';
+    el.innerHTML = `<span style="color:var(--ink-mute);">${isDesktopContext() ? '本地文件目录尚未就绪' : '未启用（数据仅存本机应用内）'}</span>`;
   } else {
     const last = _workdirCfg.lastSyncAt ? formatFullDate(_workdirCfg.lastSyncAt) : '从未';
     const error = _workdirCfg.lastError;
@@ -5840,24 +6203,16 @@ function renderWorkDirInfo() {
   }
 }
 
-// hook saveData → 工作目录启用时 debounce 写回
-const _origSaveDataWorkdir = saveData;
-saveData = function() {
-  const saved = _origSaveDataWorkdir();
-  if (saved !== false && _repositoryTransactionDepth === 0 && _workdirSyncDepth === 0 && _workdirCfg.enabled && workdirAvailable()) {
-    clearTimeout(_workdirTimer);
-    _workdirTimer = setTimeout(() => workdirWriteAll(true), 3000);
-  }
-  return saved;
-};
-
 // 统一 Repository / UnitOfWork：AI 与 CLI 的一次业务写操作先在内存快照上执行，
-// 主数据提交失败时恢复快照；工作目录是提交后的异步投影，失败会记录同步错误但不回滚主数据。
+// 桌面版必须先把独立 Markdown 文件提交成功才算完成；失败时恢复内存快照并向 CLI 返回非零错误。
 const CHANGESET_SUMMARY_KEY = 'marginote.changeSets.v1';
 const CHANGESET_HISTORY_LIMIT = 30;
 
 function readRepositoryState() {
-  return { notebooks, folders, notes, todos };
+  return {
+    notebooks, folders, notes, todos,
+    memories: typeof loadMemories === 'function' ? loadMemories() : []
+  };
 }
 
 function replaceRepositoryState(state) {
@@ -5867,6 +6222,7 @@ function replaceRepositoryState(state) {
   folders = Array.isArray(state.folders) ? state.folders : [];
   notes = Array.isArray(state.notes) ? state.notes : [];
   todos = Array.isArray(state.todos) ? state.todos : [];
+  if (Array.isArray(state.memories) && typeof saveMemories === 'function') saveMemories(state.memories);
   currentNote = currentNoteId ? notes.find(note => note.id === currentNoteId) || null : null;
   currentTodo = currentTodoId ? todos.find(todo => todo.id === currentTodoId) || null : null;
 }
@@ -5923,8 +6279,8 @@ async function storeChangeSet(changeSet) {
   }
 }
 
-function persistRepositoryState() {
-  if (!persistMainDataNow()) throw new Error('主数据提交失败');
+async function persistRepositoryState(state) {
+  await persistMainDataDurably(state);
 }
 
 function rollbackRepositoryState(changeSet) {
@@ -5947,15 +6303,20 @@ if (window.MarginoteRepositoryCore) {
     onRollback: rollbackRepositoryState,
     onEnd: outcome => {
       _repositoryTransactionDepth = Math.max(0, _repositoryTransactionDepth - 1);
-      const shouldWriteWorkdir = outcome && outcome.committed && outcome.changeSet
-        && _workdirCfg.enabled && workdirAvailable();
-      if (shouldWriteWorkdir) workdirWriteAll(true).catch(error => logError(error, 'repository-workdir'));
     }
   });
 }
 
 // 启动：若已启用工作目录，自动从磁盘导入（拖入的 md 会出现）
 (async function initWorkDir() {
+  if (window.MarginoteDesktopDataReady) await window.MarginoteDesktopDataReady;
+  if (_mainDataStorageMode === 'blocked') return;
+  // 桌面版已在 init() 首屏加载前完成工作目录导入，避免重复扫描；这里只做回收站清理。
+  if (isDesktopContext()) {
+    try { if (window.trash) await window.trash.purgeExpired(Date.now()); } catch (e) { logError(e, 'trash-purge'); }
+    renderWorkDirInfo();
+    return;
+  }
   if (!workdirAvailable() || !_workdirCfg.enabled) return;
   let tries = 0;
   while (!_idb && tries < 50) { await new Promise(r => setTimeout(r, 100)); tries++; }
@@ -5977,6 +6338,7 @@ function bindWorkDir() {
   const syncBtn = document.getElementById('syncWorkDirBtn');
   const scanBtn = document.getElementById('scanWorkDirBtn');
   const offBtn = document.getElementById('forgetWorkDirBtn');
+  if (offBtn && isDesktopContext()) offBtn.textContent = '↺ 默认目录';
   if (pickBtn) pickBtn.addEventListener('click', pickWorkDir);
   if (syncBtn) syncBtn.addEventListener('click', () => workdirWriteAll(false));
   if (scanBtn) scanBtn.addEventListener('click', () => workdirImportAll(false));
@@ -5992,15 +6354,15 @@ function bindWorkDir() {
 }
 bindWorkDir();
 
-// 未设置工作目录时引导用户设置（桌面）。选择后 pickWorkDir 会导入+写出，完成本地数据迁移。
+// 桌面版会自动创建默认目录；这里只在初始化失败时提示用户手动选择其他可写目录。
 async function promptWorkdirSetupIfNeeded() {
   try {
     if (!isDesktopContext()) return;
     const fs = (typeof fsApi === 'function') ? fsApi() : null;
     if (!fs) return;
     if (_workdirCfg && _workdirCfg.enabled && await fs.hasDir()) return; // 已设置，跳过
-    showModal('建议设置工作目录',
-      '为确保你的笔记/待办以真实 .md 文件保存到电脑本地，并支持回收站与跨设备同步，建议现在选择一个工作目录。选择后，现有数据会写入该目录；之后所有增删改都会直接落到磁盘。',
+    showModal('请选择本地工作目录',
+      '默认目录无法访问。桌面版会把每篇笔记、每条待办保存为独立文件，需要选择一个可写目录后才能继续安全保存。',
       () => { pickWorkDir(); });
   } catch (e) { logError(e, 'workdir-prompt'); }
 }

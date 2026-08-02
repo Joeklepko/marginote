@@ -49,6 +49,7 @@ pub fn run() {
             cli_bridge::cmd_cli_take_requests,
             cli_bridge::cmd_cli_complete,
             workdir::cmd_workdir_pick,
+            workdir::cmd_workdir_ensure,
             workdir::cmd_workdir_status,
             workdir::cmd_workdir_forget,
             workdir::cmd_workdir_list,

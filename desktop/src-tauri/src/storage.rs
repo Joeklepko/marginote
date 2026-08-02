@@ -2,8 +2,7 @@
 // 用作 mn.platform.storage 的桌面端持久化（仅供 Rust + 前端共享 key 使用，
 // 例如 alarm 触发时 Rust 读 `marginoteTodos` 找到 todo 元数据）。
 //
-// 不替代 localStorage —— app.js 的笔记/笔记本/图片/todos bulk 数据继续走
-// WebView 自带的 localStorage，桌面端原生支持。
+// 不承载笔记主数据；桌面版笔记/待办以独立文件保存在工作目录中。
 
 use serde_json::{Map, Value};
 use std::fs;

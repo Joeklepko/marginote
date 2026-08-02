@@ -31,7 +31,6 @@
   // ===== storage =====
   // 走自家 cmd_kv_* 命令（marginote.dat 在 app_data_dir）。
   // 主要为 mn.platform.storage('marginoteTodos') 服务，让 Rust scheduler 也能读到。
-  // 普通业务 bulk 数据继续走 WebView 自带的 localStorage。
   platform.storage = {
     async get(key) {
       try {
@@ -207,6 +206,10 @@
   // 路径有效则重启后无需重新授权（原生 fs 不像浏览器有句柄过期问题）。
   platform.fs = {
     isAvailable() { return true; },
+    async ensureDir() {
+      const name = await invoke('cmd_workdir_ensure');
+      return name ? { name } : null;
+    },
     async pickDir() {
       try {
         const name = await invoke('cmd_workdir_pick');

@@ -59,6 +59,7 @@
     // relPath 一律用 '/' 分隔的相对路径，相对工作目录根。
     fs: {
       isAvailable: () => false,                 // () → bool：当前平台是否支持工作目录
+      ensureDir: () => Promise.resolve(null),   // () → Promise<{name}|null>：桌面端确保默认工作目录存在
       pickDir: () => Promise.resolve(null),     // () → Promise<{name}|null>：弹选择器，持久化所选目录
       hasDir: () => Promise.resolve(false),     // () → Promise<bool>：是否已绑定且可访问
       dirName: () => Promise.resolve(null),     // () → Promise<string|null>：已绑定目录显示名

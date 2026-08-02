@@ -89,6 +89,9 @@
 
   async function start() {
     if (window.mn && window.mn.ready) await window.mn.ready;
+    // Avoid the startup race where a CLI request arrives before the Markdown
+    // workdir has been loaded and legacy WebView data has finished migrating.
+    if (window.MarginoteDesktopDataReady) await window.MarginoteDesktopDataReady;
     // Event delivery wakes hidden WebViews. A low-frequency poll covers the
     // startup race before this listener has been attached.
     const eventApi = tauri && tauri.event;
