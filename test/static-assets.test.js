@@ -55,9 +55,25 @@ for (const htmlPath of ['shared/index.html', 'extension/index.html']) {
   for (const controlId of ['editorZoomOut', 'editorZoomValue', 'editorZoomIn', 'readingZoomOut', 'readingZoomValue', 'readingZoomIn']) {
     assert.match(html, new RegExp(`id=["']${controlId}["']`), `${htmlPath} 缺少可操作的缩放控件 ${controlId}`);
   }
-  assert.match(html, /id=["']assistantCurrentBtn["']/, `${htmlPath} AI 助手必须提供一键附加当前内容入口`);
+  assert.match(html, /id=["']attachmentPickerSearch["']/, `${htmlPath} AI 附件选择器必须支持搜索`);
+  assert.doesNotMatch(html, /id=["']assistantCurrentBtn["']/, `${htmlPath} 不应保留已由自动上下文替代的重复按钮`);
   assert.match(html, /\.app\.reading-mode \.editor-content\s*\{[^}]*width:\s*88vw/s, `${htmlPath} 阅读模式必须使用宽视口布局`);
 }
+
+const desktopHtml = fs.readFileSync('shared/index.html', 'utf8');
+for (const controlId of ['windowMinimizeBtn', 'windowMaximizeBtn', 'windowCloseBtn']) {
+  assert.match(desktopHtml, new RegExp(`id=["']${controlId}["']`), `桌面版缺少自绘窗口控制 ${controlId}`);
+}
+assert.doesNotMatch(desktopHtml, /id=["']cliStatusBar["']/, '桌面版不应继续占用底部空间展示 CLI 状态栏');
+
+const tauriConfig = JSON.parse(fs.readFileSync('desktop/src-tauri/tauri.conf.json', 'utf8'));
+assert.equal(tauriConfig.app.windows[0].decorations, false, '桌面窗口应取消独立原生标题栏');
+assert.equal(tauriConfig.bundle.windows.nsis.compression, 'zlib', 'Windows 安装器应使用偏安装速度的 zlib');
+assert.doesNotMatch(fs.readFileSync('desktop/src-tauri/windows/hooks.nsh', 'utf8'), /TIMEOUT=5000/, 'PATH 广播不得让安装固定等待五秒');
+assert.ok(
+  JSON.parse(fs.readFileSync('desktop/src-tauri/capabilities/default.json', 'utf8')).permissions.includes('core:window:allow-start-dragging'),
+  '无边框窗口必须授权自绘标题区拖动'
+);
 
 for (const appPath of ['shared/app.js', 'extension/app.js']) {
   const source = fs.readFileSync(appPath, 'utf8');
@@ -82,7 +98,8 @@ for (const assistantPath of ['shared/js/assistant.js', 'extension/js/assistant.j
   assert.match(source, /本轮未授权工具/, `${assistantPath} 必须在运行时拒绝未授权工具`);
   assert.match(source, /等待确认删除操作/, `${assistantPath} 的危险 AI 操作必须等待用户确认`);
   assert.match(source, /role: 'user', content: prompt\.context/, `${assistantPath} 必须把本地数据放在非 system 消息中`);
-  assert.match(source, /AssistantCore\.planAssistantTurn\(requestText, pendingAttachments, ctxK\)/, `${assistantPath} 必须使用共享的本轮规划器`);
+  assert.match(source, /AssistantCore\.planAssistantTurn\(requestText, turnAttachments, ctxK\)/, `${assistantPath} 必须使用含自动上下文的本轮规划器`);
+  assert.match(source, /function getAutomaticAssistantContext\(/, `${assistantPath} 必须自动注入当前笔记或待办上下文`);
   assert.match(source, /turnPlan\.maxToolSteps/, `${assistantPath} 必须使用 Skill 的步骤上限`);
   assert.match(source, /AssistantCore\.selectRecentHistory/, `${assistantPath} 必须使用统一且有界的历史窗口`);
   assert.match(source, /AssistantCore\.summarizeToolLogForHistory/, `${assistantPath} 连续对话必须保留上一轮写入目标 ID`);

@@ -27,12 +27,6 @@
     })
   });
 
-  const statusBar = document.getElementById('cliStatusBar');
-  const statusState = document.getElementById('cliStatusState');
-  const statusTask = document.getElementById('cliStatusTask');
-  const statusMeta = document.getElementById('cliStatusMeta');
-  let statusTicker = null;
-  let statusResetTimer = null;
   const IDEMPOTENCY_KEY = 'marginote.cli.idempotency.v1';
 
   function loadIdempotencyRecords() {
@@ -47,54 +41,6 @@
     try { localStorage.setItem(IDEMPOTENCY_KEY, JSON.stringify(records)); } catch {}
   }
 
-  function setStatus(state, stateLabel, task, meta) {
-    if (!statusBar) return;
-    statusBar.dataset.state = state;
-    if (statusState) statusState.textContent = stateLabel;
-    if (statusTask) {
-      statusTask.textContent = task;
-      statusTask.title = task;
-    }
-    if (statusMeta) statusMeta.textContent = meta || '';
-  }
-
-  function resetStatusSoon(delay) {
-    window.clearTimeout(statusResetTimer);
-    statusResetTimer = window.setTimeout(() => {
-      setStatus('idle', '就绪', '等待本地 Agent 任务', '');
-    }, delay);
-  }
-
-  function startTaskStatus(request, remaining) {
-    window.clearInterval(statusTicker);
-    window.clearTimeout(statusResetTimer);
-    const startedAt = Date.now();
-    const task = window.MarginoteCliCore.describeCommand(request.command, request.args || {});
-    const update = () => {
-      const seconds = Math.max(0, Math.floor((Date.now() - startedAt) / 1000));
-      const queue = remaining > 0 ? ` · 队列中 ${remaining}` : '';
-      setStatus('running', '执行中', task, `${seconds}s${queue}`);
-    };
-    update();
-    statusTicker = window.setInterval(update, 1000);
-    return { task, startedAt };
-  }
-
-  function finishTaskStatus(active, ok, error) {
-    window.clearInterval(statusTicker);
-    statusTicker = null;
-    const elapsedMs = Math.max(0, Date.now() - active.startedAt);
-    const elapsed = elapsedMs < 1000 ? '<1s' : `${Math.ceil(elapsedMs / 1000)}s`;
-    if (ok) {
-      setStatus('success', '已完成', active.task, elapsed);
-      resetStatusSoon(6000);
-    } else {
-      const message = error && error.message ? error.message : String(error || '未知错误');
-      setStatus('error', '执行失败', `${active.task} · ${message}`, elapsed);
-      resetStatusSoon(10_000);
-    }
-  }
-
   let draining = false;
   async function drainRequests() {
     if (draining) return;
@@ -103,7 +49,6 @@
       const requests = (await invoke('cmd_cli_take_requests')) || [];
       for (let index = 0; index < requests.length; index++) {
         const request = requests[index];
-        const active = startTaskStatus(request, requests.length - index - 1);
         try {
           const requestId = request.requestId || request.id;
           const fingerprint = window.MarginoteCliCore.requestFingerprint(request.command, request.args || {});
@@ -126,7 +71,6 @@
             saveIdempotencyRecords(records);
           }
           await invoke('cmd_cli_complete', { id: request.id, ok: true, data: data == null ? null : data, error: null });
-          finishTaskStatus(active, true, null);
         } catch (error) {
           const message = error && error.message ? error.message : String(error);
           try {
@@ -134,7 +78,6 @@
           } catch (completeError) {
             console.warn('cli bridge completion failed', completeError);
           }
-          finishTaskStatus(active, false, error);
         }
       }
     } catch (error) {
@@ -146,7 +89,6 @@
 
   async function start() {
     if (window.mn && window.mn.ready) await window.mn.ready;
-    setStatus('idle', '就绪', '等待本地 Agent 任务', '');
     // Event delivery wakes hidden WebViews. A low-frequency poll covers the
     // startup race before this listener has been attached.
     const eventApi = tauri && tauri.event;

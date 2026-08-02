@@ -9,7 +9,7 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function (ToolPolicy) {
   if (!ToolPolicy) throw new Error('MarginoteToolPolicyCore 未加载');
 
-  const VERSION = 1;
+  const VERSION = 2;
 
   const GROUPS = Object.freeze({
     note_query: Object.freeze([
@@ -25,8 +25,8 @@
   const CAPABILITIES = Object.freeze({
     note_write: Object.freeze({
       capture: Object.freeze({
-        tools: Object.freeze(['create_note', 'create_from_template', 'append_to_note']),
-        promptRule: '记录新信息前检查本地预检索和上一轮写入目标：主题明确相同且追加不会改变原意时优先 append_to_note；没有可靠匹配时才 create_note。不得用整篇覆盖来合并相似内容。'
+        tools: Object.freeze(['create_note', 'create_from_template', 'append_to_note', 'update_note']),
+        promptRule: '“记录”和“新建”都按内容语义归档，不按字面动词决定写入目标。先检查本地预检索、当前上下文和上一轮写入目标：只有同一具体主题或项目且新信息自然属于原笔记时才复用。新增事实用 append_to_note；纠错、替换或重组时先 get_note 读取全文，再 update_note 并保留无关内容。没有高置信匹配时才 create_note，常见词重合不等于相关。'
       }),
       edit: Object.freeze({
         tools: Object.freeze([

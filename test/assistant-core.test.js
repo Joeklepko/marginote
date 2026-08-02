@@ -50,11 +50,15 @@ check('新建待办不触发笔记预检索', core.classifyIntent('新建待办�
 check('64K 上下文仅保留最近 16 条消息', core.selectRecentHistory(Array.from({ length: 40 }, (_, i) => ({ role: i % 2 ? 'assistant' : 'user', content: String(i) })), 64).length === 16);
 check('查询意图不暴露删除工具', !core.selectToolNames(core.classifyIntent('查一下用药计划')).includes('delete_note'));
 check('翻译笔记会暴露真实写入工具', core.selectToolNames(core.classifyIntent('把这篇笔记翻译成英文')).includes('translate_note'));
-check('新建笔记只开放创建能力', (() => {
+check('新建笔记也允许按语义复用高相关旧笔记', (() => {
   const plan = core.planAssistantTurn('新建一篇会议笔记', [], 64);
   return plan.intent.capabilities.join(',') === 'capture'
+    && plan.intent.prefetchNotes
+    && plan.intent.query.includes('会议笔记')
+    && !plan.intent.query.includes('新建')
     && plan.allowedToolNames.includes('create_note')
-    && !plan.allowedToolNames.includes('update_note')
+    && plan.allowedToolNames.includes('append_to_note')
+    && plan.allowedToolNames.includes('update_note')
     && !plan.allowedToolNames.includes('delete_note');
 })());
 check('删除单篇笔记不开放批量删除或笔记本删除', (() => {
@@ -84,6 +88,14 @@ check('查看已完成待办仍是只读查询', core.classifyIntent('查看已�
 check('待办附件会在共享规划器中修正写入领域', (() => {
   const plan = core.planAssistantTurn('把标题修改为交付周报', [{ type: 'todo', id: 't1' }], 64);
   return plan.intent.kind === 'todo_write' && plan.allowedToolNames.includes('update_todo') && !plan.allowedToolNames.includes('update_note');
+})());
+check('自动当前待办可理解不带对象的修改请求', (() => {
+  const plan = core.planAssistantTurn('把标题修改为交付周报', [{ type: 'todo', id: 't1', automatic: true }], 64);
+  return plan.intent.kind === 'todo_write' && plan.allowedToolNames.includes('update_todo');
+})());
+check('当前待办不会把显式新建笔记错误路由成待办', (() => {
+  const plan = core.planAssistantTurn('新建一篇会议笔记', [{ type: 'todo', id: 't1', automatic: true }], 64);
+  return plan.intent.kind === 'note_write' && plan.allowedToolNames.includes('create_note') && !plan.allowedToolNames.includes('create_todo');
 })());
 check('番茄钟在通用意图中可用', core.selectToolNames(core.classifyIntent('开始专注二十五分钟')).includes('pomodoro'));
 check('笔记标题含待办二字仍识别为新建笔记', core.classifyIntent('新建笔记：待办事项设计方案').kind === 'note_write');

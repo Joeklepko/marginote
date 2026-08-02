@@ -23,7 +23,10 @@
     ${EndIf}
     WriteRegExpandStr HKCU "Environment" "Path" "$0"
   ${EndIf}
-  SendMessage ${HWND_BROADCAST} ${WM_SETTINGCHANGE} 0 "STR:Environment" /TIMEOUT=5000
+  ; Explorer normally responds immediately. Do not make every install wait five
+  ; seconds for an unrelated hung desktop process; new terminals still read the
+  ; persisted HKCU value even when a receiver misses this best-effort broadcast.
+  SendMessage ${HWND_BROADCAST} ${WM_SETTINGCHANGE} 0 "STR:Environment" /TIMEOUT=250
 !macroend
 
 !macro NSIS_HOOK_PREUNINSTALL
@@ -38,5 +41,5 @@
     StrCpy $1 $1 $2 1
   ${EndIf}
   WriteRegExpandStr HKCU "Environment" "Path" "$1"
-  SendMessage ${HWND_BROADCAST} ${WM_SETTINGCHANGE} 0 "STR:Environment" /TIMEOUT=5000
+  SendMessage ${HWND_BROADCAST} ${WM_SETTINGCHANGE} 0 "STR:Environment" /TIMEOUT=250
 !macroend

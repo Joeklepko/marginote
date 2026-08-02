@@ -38,6 +38,8 @@
     window: {
       focus: NOT_READY,                      // () → Promise<void>
       minimize: NOT_READY,
+      toggleMaximize: NOT_READY,
+      close: NOT_READY,
       hide: NOT_READY,
     },
 

@@ -137,8 +137,37 @@
         if (w) await w.minimize();
       } catch (e) {}
     },
+    async toggleMaximize() {
+      try {
+        const w = tauriWin?.getCurrentWindow?.() || tauriWebviewWin?.getCurrentWebviewWindow?.();
+        if (!w) return;
+        if (await w.isMaximized()) await w.unmaximize();
+        else await w.maximize();
+      } catch (e) {}
+    },
+    async close() {
+      try {
+        const w = tauriWin?.getCurrentWindow?.() || tauriWebviewWin?.getCurrentWebviewWindow?.();
+        if (w) await w.close();
+      } catch (e) {}
+    },
     async hide() { try { await invoke('cmd_window_hide'); } catch (e) {} },
   };
+
+  function bindWindowControls() {
+    document.body?.classList.add('is-desktop');
+    const actions = {
+      windowMinimizeBtn: () => platform.window.minimize(),
+      windowMaximizeBtn: () => platform.window.toggleMaximize(),
+      windowCloseBtn: () => platform.window.close()
+    };
+    for (const [id, action] of Object.entries(actions)) {
+      const button = document.getElementById(id);
+      if (button) button.addEventListener('click', action);
+    }
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', bindWindowControls, { once: true });
+  else bindWindowControls();
 
   // ===== desktop 专属（hotkey / autostart 在 P4 接通）=====
   platform.desktop = {

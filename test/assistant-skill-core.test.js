@@ -9,7 +9,7 @@ for (const profile of Object.values(skills.PROFILES)) {
   assert.ok(!profile.tools.includes('list_todos'));
 }
 
-assert.equal(skills.VERSION, 1);
+assert.equal(skills.VERSION, 2);
 assert.deepEqual(
   Object.keys(skills.PROFILES).sort(),
   ['general', 'memory', 'note_query', 'note_write', 'todo_query', 'todo_write']
@@ -36,9 +36,10 @@ for (const name of ['create_from_template', 'auto_title_notes', 'merge_notes', '
 const noteCapture = skills.selectionForIntent({ kind: 'note_write', capabilities: ['capture'] });
 assert.ok(noteCapture.tools.includes('create_note'));
 assert.ok(noteCapture.tools.includes('append_to_note'));
-assert.ok(!noteCapture.tools.includes('update_note'));
+assert.ok(noteCapture.tools.includes('update_note'));
 assert.ok(!noteCapture.tools.includes('delete_note'));
-assert.ok(noteCapture.promptRules.some(rule => rule.includes('优先 append_to_note')));
+assert.ok(noteCapture.promptRules.some(rule => rule.includes('高置信匹配')));
+assert.ok(noteCapture.promptRules.some(rule => rule.includes('先 get_note 读取全文')));
 
 const noteBatchMove = skills.selectToolNames({ kind: 'note_write', capabilities: ['organize', 'batch'] });
 assert.ok(noteBatchMove.includes('batch_move_notes'));

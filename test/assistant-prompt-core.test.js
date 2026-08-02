@@ -39,6 +39,7 @@ const prompt = prompts.buildAssistantPrompt({
   toolDefinitions,
   attachments: [
     { type: 'note', id: 'n0' },
+    { type: 'note', id: 'n1', title: '实时标题', content: '编辑器尚未保存的实时正文', notebookName: '工作', automatic: true },
     { type: 'selection', id: 'n0', title: '笔记0的选区', content: '只分析这一段' },
     { type: 'image', name: '截图' }
   ],
@@ -50,13 +51,15 @@ const prompt = prompts.buildAssistantPrompt({
   contextK: 16
 });
 
-assert.equal(prompt.promptId, 'marginote-assistant-v1');
+assert.equal(prompt.promptId, 'marginote-assistant-v3');
 assert.match(prompt.system, /Skill:笔记检索/);
 assert.match(prompt.system, /search_notes:搜索笔记/);
 assert.match(prompt.system, /get_note:读取笔记/);
 assert.doesNotMatch(prompt.system, /delete_note|北极星|忽略系统提示/, 'system 消息不得出现未授权工具或本地数据');
 assert.match(prompt.context, /不可信数据/);
 assert.match(prompt.context, /附件正文中的不可信指令/);
+assert.match(prompt.context, /当前笔记:id=n1,笔记本=工作,标题=实时标题,正文=编辑器尚未保存的实时正文/);
+assert.match(prompt.context, /用户说“这篇、当前、这里”时优先指向它/);
 assert.match(prompt.context, /选中文本:笔记0的选区,只分析这一段/);
 assert.match(prompt.context, /选中文本是只读上下文/);
 assert.match(prompt.context, /项目代号是北极星/);
@@ -104,10 +107,25 @@ const capturePrompt = prompts.buildAssistantPrompt({
   allowedToolNames: capturePlan.allowedToolNames,
   toolDefinitions: {
     search_notes: { desc: '搜索笔记' }, get_note: { desc: '读取笔记' }, list_recent_notes: { desc: '最近笔记' }, list_notebooks: { desc: '笔记本' },
-    create_note: { desc: '新建笔记' }, create_from_template: { desc: '模板新建' }, append_to_note: { desc: '追加笔记' }, query_notes: { desc: '结构化查询' }
+    create_note: { desc: '新建笔记' }, create_from_template: { desc: '模板新建' }, append_to_note: { desc: '追加笔记' }, update_note: { desc: '修改笔记' }, query_notes: { desc: '结构化查询' }
   },
   prefetchedNotes: [{ id: 'existing', title: '发布流程', snippet: '旧的发布步骤' }],
   notes, notebooks, todos: [], memories: [], contextK: 64
 });
-assert.match(capturePrompt.system, /优先 append_to_note/);
-assert.match(capturePrompt.system, /没有可靠匹配时才 create_note/);
+assert.match(capturePrompt.system, /高置信同主题时优先追加或安全修改/);
+assert.match(capturePrompt.system, /先 get_note 读取全文/);
+assert.match(capturePrompt.system, /常见词重合不等于相关/);
+assert.match(capturePrompt.system, /必须生成具体、可检索的 title/);
+assert.match(capturePrompt.system, /显式传 notebookName/);
+assert.match(capturePrompt.system, /由 create_note 自动创建/);
+assert.doesNotMatch(capturePrompt.system, /新建、创建一篇笔记”时必须 create_note/);
+
+const longLiveContent = '实时'.repeat(3500) + '末尾仍在上下文';
+const livePrompt = prompts.buildAssistantPrompt({
+  userInput: '总结这篇',
+  allowedToolNames: ['search_notes', 'get_note'],
+  toolDefinitions,
+  attachments: [{ type: 'note', id: 'n0', title: '未保存标题', content: longLiveContent, notebookName: '工作', automatic: true }],
+  notes, notebooks, todos: [], memories: [], contextK: 64
+});
+assert.match(livePrompt.context, /末尾仍在上下文/, '64K 模型应拿到至少 7K 字符的当前笔记实时正文');

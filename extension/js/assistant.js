@@ -216,7 +216,8 @@ function clearActiveSessionHistory() {
 
 // ===================== 附件管理 =====================
 
-let pendingAttachments = [];   // [{type: 'note'|'todo', id, title} | {type:'image', dataUrl, name}]
+let pendingAttachments = [];   // 用户显式附加的笔记、待办或图片
+let activeAssistantTurnAttachments = null; // 含每轮自动注入的当前编辑上下文，仅在工具执行期间有效
 
 function addPendingAttachment(type, id, title) {
   if (pendingAttachments.some(a => a.type === type && a.id === id)) return;
@@ -224,30 +225,37 @@ function addPendingAttachment(type, id, title) {
   renderPendingAttachments();
 }
 
-function addPendingSelection(id, title, content) {
-  const text = String(content || '');
-  if (!text.trim()) return;
-  pendingAttachments = pendingAttachments.filter(item => item.type !== 'selection');
-  pendingAttachments.push({ type: 'selection', id, title: String(title || '当前选区'), content: text });
-  renderPendingAttachments();
+function getAutomaticAssistantContext() {
+  const target = currentTodo || currentNote;
+  if (!target) return [];
+  const isTodo = !!currentTodo;
+  const contentEl = document.getElementById(isTodo ? 'todoEditContent' : 'contentInput');
+  const titleEl = document.getElementById(isTodo ? 'todoEditTitle' : 'titleInput');
+  const content = contentEl ? contentEl.value : String(target.content || '');
+  const title = (titleEl?.value || (isTodo ? target.text : target.title) || (isTodo ? '无标题待办' : '无标题笔记')).trim();
+  const context = [{
+    type: isTodo ? 'todo' : 'note',
+    id: target.id,
+    title,
+    content,
+    automatic: true,
+    notebookName: isTodo ? '' : (notebooks.find(notebook => notebook.id === target.notebookId)?.name || '')
+  }];
+  if (contentEl && contentEl.selectionEnd > contentEl.selectionStart) {
+    const selected = content.slice(contentEl.selectionStart, contentEl.selectionEnd);
+    if (selected.trim()) context.push({ type: 'selection', id: target.id, title: `${title}的当前选区`, content: selected, automatic: true });
+  }
+  return context;
 }
 
-function attachCurrentAssistantContext() {
-  const target = currentTodo || currentNote;
-  if (!target) { if (typeof showToast === 'function') showToast('请先打开一篇笔记或待办'); return; }
-  const isTodo = !!currentTodo;
-  const textarea = document.getElementById(isTodo ? 'todoEditContent' : 'contentInput');
-  if (textarea && textarea.selectionEnd > textarea.selectionStart) {
-    const selected = textarea.value.slice(textarea.selectionStart, textarea.selectionEnd);
-    if (selected.trim()) {
-      const title = isTodo ? (currentTodo.text || '待办选区') : (currentNote.title || '笔记选区');
-      addPendingSelection(target.id, title, selected);
-      if (typeof showToast === 'function') showToast('已附加选中文本（只读上下文）');
-      return;
-    }
+function buildAssistantTurnAttachments() {
+  const merged = getAutomaticAssistantContext();
+  for (const attachment of pendingAttachments) {
+    const duplicate = attachment.type !== 'image'
+      && merged.some(item => item.type === attachment.type && item.id === attachment.id);
+    if (!duplicate) merged.push(attachment);
   }
-  addPendingAttachment(isTodo ? 'todo' : 'note', target.id, isTodo ? target.text : target.title);
-  if (typeof showToast === 'function') showToast(isTodo ? '已附加当前待办' : '已附加当前笔记');
+  return merged;
 }
 
 function addPendingImage(dataUrl, name) {
@@ -329,8 +337,11 @@ function renderPendingAttachments() {
 function openAttachmentPicker() {
   const modal = document.getElementById('attachmentPickerBg');
   if (!modal) return;
+  const search = document.getElementById('attachmentPickerSearch');
+  if (search) search.value = '';
   renderAttachmentPickerContent();
   modal.classList.add('show');
+  window.setTimeout(() => search?.focus(), 0);
 }
 
 function closeAttachmentPicker() {
@@ -341,8 +352,20 @@ function renderAttachmentPickerContent() {
   const list = document.getElementById('attachmentPickerList');
   if (!list) return;
 
-  const activeNotes = notes.filter(n => !n.deleted);
-  const activeTodos = todos.slice();
+  const query = String(document.getElementById('attachmentPickerSearch')?.value || '').trim().toLocaleLowerCase('zh-CN');
+  const queryTerms = query.split(/\s+/).filter(Boolean);
+  const notebookNames = new Map(notebooks.map(notebook => [notebook.id, notebook.name || '']));
+  const matchesAll = (...values) => {
+    const haystack = values.map(value => String(value || '')).join('\n').toLocaleLowerCase('zh-CN');
+    return queryTerms.every(term => haystack.includes(term));
+  };
+  const activeNotes = notes.filter(note => !note.deleted && matchesAll(
+    note.title, note.content, (note.tags || []).join(' '), notebookNames.get(note.notebookId)
+  ));
+  const activeTodos = todos.filter(todo => matchesAll(todo.text, todo.content));
+  const resultLimit = query ? 100 : 50;
+  const visibleNotes = activeNotes.slice(0, resultLimit);
+  const visibleTodos = activeTodos.slice(0, resultLimit);
 
   // 图片上传
   const imgAttached = pendingAttachments.filter(a => a.type === 'image');
@@ -360,25 +383,30 @@ function renderAttachmentPickerContent() {
     html += '</div>';
   }
 
-  html += '<div class="attach-picker-section"><div class="attach-picker-title">📝 笔记</div>';
+  html += `<div class="attach-picker-summary">${query ? `找到 ${activeNotes.length} 篇笔记、${activeTodos.length} 条待办` : '显示最近项目；输入关键词可搜索全部内容'}</div>`;
+  html += `<div class="attach-picker-section"><div class="attach-picker-title">📝 笔记 · ${activeNotes.length}</div>`;
   if (!activeNotes.length) {
-    html += '<div class="attach-picker-empty">暂无笔记</div>';
+    html += `<div class="attach-picker-empty">${query ? '没有匹配的笔记' : '暂无笔记'}</div>`;
   } else {
-    for (const n of activeNotes.slice(0, 50)) {
+    for (const n of visibleNotes) {
       const selected = pendingAttachments.some(a => a.type === 'note' && a.id === n.id);
-      html += `<div class="attach-picker-item ${selected ? 'selected' : ''}" data-type="note" data-id="${escapeHtml(n.id)}" data-title="${escapeHtml(n.title || '(无标题)')}">${escapeHtml(n.title || '(无标题)')}</div>`;
+      const notebookName = notebookNames.get(n.notebookId);
+      const itemTitle = `${n.title || '(无标题)'}${notebookName ? ` · ${notebookName}` : ''}`;
+      html += `<div class="attach-picker-item ${selected ? 'selected' : ''}" data-type="note" data-id="${escapeHtml(n.id)}" data-title="${escapeHtml(n.title || '(无标题)')}" title="${escapeHtml(itemTitle)}">${escapeHtml(itemTitle)}</div>`;
     }
+    if (activeNotes.length > visibleNotes.length) html += `<div class="attach-picker-summary">还有 ${activeNotes.length - visibleNotes.length} 篇，请输入更具体的关键词</div>`;
   }
   html += '</div>';
 
-  html += '<div class="attach-picker-section"><div class="attach-picker-title">✅ 待办</div>';
+  html += `<div class="attach-picker-section"><div class="attach-picker-title">✅ 待办 · ${activeTodos.length}</div>`;
   if (!activeTodos.length) {
-    html += '<div class="attach-picker-empty">暂无待办</div>';
+    html += `<div class="attach-picker-empty">${query ? '没有匹配的待办' : '暂无待办'}</div>`;
   } else {
-    for (const t of activeTodos.slice(0, 50)) {
+    for (const t of visibleTodos) {
       const selected = pendingAttachments.some(a => a.type === 'todo' && a.id === t.id);
       html += `<div class="attach-picker-item ${selected ? 'selected' : ''}" data-type="todo" data-id="${escapeHtml(t.id)}" data-title="${escapeHtml(t.text || '(无标题)')}">${escapeHtml(t.text || '(无标题)')}</div>`;
     }
+    if (activeTodos.length > visibleTodos.length) html += `<div class="attach-picker-summary">还有 ${activeTodos.length - visibleTodos.length} 条，请输入更具体的关键词</div>`;
   }
   html += '</div>';
 
@@ -501,17 +529,24 @@ const ASSISTANT_TOOLS = {
     }
   },
   create_note: {
-    desc: '新建笔记。{title, content?, notebookName?}',
+    desc: '新建笔记。AI 调用时 notebookName 必填，可传已有或合适的新笔记本名。{title, content?, notebookName?}',
     run: ({ title, content, notebookName }) => {
+      const cleanTitle = String(title || '').trim();
+      if (activeAssistantTurnAttachments !== null && (!cleanTitle || /^(无标题|新笔记|笔记)$/.test(cleanTitle))) {
+        throw new Error('title 必须是根据内容生成的具体、可检索标题');
+      }
       let nb = null;
       if (notebookName) {
         nb = notebooks.find(x => x.name === notebookName) || null;
         if (!nb) { nb = { id: uid(), name: String(notebookName), color: '#525252', createdAt: Date.now() }; notebooks.push(nb); }
       } else {
+        if (activeAssistantTurnAttachments !== null) {
+          throw new Error('notebookName 必填：请根据内容选择已有笔记本；没有合适分类时提供一个简洁的新笔记本名称');
+        }
         nb = notebooks[0] || null;
         if (!nb) { nb = { id: uid(), name: '默认', color: '#525252', createdAt: Date.now() }; notebooks.push(nb); }
       }
-      const note = { id: uid(), notebookId: nb.id, folderId: null, title: String(title || '无标题'), content: String(content || ''), tags: [], starred: false, deleted: false, createdAt: Date.now(), updatedAt: Date.now() };
+      const note = { id: uid(), notebookId: nb.id, folderId: null, title: cleanTitle || '无标题', content: String(content || ''), tags: [], starred: false, deleted: false, createdAt: Date.now(), updatedAt: Date.now() };
       notes.unshift(note);
       saveData();
       renderNotebooks();
@@ -537,7 +572,8 @@ const ASSISTANT_TOOLS = {
   update_note: {
     desc: '修改笔记。{id?, title?, content?}不传id用附件',
     run: ({ id, title, content }) => {
-      if (!id && pendingAttachments.length) { const att = pendingAttachments.find(a => a.type === 'note'); if (att) id = att.id; }
+      const turnAttachments = activeAssistantTurnAttachments || pendingAttachments;
+      if (!id && turnAttachments.length) { const att = turnAttachments.find(a => a.type === 'note'); if (att) id = att.id; }
       const n = notes.find(x => x.id === id);
       if (!n) throw new Error('笔记未找到：' + (id || '(未指定)'));
       if (typeof title === 'string') n.title = title;
@@ -552,7 +588,8 @@ const ASSISTANT_TOOLS = {
   update_todo: {
     desc: '修改待办。{id?, text?, content?, done?, dueAt?}不传id用附件',
     run: ({ id, text, content, done, dueAt }) => {
-      if (!id && pendingAttachments.length) { const att = pendingAttachments.find(a => a.type === 'todo'); if (att) id = att.id; }
+      const turnAttachments = activeAssistantTurnAttachments || pendingAttachments;
+      if (!id && turnAttachments.length) { const att = turnAttachments.find(a => a.type === 'todo'); if (att) id = att.id; }
       const t = todos.find(x => x.id === id);
       if (!t) throw new Error('待办未找到：' + (id || '(未指定)'));
       if (typeof text === 'string') t.text = text;
@@ -1283,7 +1320,7 @@ function buildAssistantSystemPrompt(options = {}) {
     ...options,
     contextK,
     toolDefinitions: ASSISTANT_TOOLS,
-    attachments: pendingAttachments,
+    attachments: options.attachments || pendingAttachments,
     notes,
     notebooks,
     todos,
@@ -1520,7 +1557,7 @@ async function runAssistantTurn(userInput) {
   }
   if (/^结束记录/.test(trimmed) && recordingMode) {
     recordingMode = false;
-    if (inputEl) inputEl.placeholder = '例如：帮我新建待办「查阅机票」，明天 15:00 完成';
+    if (inputEl) inputEl.placeholder = '可直接询问当前笔记；应用会自动提供上下文';
     const captured = [...recordingBuffer];
     recordingBuffer = [];
     if (!captured.length) {
@@ -1556,7 +1593,8 @@ async function runAssistantTurn(userInput) {
   const mm = !!(provider && provider.multimodal);
   const ctxK = (provider && provider.contextSize > 0) ? provider.contextSize : 10;
   const requestText = String(userInput || '').trim();
-  const turnPlan = AssistantCore.planAssistantTurn(requestText, pendingAttachments, ctxK);
+  const turnAttachments = buildAssistantTurnAttachments();
+  const turnPlan = AssistantCore.planAssistantTurn(requestText, turnAttachments, ctxK);
   const intent = turnPlan.intent;
   const allowedToolNames = new Set(turnPlan.allowedToolNames);
   let prefetchedNotes = [];
@@ -1564,7 +1602,7 @@ async function runAssistantTurn(userInput) {
     try { prefetchedNotes = await runAssistantTool('search_notes', { query: intent.query, limit: 8 }, { allowedToolNames }); }
     catch (error) { if (typeof logError === 'function') logError(error, 'assistant-prefetch'); }
   }
-  const prompt = buildAssistantSystemPrompt({ userInput: requestText, intent, prefetchedNotes, allowedToolNames: [...allowedToolNames] });
+  const prompt = buildAssistantSystemPrompt({ userInput: requestText, intent, prefetchedNotes, allowedToolNames: [...allowedToolNames], attachments: turnAttachments });
   const ctx = [
     { role: 'system', content: prompt.system },
     { role: 'user', content: prompt.context }
@@ -1573,20 +1611,25 @@ async function runAssistantTurn(userInput) {
   const loopCompressKeep = Math.floor(loopCompressThreshold * 0.75);
   const recent = AssistantCore.selectRecentHistory(s?.messages || [], ctxK);
   // 如果有图片附件但未开启多模态，提醒用户
-  const hasImages = pendingAttachments.some(a => a.type === 'image');
+  const hasImages = turnAttachments.some(a => a.type === 'image');
   if (hasImages && !mm) {
     if (typeof showToast === 'function') showToast('当前模型未开启「支持图片识别」，图片附件将被忽略。请在 AI 设置中勾选该模型的「支持图片识别」复选框。');
   }
   // 收集图片附件（仅当本轮多模态启用时生效）
-  const pendingImages = mm ? pendingAttachments.filter(a => a.type === 'image') : [];
+  const pendingImages = mm ? turnAttachments.filter(a => a.type === 'image') : [];
   // 同时也把笔记附件里包含的 img:<id> 拉出来一并发送
-  const noteAttachmentImages = mm && typeof _resolveContentImages === 'function'
-    ? await AssistantCore.resolveNoteAttachmentImages(
-        pendingAttachments,
+  let noteAttachmentImages = [];
+  if (mm && typeof _resolveContentImages === 'function') {
+    try {
+      noteAttachmentImages = await AssistantCore.resolveNoteAttachmentImages(
+        turnAttachments,
         id => notes.find(note => note.id === id),
         _resolveContentImages
-      )
-    : [];
+      );
+    } catch (error) {
+      if (typeof logError === 'function') logError(error, 'assistant-note-images');
+    }
+  }
   // 预先把每张图片缩到 1280px / JPEG，避免 413 + 限速
   const allImagesAll = [...pendingImages, ...noteAttachmentImages];
   const downscaled = [];
@@ -1632,10 +1675,9 @@ async function runAssistantTurn(userInput) {
   assistantBusy = true;
   const sendButton = document.getElementById('assistantSendBtn');
   const attachButton = document.getElementById('assistantAttachBtn');
-  const currentButton = document.getElementById('assistantCurrentBtn');
   if (sendButton) { sendButton.disabled = true; sendButton.textContent = '处理中…'; }
   if (attachButton) attachButton.disabled = true;
-  if (currentButton) currentButton.disabled = true;
+  activeAssistantTurnAttachments = turnAttachments;
   try {
     while (iter++ < maxToolSteps + 2) {
       // 上下文压缩：防止极长任务溢出（根据模型上下文大小动态调整）
@@ -1737,10 +1779,10 @@ async function runAssistantTurn(userInput) {
     });
     if (failure.shouldLog && typeof logError === 'function') logError(e, 'assistant');
   } finally {
+    activeAssistantTurnAttachments = null;
     assistantBusy = false;
     if (sendButton) { sendButton.disabled = false; sendButton.textContent = '发送'; }
     if (attachButton) attachButton.disabled = false;
-    if (currentButton) currentButton.disabled = false;
     setAssistantTyping(false);
   }
 }
@@ -2050,8 +2092,8 @@ function bindAssistantUi() {
   // 附件
   const attachBtn = document.getElementById('assistantAttachBtn');
   if (attachBtn) attachBtn.addEventListener('click', openAttachmentPicker);
-  const currentBtn = document.getElementById('assistantCurrentBtn');
-  if (currentBtn) currentBtn.addEventListener('click', attachCurrentAssistantContext);
+  const attachmentSearch = document.getElementById('attachmentPickerSearch');
+  if (attachmentSearch) attachmentSearch.addEventListener('input', renderAttachmentPickerContent);
 
   const attachClose = document.getElementById('attachmentPickerClose');
   if (attachClose) attachClose.addEventListener('click', closeAttachmentPicker);

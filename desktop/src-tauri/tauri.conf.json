@@ -19,7 +19,7 @@
         "height": 820,
         "minWidth": 900,
         "minHeight": 600,
-        "decorations": true,
+        "decorations": false,
         "center": true,
         "visible": true,
         "resizable": true,
@@ -47,6 +47,7 @@
         "installMode": "currentUser",
         "languages": ["English"],
         "displayLanguageSelector": false,
+        "compression": "zlib",
         "installerHooks": "./windows/hooks.nsh"
       }
     },

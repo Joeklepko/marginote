@@ -8,7 +8,7 @@
   if (root) root.MarginoteAssistantCore = api;
 })(typeof globalThis !== 'undefined' ? globalThis : this, function (SkillCore) {
   if (!SkillCore) throw new Error('MarginoteAssistantSkillCore 未加载');
-  const QUERY_NOISE = /(?:帮我|请问|麻烦|能不能|可以不可以|我想知道|告诉我|查一下|找一下|搜索一下|看一下|把下面(?:这段)?(?:话|内容)?|把以下(?:这段)?(?:话|内容)?|把这段(?:话|内容)?|记录一下|记下来|记一笔|写个笔记|写一篇笔记|存下来|保存一下|笔记里|笔记中|相关笔记|相关内容|是什么|是啥|怎么样|怎样|如何|为什么|什么时候|哪一天|多少|有没有|是否|一下|的话|呢|吗|啊|呀|吧)/g;
+  const QUERY_NOISE = /(?:帮我|请问|麻烦|能不能|可以不可以|我想知道|告诉我|查一下|找一下|搜索一下|看一下|把下面(?:这段)?(?:话|内容)?|把以下(?:这段)?(?:话|内容)?|把这段(?:话|内容)?|记录一下|记下来|记一笔|写个笔记|写一篇笔记|新建(?:一篇|一个|个|条)?|创建(?:一篇|一个|个|条)?|新增(?:一篇|一个|个|条)?|另建(?:一篇|一个|个|条)?|存下来|保存一下|笔记里|笔记中|相关笔记|相关内容|是什么|是啥|怎么样|怎样|如何|为什么|什么时候|哪一天|多少|有没有|是否|一下|的话|呢|吗|啊|呀|吧)/g;
   const WRITE_RE = /(新建|创建|保存|添加|加入|修改|更新|改成|删除|移到|移动|重命名|归类|整理成|收藏|取消收藏|打标签|清理|润色|改写|续写|翻译)/;
   const RECORD_WRITE_RE = /(?:^|我想|请|帮我|麻烦|把这个|把这段|把以下内容)(?:记录|记下)|(?:记录|记下)(?:一篇|一笔|一下|来|下来|为笔记|到.{0,10}笔记)|(?:写进|存到|追加到|加到|放到).{0,10}(?:笔记|记录)|(?:写(?:一篇|个|条).{0,4}(?:笔记|记录)|记一笔|写下来|存下来|新增.{0,4}(?:笔记|记录))/;
   // “任务调度”“提醒功能”等也可能只是笔记主题；只有明确的个人待办语境才切到待办域。
@@ -124,10 +124,12 @@
 
   function planAssistantTurn(value, attachments, contextK) {
     let intent = classifyIntent(value);
+    const text = normalizeText(value);
     const items = Array.isArray(attachments) ? attachments : [];
     const todoAttachment = items.some(item => item?.type === 'todo');
     const noteAttachment = items.some(item => item?.type === 'note' || item?.type === 'selection');
-    if (intent.isWrite && todoAttachment && !noteAttachment) {
+    const explicitlyTargetsNote = /(?:笔记|文章|文档)/.test(text);
+    if (intent.isWrite && todoAttachment && !noteAttachment && !explicitlyTargetsNote) {
       intent = {
         ...intent,
         kind: 'todo_write',

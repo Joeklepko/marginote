@@ -50,8 +50,8 @@ function check(name, condition) {
   try { await handler('optimize_text', { text: 'x' }); } catch { rejected = true; }
   check('任意工具调用受白名单限制', rejected);
 
-  check('CLI 状态栏能描述笔记写入任务', core.describeCommand('create_note', { title: '会议纪要' }) === '新建笔记「会议纪要」');
-  check('CLI 状态栏能描述搜索任务', core.describeCommand('search_all', { query: '发布计划' }) === '搜索笔记和待办「发布计划」');
+  check('CLI dry-run 能描述笔记写入任务', core.describeCommand('create_note', { title: '会议纪要' }) === '新建笔记「会议纪要」');
+  check('CLI dry-run 能描述搜索任务', core.describeCommand('search_all', { query: '发布计划' }) === '搜索笔记和待办「发布计划」');
   check('未知 CLI 工具有安全的回退描述', core.describeCommand('custom_tool', {}) === '执行 CLI 工具 custom_tool');
 
   let deleteRejected = false;
