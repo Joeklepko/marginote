@@ -1,0 +1,20 @@
+{
+  "name": "marginote-workspace",
+  "private": true,
+  "version": "1.2.4",
+  "description": "Marginote workspace quality and test commands",
+  "scripts": {
+    "check:js": "node scripts/check-js.mjs",
+    "check:copies": "node scripts/sync-extension-cores.mjs --check",
+    "check": "npm run check:js && npm run check:copies",
+    "sync:extension": "node scripts/sync-extension-cores.mjs",
+    "test:js": "node scripts/run-node-tests.mjs",
+    "test:cli": "cargo test --manifest-path desktop/cli/Cargo.toml",
+    "test:desktop": "cargo test --manifest-path desktop/src-tauri/Cargo.toml",
+    "test": "npm run test:js && npm run test:cli && npm run test:desktop",
+    "verify": "npm run check && npm test"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

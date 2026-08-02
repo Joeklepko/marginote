@@ -36,9 +36,17 @@ jobs:
         working-directory: desktop
         run: npm ci
 
+      - name: Check shared JavaScript and generated extension cores
+        run: npm run check
+
       - name: Test shared JavaScript logic
+        run: npm run test:js
+
+      - name: Check Rust formatting
         shell: bash
-        run: node --test test/*.test.js
+        run: |
+          cargo fmt --manifest-path desktop/cli/Cargo.toml -- --check
+          cargo fmt --manifest-path desktop/src-tauri/Cargo.toml -- --check
 
       - name: Test CLI
         run: cargo test --manifest-path desktop/cli/Cargo.toml
@@ -49,6 +57,12 @@ jobs:
 
       - name: Test desktop bridge
         run: cargo test --manifest-path desktop/src-tauri/Cargo.toml
+
+      - name: Lint Rust workspaces
+        shell: bash
+        run: |
+          cargo clippy --manifest-path desktop/cli/Cargo.toml --all-targets -- -D warnings
+          cargo clippy --manifest-path desktop/src-tauri/Cargo.toml --all-targets -- -D warnings
 
       - name: Generate icons (if missing)
         working-directory: desktop

@@ -6,13 +6,15 @@
 
 use crate::commands::AlarmInfo;
 use crate::storage;
+use notify_rust::{Notification, Timeout, Urgency};
 use once_cell::sync::Lazy;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Mutex;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use tauri::AppHandle;
-use tauri_plugin_notification::NotificationExt;
+#[cfg(target_os = "windows")]
+use tauri::Manager;
+use tauri::{AppHandle, Emitter};
 use tokio::task::JoinHandle;
 
 const TODO_KEY: &str = "marginoteTodos";
@@ -30,8 +32,25 @@ static REGISTRY: Lazy<Mutex<HashMap<String, AlarmEntry>>> =
 struct TodoSnapshot {
     id: String,
     text: Option<String>,
+    #[serde(default)]
+    done: bool,
     #[serde(rename = "dueDate")]
     due_date: Option<i64>,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ReminderSnoozeEvent {
+    todo_id: String,
+    minutes: i64,
+    when_ms: i64,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ReminderFiredEvent {
+    todo_id: String,
+    alarm_name: String,
 }
 
 fn now_ms() -> i64 {
@@ -52,39 +71,86 @@ fn load_todos(app: &AppHandle) -> Vec<TodoSnapshot> {
     serde_json::from_value::<Vec<TodoSnapshot>>(v).unwrap_or_default()
 }
 
+fn snooze_minutes(action: &str) -> Option<i64> {
+    match action {
+        "snooze-60" => Some(60),
+        "snooze-1440" => Some(1440),
+        _ => None,
+    }
+}
+
 fn fire_notification(app: &AppHandle, alarm_name: &str) {
     let todos = load_todos(app);
     let todo_id = parse_todo_id_from_alarm(alarm_name).unwrap_or("");
     let todo = todos.iter().find(|t| t.id == todo_id);
 
-    let (title, body) = if let Some(t) = todo {
-        let label = t.text.clone().unwrap_or_else(|| "（无标题）".into());
-        let body_text = match t.due_date {
-            Some(due) => {
-                let min_left = (due - now_ms()) / 60_000;
-                if min_left > 60 {
-                    format!("{} 小时后到期", min_left / 60)
-                } else if min_left > 0 {
-                    format!("{} 分钟后到期", min_left)
-                } else if min_left == 0 {
-                    "现在到期".into()
-                } else {
-                    format!("已逾期 {} 分钟", -min_left)
-                }
-            }
-            None => "无截止时间".into(),
-        };
-        (format!("待办提醒：{label}"), body_text)
-    } else {
-        ("待办提醒".into(), format!("alarm: {}", alarm_name))
+    let Some(todo) = todo else {
+        return;
     };
+    if todo.done {
+        return;
+    }
 
-    let _ = app
-        .notification()
-        .builder()
-        .title(title)
-        .body(body)
-        .show();
+    let label = todo.text.clone().unwrap_or_else(|| "（无标题）".into());
+    let body = match todo.due_date {
+        Some(due) => {
+            let min_left = (due - now_ms()) / 60_000;
+            if min_left > 60 {
+                format!("{} 小时后到期", min_left / 60)
+            } else if min_left > 0 {
+                format!("{} 分钟后到期", min_left)
+            } else if min_left == 0 {
+                "现在到期".into()
+            } else {
+                format!("已逾期 {} 分钟", -min_left)
+            }
+        }
+        None => "无截止时间".into(),
+    };
+    let title = format!("待办提醒：{label}");
+    let todo_id = todo.id.clone();
+
+    let _ = app.emit(
+        "marginote-reminder-fired",
+        ReminderFiredEvent {
+            todo_id: todo_id.clone(),
+            alarm_name: alarm_name.to_string(),
+        },
+    );
+
+    let mut notification = Notification::new();
+    notification
+        .summary(&title)
+        .body(&body)
+        .timeout(Timeout::Never)
+        .urgency(Urgency::Critical)
+        .action("snooze-60", "1 小时后提醒")
+        .action("snooze-1440", "1 天后提醒")
+        .action("dismiss", "关闭");
+    #[cfg(target_os = "windows")]
+    notification.app_id(&app.config().identifier);
+
+    let Ok(handle) = notification.show() else {
+        return;
+    };
+    let action_app = app.clone();
+    let _ = std::thread::Builder::new()
+        .name("marginote-reminder-action".into())
+        .spawn(move || {
+            handle.wait_for_action(move |action| {
+                let Some(minutes) = snooze_minutes(action) else {
+                    return;
+                };
+                let _ = action_app.emit(
+                    "marginote-reminder-snooze",
+                    ReminderSnoozeEvent {
+                        todo_id,
+                        minutes,
+                        when_ms: now_ms() + minutes * 60_000,
+                    },
+                );
+            });
+        });
 }
 
 pub async fn set_alarm(app: &AppHandle, name: String, when_ms: i64) -> Result<(), String> {
@@ -103,10 +169,7 @@ pub async fn set_alarm(app: &AppHandle, name: String, when_ms: i64) -> Result<()
     let handle = tokio::spawn(async move {
         tokio::time::sleep(delay).await;
         fire_notification(&app_clone, &name_clone);
-        REGISTRY
-            .lock()
-            .ok()
-            .and_then(|mut m| m.remove(&name_clone));
+        REGISTRY.lock().ok().and_then(|mut m| m.remove(&name_clone));
     });
 
     if let Ok(mut reg) = REGISTRY.lock() {
@@ -131,9 +194,7 @@ pub async fn clear_alarm(_app: &AppHandle, name: String) -> Result<(), String> {
 }
 
 pub async fn list_alarms(_app: &AppHandle) -> Result<Vec<AlarmInfo>, String> {
-    let reg = REGISTRY
-        .lock()
-        .map_err(|e| format!("registry lock: {e}"))?;
+    let reg = REGISTRY.lock().map_err(|e| format!("registry lock: {e}"))?;
     Ok(reg
         .iter()
         .map(|(name, entry)| AlarmInfo {
@@ -141,4 +202,25 @@ pub async fn list_alarms(_app: &AppHandle) -> Result<Vec<AlarmInfo>, String> {
             scheduled_time: entry.scheduled_ms,
         })
         .collect())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn alarm_name_keeps_todo_identity_for_snooze() {
+        assert_eq!(
+            parse_todo_id_from_alarm("mtodo:t-123:snooze"),
+            Some("t-123")
+        );
+        assert_eq!(parse_todo_id_from_alarm("other:t-123:snooze"), None);
+    }
+
+    #[test]
+    fn only_supported_notification_actions_create_snoozes() {
+        assert_eq!(snooze_minutes("snooze-60"), Some(60));
+        assert_eq!(snooze_minutes("snooze-1440"), Some(1440));
+        assert_eq!(snooze_minutes("dismiss"), None);
+    }
 }

@@ -116,6 +116,26 @@ async function initImagesIdb() {
     logError(e, 'idb-open');
     return;
   }
+  // localStorage 容量不足时，损坏主数据可能无法在同一存储区复制备份。
+  // 先把原始文本放到独立的 IndexedDB meta store，再允许后续保存覆盖主键。
+  if (_dataRecoveryInfo && !_dataRecoveryInfo.backedUp && _dataRecoveryInfo.raw) {
+    try {
+      await idbPut('meta', {
+        key: _dataRecoveryInfo.key,
+        kind: 'corrupt-main-data',
+        raw: _dataRecoveryInfo.raw,
+        reason: _dataRecoveryInfo.reason,
+        createdAt: _dataRecoveryInfo.createdAt
+      });
+      _dataRecoveryInfo.backedUp = true;
+      _dataRecoveryInfo.location = 'IndexedDB/meta';
+      _dataRecoveryInfo.raw = null;
+      saveData();
+      showToast('检测到异常数据，原始内容已安全备份后恢复启动');
+    } catch (e) {
+      logError(e, 'data-recovery-idb');
+    }
+  }
   // 迁移：localStorage 已有 images 全部搬到 IDB，并从 saveData 写入中剔除
   const localImageIds = Object.keys(images);
   if (localImageIds.length > 0) {
@@ -152,9 +172,21 @@ function addImageRecord(id, base64DataUrl, meta) {
   const ext = meta.ext || detectExtFromDataUrl(base64DataUrl);
   const createdAt = meta.createdAt || Date.now();
   const name = meta.name || ('image' + ext);
-  if (_idb) { try { idbPut('images', { id, name, ext, createdAt, dataUrl: base64DataUrl }); } catch (e) { logError(e, 'idb-put'); } }
+  if (_idb) idbPut('images', { id, name, ext, createdAt, dataUrl: base64DataUrl }).catch(e => logError(e, 'idb-put'));
   // 把 base64 放入小 LRU(供插入后即时渲染 + 避开 IDB 异步写入竞态),但【不常驻 images[id]】——否则批量
   // 插入/导入/压缩会把成百上千张图的 base64 堆在内存里再次 OOM。images[id] 只存元数据,渲染按需取回。
+  _cacheImgB64(id, base64DataUrl);
+  images[id] = { name, ext, createdAt };
+  return images[id];
+}
+
+// 导入/恢复路径必须等待图片真正写入 IDB，避免导入完成后立即关闭应用导致图片只存在内存。
+async function addImageRecordPersisted(id, base64DataUrl, meta) {
+  meta = meta || {};
+  const ext = meta.ext || detectExtFromDataUrl(base64DataUrl);
+  const createdAt = meta.createdAt || Date.now();
+  const name = meta.name || ('image' + ext);
+  if (_idb) await idbPut('images', { id, name, ext, createdAt, dataUrl: base64DataUrl });
   _cacheImgB64(id, base64DataUrl);
   images[id] = { name, ext, createdAt };
   return images[id];
@@ -517,6 +549,31 @@ function confirmRestoreSelectedVersion() {
 // ===================== 数据层 =====================
 const STORAGE_KEY = 'marginote.data.v2';
 const LEGACY_KEY = 'marginote.notes.v1';
+let _dataRecoveryInfo = null;
+
+function preserveInvalidMainData(raw, reason) {
+  if (!raw || _dataRecoveryInfo) return _dataRecoveryInfo;
+  const core = window.MarginoteDataCore;
+  const createdAt = Date.now();
+  const key = core ? core.recoveryKey(createdAt) : `marginote.data.recovery.${createdAt}`;
+  let backedUp = false;
+  try {
+    localStorage.setItem(key, raw);
+    backedUp = localStorage.getItem(key) === raw;
+  } catch (e) {
+    logError(e, 'data-recovery-localStorage');
+  }
+  _dataRecoveryInfo = {
+    key,
+    raw: backedUp ? null : raw,
+    reason: String(reason || '主数据异常'),
+    createdAt,
+    backedUp,
+    location: backedUp ? 'localStorage' : null
+  };
+  logError(new Error(`${_dataRecoveryInfo.reason}；恢复备份：${key}`), 'data-load-recovery');
+  return _dataRecoveryInfo;
+}
 
 const NOTEBOOK_COLORS = [
   '#b8431f', '#d97706', '#ca8a04', '#65a30d',
@@ -542,6 +599,7 @@ let modalCancelCallback = null;
 let editingNotebook = null; // 当前编辑中的笔记本（null = 新建）
 let editingFolder = null;   // 当前编辑中的文件夹
 let pickedColor = NOTEBOOK_COLORS[0];
+let _repositoryTransactionDepth = 0;
 
 // THEME_KEY / FONT_* / 字体应用逻辑已移到 js/appearance.js
 
@@ -592,22 +650,30 @@ async function fhVerifyPermission(handle, write) {
 }
 
 function loadData() {
+  let raw = null;
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
+    raw = localStorage.getItem(STORAGE_KEY);
     if (raw) {
-      const data = JSON.parse(raw);
-      notebooks = data.notebooks || [];
-      folders = data.folders || [];
-      notes = data.notes || [];
-      todos = data.todos || [];
-      images = data.images || {};
+      const parsed = window.MarginoteDataCore
+        ? window.MarginoteDataCore.parsePersistedData(raw)
+        : { ok: true, data: JSON.parse(raw), issues: [] };
+      if (!parsed.ok) throw parsed.error || new Error((parsed.issues || []).join('；') || '主数据解析失败');
+      const data = parsed.data || {};
+      notebooks = Array.isArray(data.notebooks) ? data.notebooks : [];
+      folders = Array.isArray(data.folders) ? data.folders : [];
+      notes = Array.isArray(data.notes) ? data.notes : [];
+      todos = Array.isArray(data.todos) ? data.todos : [];
+      images = data.images && typeof data.images === 'object' && !Array.isArray(data.images) ? data.images : {};
+      if (parsed.issues && parsed.issues.length) preserveInvalidMainData(raw, parsed.issues.join('；'));
     } else {
       const legacy = localStorage.getItem(LEGACY_KEY);
       if (legacy) {
-        notes = JSON.parse(legacy);
+        const legacyNotes = JSON.parse(legacy);
+        notes = Array.isArray(legacyNotes) ? legacyNotes : [];
       }
     }
   } catch (e) {
+    preserveInvalidMainData(raw, e && e.message ? e.message : String(e));
     notebooks = [];
     folders = [];
     notes = [];
@@ -676,17 +742,35 @@ function loadData() {
     ];
   }
 
-  saveData();
+  // 只有原始异常数据已有独立副本时，才允许用规范化/默认数据覆盖主键。
+  if (!_dataRecoveryInfo || _dataRecoveryInfo.backedUp) saveData();
 }
 
-function saveData() {
+function persistMainDataNow() {
+  if (_dataRecoveryInfo && !_dataRecoveryInfo.backedUp) {
+    logError(new Error('原始异常数据尚未完成备份，已阻止覆盖主数据'), 'saveData-recovery-guard');
+    showToast('检测到异常数据且备份尚未完成，已暂停保存以保护原始内容');
+    return false;
+  }
   try {
     // 图片不入 localStorage（改用 IndexedDB），主表只存元数据避免大对象阻塞
-    localStorage.setItem(STORAGE_KEY, JSON.stringify({ notebooks, folders, notes, todos }));
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({
+      schemaVersion: window.MarginoteDataCore.CURRENT_SCHEMA_VERSION,
+      notebooks, folders, notes, todos
+    }));
+    return true;
   } catch (e) {
     showToast('存储失败：可能超出本地存储容量');
     logError(e, 'saveData');
+    return false;
   }
+}
+
+function saveData() {
+  if (_repositoryTransactionDepth > 0) {
+    return true;
+  }
+  return persistMainDataNow();
 }
 
 // 兼容旧名称
@@ -694,6 +778,17 @@ function saveNotes() { saveData(); }
 
 function uid() {
   return Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+}
+
+function debounceUi(callback, delayMs = 160) {
+  let timer = null;
+  return (...args) => {
+    if (timer) clearTimeout(timer);
+    timer = setTimeout(() => {
+      timer = null;
+      callback(...args);
+    }, delayMs);
+  };
 }
 
 // 兜底：用 JS 强制把 data-color 的值落到 background-color。
@@ -1150,6 +1245,9 @@ function renderTodos() {
   container.innerHTML = list.map(t => {
     const overdue = isOverdue(t);
     const dueText = formatDueDate(t.dueDate);
+    const snoozedText = Number(t.remindSnoozedUntil) > Date.now()
+      ? formatDueDate(Number(t.remindSnoozedUntil))
+      : '';
     const dueClass = overdue ? 'overdue' : '';
     const isActive = currentTodo && currentTodo.id === t.id;
     return `
@@ -1159,6 +1257,7 @@ function renderTodos() {
           <div class="todo-text">${escapeHtml(t.text)}</div>
           <div class="todo-meta">
             ${dueText ? `<span class="todo-due ${dueClass}">⏱ ${escapeHtml(dueText)}</span>` : ''}
+            ${snoozedText ? `<span class="todo-snoozed">🔔 延后至 ${escapeHtml(snoozedText)}</span>` : ''}
             <span>建于 ${formatDate(t.createdAt)}</span>
             ${t.done && t.completedAt ? `<span>完成于 ${formatDate(t.completedAt)}</span>` : ''}
           </div>
@@ -2724,9 +2823,45 @@ async function exportAll(opts) {
     }
   } catch (e) { logError(e, 'export-versions'); }
 
+  // AI / CLI 原子写入的 change-set 审计记录（最多保留 30 条）。包含变更实体的
+  // 前后值，既可追溯，也为后续整轮撤销提供数据基础。
+  let changeSetCount = 0;
+  try {
+    const changeSets = (await idbGetAll('meta'))
+      .filter(record => record && record.kind === 'change-set')
+      .sort((a, b) => (b.committedAt || 0) - (a.committedAt || 0));
+    if (changeSets.length) {
+      zip.file('_change_sets.json', JSON.stringify(changeSets, null, 2));
+      changeSetCount = changeSets.length;
+    }
+  } catch (e) { logError(e, 'export-change-sets'); }
+
+  // 数据恢复副本一并装入备份，用户无需借助开发者工具即可取回原始文本。
+  let recoveryCount = 0;
+  const recoveryKeys = new Set();
+  try {
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (!key || !key.startsWith('marginote.data.recovery.')) continue;
+      const raw = localStorage.getItem(key);
+      if (raw == null) continue;
+      zip.file(`_recovery/${safeName(key)}.txt`, raw);
+      recoveryKeys.add(key);
+      recoveryCount++;
+    }
+  } catch (e) { logError(e, 'export-recovery-local'); }
+  try {
+    const records = await idbGetAll('meta');
+    for (const record of records) {
+      if (!record || !['corrupt-main-data', 'workdir-reconciliation'].includes(record.kind) || !record.key || recoveryKeys.has(record.key)) continue;
+      zip.file(`_recovery/${safeName(record.key)}.txt`, String(record.raw || ''));
+      recoveryCount++;
+    }
+  } catch (e) { logError(e, 'export-recovery-idb'); }
+
   const blob = await zip.generateAsync({ type: 'blob' });
   const backupName = `marginote-backup-${new Date().toISOString().slice(0,10)}.zip`;
-  const summary = `${aliveNotes.length} 篇笔记 + ${usedImgIds.size} 张图${versionCount ? ' + ' + versionCount + ' 历史版本' : ''}`;
+  const summary = `${aliveNotes.length} 篇笔记 + ${usedImgIds.size} 张图${versionCount ? ' + ' + versionCount + ' 历史版本' : ''}${changeSetCount ? ' + ' + changeSetCount + ' 变更记录' : ''}${recoveryCount ? ' + ' + recoveryCount + ' 恢复副本' : ''}`;
   // 自动备份(opts.toWorkdir)优先写入工作目录 _backups/，用户能找到路径；
   // 未设工作目录或写入失败时回退浏览器下载。手动导出默认下载。
   if (opts && opts.toWorkdir && typeof workdirAvailable === 'function' && workdirAvailable()
@@ -2744,25 +2879,95 @@ async function exportAll(opts) {
   return true;
 }
 
+function createImportSnapshot() {
+  const clone = value => JSON.parse(JSON.stringify(value));
+  return {
+    notebooks: clone(notebooks), folders: clone(folders), notes: clone(notes), todos: clone(todos),
+    imageIds: new Set(Object.keys(images)),
+    currentNoteId: currentNote?.id || null,
+    currentTodoId: currentTodo?.id || null
+  };
+}
+
+const IMPORT_MAX_TEXT_BYTES = 32 * 1024 * 1024;
+const IMPORT_MAX_ZIP_BYTES = 256 * 1024 * 1024;
+const IMPORT_MAX_ZIP_ENTRIES = 5000;
+const IMPORT_MAX_UNCOMPRESSED_BYTES = 512 * 1024 * 1024;
+
+function validateImportFile(file) {
+  const name = String(file?.name || '').toLowerCase();
+  const limit = name.endsWith('.zip') ? IMPORT_MAX_ZIP_BYTES : IMPORT_MAX_TEXT_BYTES;
+  if (Number(file?.size) > limit) throw new Error(`文件过大，最大允许 ${Math.round(limit / 1024 / 1024)} MB`);
+}
+
+function validateImportZip(zip) {
+  const entries = Object.values(zip?.files || {}).filter(entry => !entry.dir);
+  if (entries.length > IMPORT_MAX_ZIP_ENTRIES) throw new Error(`压缩包文件过多（最多 ${IMPORT_MAX_ZIP_ENTRIES} 个）`);
+  const total = entries.reduce((sum, entry) => sum + Math.max(0, Number(entry?._data?.uncompressedSize) || 0), 0);
+  if (total > IMPORT_MAX_UNCOMPRESSED_BYTES) throw new Error('压缩包解压后超过 512 MB');
+}
+
+async function rollbackImport(snapshot) {
+  notebooks = snapshot.notebooks;
+  folders = snapshot.folders;
+  notes = snapshot.notes;
+  todos = snapshot.todos;
+  currentNote = snapshot.currentNoteId ? notes.find(note => note.id === snapshot.currentNoteId) || null : null;
+  currentTodo = snapshot.currentTodoId ? todos.find(todo => todo.id === snapshot.currentTodoId) || null : null;
+  const addedImageIds = Object.keys(images).filter(id => !snapshot.imageIds.has(id));
+  for (const id of addedImageIds) {
+    delete images[id];
+    try { await idbDelete('images', id); } catch (error) { logError(error, 'import-rollback-image'); }
+  }
+  saveData();
+}
+
 function importFiles(files) {
   if (!files || !files.length) return;
+  const snapshot = createImportSnapshot();
   let pending = files.length;
   let added = 0;
-  const done = () => {
-    saveData();
+  const failures = [];
+  const stagedVersions = [];
+  const done = async () => {
+    if (failures.length) {
+      await rollbackImport(snapshot);
+      renderNotebooks(); renderTagFilters(); renderNotesList(); renderTodoCounts();
+      const first = failures[0];
+      showToast(`导入失败，未修改现有数据：${first.file}（${first.message}）`);
+      return;
+    }
+    if (saveData() === false) {
+      await rollbackImport(snapshot);
+      renderNotebooks(); renderTagFilters(); renderNotesList(); renderTodoCounts();
+      showToast('导入失败：主数据无法保存，已恢复原数据');
+      return;
+    }
+    if (stagedVersions.length) await bulkPutVersions(stagedVersions);
     renderNotebooks();
     renderTagFilters();
     renderNotesList();
     renderTodoCounts();
+    rescheduleAllAlarms().catch(error => logError(error, 'import-reminders'));
     showToast(`已导入 ${added} 篇`);
+  };
+  const finish = (file, error) => {
+    if (error) {
+      logError(error, 'import:' + file.name);
+      failures.push({ file: file.name, message: error.message || String(error) });
+    }
+    if (--pending === 0) void done();
   };
   Array.from(files).forEach(file => {
     const name = file.name.toLowerCase();
     const reader = new FileReader();
+    try { validateImportFile(file); }
+    catch (error) { finish(file, error); return; }
     if (name.endsWith('.zip')) {
       reader.onload = async e => {
         try {
           const zip = await JSZip.loadAsync(e.target.result);
+          validateImportZip(zip);
           const meta = zip.file('_marginote_meta.json');
           let imagesMeta = {};
           if (meta) {
@@ -2789,14 +2994,16 @@ function importFiles(files) {
                 });
               }
               if (obj.imagesMeta && typeof obj.imagesMeta === 'object') imagesMeta = obj.imagesMeta;
-            } catch {}
+            } catch (error) {
+              throw new Error('备份元信息损坏：' + (error.message || error));
+            }
           }
           // 历史版本（旧备份无此字段则跳过）
           const versionsFile = zip.file('_versions.json');
           if (versionsFile) {
             try {
               const versionsArr = JSON.parse(await versionsFile.async('string'));
-              if (Array.isArray(versionsArr)) await bulkPutVersions(versionsArr);
+              if (Array.isArray(versionsArr)) stagedVersions.push(...versionsArr);
             } catch (err) { logError(err, 'import-versions'); }
           }
           // 资产目录读入 images 映射
@@ -2808,12 +3015,13 @@ function importFiles(files) {
             const b64 = await zip.files[path].async('base64');
             const mime = mimeFromExt(ext);
             const metaInfo = imagesMeta[id] || {};
-            images[id] = {
-              name: metaInfo.name || filename,
-              ext: metaInfo.ext || ext,
-              createdAt: metaInfo.createdAt || Date.now(),
-              dataUrl: `data:${mime};base64,${b64}`
-            };
+            if (!images[id]) {
+              await addImageRecordPersisted(id, `data:${mime};base64,${b64}`, {
+                name: metaInfo.name || filename,
+                ext: metaInfo.ext || ext,
+                createdAt: metaInfo.createdAt || Date.now()
+              });
+            }
           }
           const entries = Object.keys(zip.files).filter(p => !zip.files[p].dir && p.toLowerCase().endsWith('.md'));
           for (const path of entries) {
@@ -2845,10 +3053,12 @@ function importFiles(files) {
             }
           }
         } catch (err) {
-          showToast('压缩包解析失败');
+          finish(file, err);
+          return;
         }
-        if (--pending === 0) done();
+        finish(file);
       };
+      reader.onerror = () => finish(file, reader.error || new Error('文件读取失败'));
       reader.readAsArrayBuffer(file);
     } else if (name.endsWith('.md') || name.endsWith('.markdown')) {
       reader.onload = e => {
@@ -2870,9 +3080,10 @@ function importFiles(files) {
             updatedAt: meta.updatedAt ? new Date(meta.updatedAt).getTime() : Date.now()
           };
           if (!notes.find(x => x.id === note.id)) { notes.push(note); added++; }
-        } catch { showToast('Markdown 解析失败'); }
-        if (--pending === 0) done();
+        } catch (error) { finish(file, error); return; }
+        finish(file);
       };
+      reader.onerror = () => finish(file, reader.error || new Error('文件读取失败'));
       reader.readAsText(file);
     } else if (name.endsWith('.json')) {
       reader.onload = e => {
@@ -2884,12 +3095,13 @@ function importFiles(files) {
           incoming.forEach(n => {
             if (!existingIds.has(n.id)) { notes.push(n); added++; }
           });
-        } catch { showToast('JSON 解析失败'); }
-        if (--pending === 0) done();
+        } catch (error) { finish(file, error); return; }
+        finish(file);
       };
+      reader.onerror = () => finish(file, reader.error || new Error('文件读取失败'));
       reader.readAsText(file);
     } else {
-      if (--pending === 0) done();
+      finish(file, new Error('不支持的文件类型'));
     }
   });
 }
@@ -3312,120 +3524,156 @@ async function syncProxyToBackground() {
   } catch (e) { logError(e, 'clear-proxy-on-startup'); }
 }
 
-// 剥离推理模型(deepseek-v4-flash / minimax2.7 等)的思维链。推理模型的 <think> 块总出现在输出
-// 【最开头】(真正答案在其后),因此只锚定开头剥离,【不碰正文中间】合法出现的 <think> 文本——
-// 否则翻译/润色一篇正好讲到 <think> 的笔记会误删用户内容。覆盖三种开头形态:
-//   1) 成对 <think>…</think>   2) 被 max_tokens 截断的未闭合 <think>…   3) 仅剩孤立的 </think>
-function stripThinking(s) {
-  if (typeof s !== 'string' || !s) return s || '';
-  let out = s;
-  if (/^\s*<think(?:ing)?>/i.test(out)) {
-    out = /<\/think(?:ing)?>/i.test(out)
-      ? out.replace(/^\s*<think(?:ing)?>[\s\S]*?<\/think(?:ing)?>\s*/i, '')   // 成对
-      : out.replace(/^\s*<think(?:ing)?>[\s\S]*$/i, '');                       // 未闭合,截到尾
-  } else {
-    out = out.replace(/^\s*<\/think(?:ing)?>\s*/i, '');                        // 孤立闭合标签
+
+const AiProviderCore = window.MarginoteAiProviderCore;
+let _aiAbortCtrl = null;
+
+async function _simulateStreamEmit(text, onDelta, chunkSize = 12, delayMs = 6) {
+  if (!text || typeof onDelta !== 'function') return;
+  let accumulated = '';
+  for (let index = 0; index < text.length; index += chunkSize) {
+    const piece = text.slice(index, index + chunkSize);
+    accumulated += piece;
+    try { onDelta(piece, accumulated); } catch {}
+    if (index + chunkSize < text.length) await new Promise(resolve => setTimeout(resolve, delayMs));
   }
-  return out.trim();
 }
 
-async function callAi(messages, opts) {
-  const p = getActiveProvider();
-  if (!p) throw new Error('未配置 AI 模型，请先在 AI 设置中添加');
-  const body = {
-    model: p.model,
-    messages,
-    temperature: opts?.temperature ?? p.temperature ?? 0.7,
-    stream: false
-  };
-  if (opts?.max_tokens) body.max_tokens = opts.max_tokens;
-  const url = resolveAiUrl(p);
-  const hdrs = { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + (p.apiKey || '') };
-  if (p.customHeaders && typeof p.customHeaders === 'object') Object.assign(hdrs, p.customHeaders);
+async function callAi(messages, opts = {}) {
+  const provider = getActiveProvider();
+  if (!provider) throw new Error('未配置 AI 模型，请先在 AI 设置中添加');
+  if (!AiProviderCore) throw new Error('AI Provider 运行时未加载，请刷新页面后重试');
 
-  function parseAiResponse(text) {
-    let raw = (typeof text === 'string' ? text : '').trim();
-    if (!raw) throw new Error('AI 返回空响应，请检查模型服务是否正常');
-    if (raw.startsWith('data: ')) {
-      let combined = '';
-      for (const line of raw.split('\n')) {
-        const l = line.trim();
-        if (l.startsWith('data: ') && l !== 'data: [DONE]') {
-          try { const chunk = JSON.parse(l.slice(6)); const delta = chunk?.choices?.[0]?.delta?.content || chunk?.choices?.[0]?.message?.content || ''; combined += delta; } catch {}
+  const stream = opts.stream !== false;
+  const body = AiProviderCore.buildChatRequest(provider, messages, opts, stream);
+  const headers = AiProviderCore.buildHeaders(provider);
+  const url = resolveAiUrl(provider);
+  const proxy = parseProxyUrl(provider.proxyPrefix || '');
+  const isHttpNonLocal = /^http:\/\//i.test(url) && !/^http:\/\/(localhost|127\.0\.0\.1)(:|\/|$)/i.test(url);
+  const retries = Number.isFinite(Number(opts.retries)) ? Number(opts.retries) : 1;
+  const finish = parsed => {
+    if (!parsed || typeof parsed.content !== 'string' || !parsed.content.trim()) {
+      throw new Error('AI 返回空响应，请检查模型服务是否正常');
+    }
+    AiProviderCore.emitUsage(opts, messages, parsed.content, parsed.usage);
+    return parsed.content;
+  };
+
+  // 代理和非本机 HTTP 请求由平台层转发。平台桥当前返回完整响应，
+  // 因此在要求流式展示时只做稳定的本地分段回放。
+  if (proxy.kind === 'http' || isHttpNonLocal) {
+    try { if (window.mn?.ready) await window.mn.ready; } catch {}
+    const proxyOptions = proxy.kind === 'http' ? {
+      providerHost: (() => { try { return new URL(provider.endpoint).hostname; } catch { return ''; } })(),
+      host: proxy.host,
+      port: proxy.port,
+      scheme: proxy.scheme,
+      user: proxy.user,
+      pass: proxy.pass
+    } : null;
+    const responseText = await AiProviderCore.withRetry(async () => {
+      let response;
+      try {
+        response = await window.mn.platform.fetch(url, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({ ...body, stream: false })
+        }, proxyOptions);
+      } catch (error) {
+        const wrapped = new Error('网络错误: ' + (error?.message || error));
+        wrapped.cause = error;
+        throw wrapped;
+      }
+      if (!response?.ok) {
+        if (response?.error && !response?.status) throw new Error('网络错误: ' + response.error);
+        throw AiProviderCore.createHttpError(response?.status, response?.error || response?.body);
+      }
+      return response.body;
+    }, { retries });
+    const parsed = AiProviderCore.parseChatResponse(responseText);
+    const content = finish(parsed);
+    if (stream && typeof opts.onDelta === 'function') await _simulateStreamEmit(content, opts.onDelta);
+    return content;
+  }
+
+  _aiAbortCtrl = new AbortController();
+  const cancelButton = document.getElementById('aiCancelBtn');
+  if (cancelButton) cancelButton.classList.add('show');
+  try {
+    const response = await AiProviderCore.withRetry(async () => {
+      const current = await fetch(url, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(body),
+        signal: _aiAbortCtrl.signal
+      });
+      if (!current.ok) {
+        let detail = '';
+        try { detail = await current.text(); } catch {}
+        throw AiProviderCore.createHttpError(current.status, detail);
+      }
+      return current;
+    }, { retries });
+
+    const contentType = response.headers.get('content-type') || '';
+    if (!stream || !contentType.includes('event-stream') || !response.body) {
+      const parsed = AiProviderCore.parseChatResponse(await response.text());
+      const content = finish(parsed);
+      if (stream && typeof opts.onDelta === 'function') await _simulateStreamEmit(content, opts.onDelta);
+      return content;
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    const accumulator = AiProviderCore.createStreamAccumulator();
+    let buffer = '';
+    let visible = '';
+    let doneByMarker = false;
+    const consumeLine = lineValue => {
+      const line = lineValue.trim();
+      if (!line.startsWith('data:')) return false;
+      const payload = line.slice(5).trim();
+      if (payload === '[DONE]') return true;
+      if (!payload) return false;
+      try {
+        const delta = accumulator.push(JSON.parse(payload));
+        if (delta.contentDelta) {
+          visible += delta.contentDelta;
+          if (typeof opts.onDelta === 'function') opts.onDelta(delta.contentDelta, visible);
+        } else if (delta.reasoningDelta && typeof opts.onDelta === 'function') {
+          opts.onDelta('', visible);
+        }
+      } catch {}
+      return false;
+    };
+
+    while (!doneByMarker) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      let newline;
+      while ((newline = buffer.indexOf('\n')) !== -1) {
+        const line = buffer.slice(0, newline);
+        buffer = buffer.slice(newline + 1);
+        if (consumeLine(line)) {
+          doneByMarker = true;
+          try { await reader.cancel(); } catch {}
+          break;
         }
       }
-      if (combined) return combined.trim();
     }
-    try {
-      const data = JSON.parse(raw);
-      const msg = data?.choices?.[0]?.message;
-      const content = msg?.content;
-      if (typeof content === 'string') { const cleaned = stripThinking(content); if (cleaned) return cleaned; }
-      // 原生 function calling：content 为空但有 tool_calls（部分模型如此返回）→ 转成助手内部的
-      // {"reply","actions"} 信封，下游 parseAssistantReply 即可正常解析并执行工具。
-      if (msg && Array.isArray(msg.tool_calls) && msg.tool_calls.length) {
-        const actions = msg.tool_calls.map(c => {
-          let a = {};
-          try { a = JSON.parse(c?.function?.arguments || '{}'); } catch {}
-          return { tool: c?.function?.name, args: a };
-        }).filter(x => x.tool);
-        if (actions.length) return JSON.stringify({ reply: typeof content === 'string' ? content : '', actions });
-      }
-      if (typeof content === 'string') return content.trim();
-      if (data?.choices?.[0]?.delta?.content) return data.choices[0].delta.content.trim();
-      if (data?.response) return String(data.response).trim();
-      if (data?.result) return String(data.result).trim();
-      throw new Error('返回数据缺少 choices[0].message.content');
-    } catch (e) {
-      if (e instanceof SyntaxError) {
-        if (raw.length > 20) return raw;
-        throw new Error('AI 返回无法解析: ' + raw.slice(0, 200));
-      }
-      throw e;
-    }
+    buffer += decoder.decode();
+    if (!doneByMarker && buffer.trim()) consumeLine(buffer);
+    return finish(accumulator.result());
+  } catch (error) {
+    if (error?.name === 'AbortError') throw new Error('已取消');
+    throw error;
+  } finally {
+    if (cancelButton) cancelButton.classList.remove('show');
+    _aiAbortCtrl = null;
   }
-
-  const proxyParsed = parseProxyUrl(p.proxyPrefix || '');
-  const isHttpNonLocal = /^http:\/\//i.test(url) && !/^http:\/\/(localhost|127\.0\.0\.1)(:\/|$)/i.test(url);
-  if (proxyParsed.kind === 'http' || isHttpNonLocal) {
-    try { if (window.mn && window.mn.ready) await window.mn.ready; } catch {}
-    let res;
-    try {
-      res = await mn.platform.fetch(url, {
-        method: 'POST',
-        headers: hdrs,
-        body: JSON.stringify(body)
-      }, proxyParsed.kind === 'http' ? {
-        providerHost: (() => { try { return new URL(p.endpoint).hostname; } catch { return ''; } })(),
-        host: proxyParsed.host,
-        port: proxyParsed.port,
-        scheme: proxyParsed.scheme,
-        user: proxyParsed.user,
-        pass: proxyParsed.pass
-      } : null);
-    } catch (e) {
-      throw new Error('\u65e0\u6cd5\u8fde\u63a5\u5e73\u53f0\u540e\u53f0: ' + (e.message || e));
-    }
-    if (!res.ok) {
-      if (res.error) throw new Error(res.error);
-      throw new Error(`HTTP ${res.status}: ${(res.body || '').slice(0, 200)}`);
-    }
-    return parseAiResponse(res.body);
-  }
-  // HTTPS / localhost \u2192 \u76f4\u63a5 fetch
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: hdrs,
-    body: JSON.stringify(body)
-  });
-  if (!res.ok) {
-    let detail = '';
-    try { detail = await res.text(); } catch {}
-    throw new Error(`HTTP ${res.status}: ${detail.slice(0, 200)}`);
-  }
-  const text = await res.text();
-  return parseAiResponse(text);
 }
+
 
 function aiUndoKeyForCurrent() {
   if (currentTodo) return 'todo:' + currentTodo.id;
@@ -3660,25 +3908,27 @@ function syncRemindersToExt() {
   const data = todos.filter(t => !t.done && t.dueDate).map(t => ({
     id: t.id, text: t.text, dueDate: t.dueDate, done: t.done,
     remindBeforeMin: t.remindBeforeMin || 0,
-    remindCount: t.remindCount || 1,
-    remindIntervalMin: t.remindIntervalMin || 5
+    remindCount: Math.max(0, Number(t.remindCount) || 0),
+    remindIntervalMin: t.remindIntervalMin || 5,
+    remindSnoozedUntil: Number(t.remindSnoozedUntil) || 0
   }));
   // fire-and-forget，错误忽略
   mn.platform.storage.set('marginoteTodos', data).catch(() => {});
 }
 
+function todoReminderPlan(t, nowMs) {
+  const core = window.MarginoteReminderCore;
+  if (core && typeof core.planTodoReminders === 'function') {
+    return core.planTodoReminders(t, nowMs);
+  }
+  return [];
+}
+
 async function scheduleTodoReminders(t) {
   if (!platformAvailable()) return;
   await clearAlarmsByPrefix(`mtodo:${t.id}:`);
-  if (t.done || !t.dueDate || !t.remindBeforeMin) { syncRemindersToExt(); return; }
-  const count = Math.max(1, t.remindCount || 1);
-  const interval = Math.max(1, t.remindIntervalMin || 5);
-  for (let i = 0; i < count; i++) {
-    const offsetMin = t.remindBeforeMin - i * interval;
-    const when = t.dueDate - offsetMin * 60000;
-    if (when > Date.now()) {
-      await mn.platform.alarms.create(`mtodo:${t.id}:${i}`, when);
-    }
+  for (const reminder of todoReminderPlan(t, Date.now())) {
+    await mn.platform.alarms.create(`mtodo:${t.id}:${reminder.key}`, reminder.when);
   }
   syncRemindersToExt();
 }
@@ -3687,18 +3937,44 @@ async function rescheduleAllAlarms() {
   if (!platformAvailable()) return;
   await clearAlarmsByPrefix('mtodo:');
   for (const t of todos) {
-    if (t.done || !t.dueDate || !t.remindBeforeMin) continue;
-    const count = Math.max(1, t.remindCount || 1);
-    const interval = Math.max(1, t.remindIntervalMin || 5);
-    for (let i = 0; i < count; i++) {
-      const offsetMin = t.remindBeforeMin - i * interval;
-      const when = t.dueDate - offsetMin * 60000;
-      if (when > Date.now()) {
-        await mn.platform.alarms.create(`mtodo:${t.id}:${i}`, when);
-      }
+    for (const reminder of todoReminderPlan(t, Date.now())) {
+      await mn.platform.alarms.create(`mtodo:${t.id}:${reminder.key}`, reminder.when);
     }
   }
   syncRemindersToExt();
+}
+
+async function initDesktopReminderActions() {
+  if (!isDesktopContext()) return;
+  const eventApi = window.__TAURI__ && window.__TAURI__.event;
+  if (!eventApi || typeof eventApi.listen !== 'function') return;
+  try {
+    await eventApi.listen('marginote-reminder-snooze', async event => {
+      const payload = event && event.payload ? event.payload : {};
+      const todo = todos.find(item => item.id === payload.todoId);
+      const whenMs = Number(payload.whenMs);
+      if (!todo || todo.done || !Number.isFinite(whenMs) || whenMs <= Date.now()) return;
+      todo.remindSnoozedUntil = whenMs;
+      saveData();
+      await scheduleTodoReminders(todo);
+      renderTodos();
+      const minutes = Math.max(1, Math.round((whenMs - Date.now()) / 60_000));
+      const label = minutes >= 1440 ? '1 天' : minutes >= 60 ? '1 小时' : `${minutes} 分钟`;
+      showToast(`已延后 ${label}提醒：${todo.text || '无标题待办'}`);
+    });
+    await eventApi.listen('marginote-reminder-fired', event => {
+      const payload = event && event.payload ? event.payload : {};
+      if (!String(payload.alarmName || '').endsWith(':snooze')) return;
+      const todo = todos.find(item => item.id === payload.todoId);
+      if (!todo || !todo.remindSnoozedUntil) return;
+      delete todo.remindSnoozedUntil;
+      saveData();
+      syncRemindersToExt();
+      renderTodos();
+    });
+  } catch (error) {
+    console.warn('desktop reminder actions unavailable', error);
+  }
 }
 
 // ===================== 存储 / 备份 =====================
@@ -3798,12 +4074,38 @@ function refreshStorageTab() {
   if (daysEl) daysEl.value = ab.intervalDays;
   const lastEl = document.getElementById('storageLastBackup');
   if (lastEl) lastEl.textContent = ab.lastBackupAt ? formatFullDate(ab.lastBackupAt) : '从未';
+  renderChangeSetHistory();
   renderErrorLog();
 }
 
 function openStorageModal() {
   refreshStorageTab();
   openSettingsModal('data');
+}
+
+function renderChangeSetHistory() {
+  const list = document.getElementById('changeSetList');
+  const count = document.getElementById('changeSetCount');
+  if (!list || !count) return;
+  let history = [];
+  try { history = JSON.parse(localStorage.getItem(CHANGESET_SUMMARY_KEY) || '[]'); } catch {}
+  if (!Array.isArray(history)) history = [];
+  count.textContent = `(${history.length})`;
+  if (!history.length) {
+    list.innerHTML = '<div class="error-log-empty">暂无事务变更记录</div>';
+    return;
+  }
+  list.innerHTML = history.slice(0, 12).map(item => {
+    const status = item.status === 'committed' ? '✓ 已提交' : '↶ 已回滚';
+    const changes = (item.changes || []).map(change => `${change.collection}:${change.type}(${(change.fields || []).join(',')})`).join(' · ');
+    return `<div class="entry">
+      <span class="ts">${formatFullDate(item.committedAt || item.startedAt)}</span>
+      <span class="ctx">[${escapeHtml(status)} · ${escapeHtml(item.id || '')}]</span>
+      ${escapeHtml(item.label || 'mutation')}
+      ${changes ? `<div class="stack">${escapeHtml(changes)}</div>` : ''}
+      ${item.error ? `<div class="stack">${escapeHtml(item.error)}</div>` : ''}
+    </div>`;
+  }).join('');
 }
 
 function renderErrorLog() {
@@ -3877,6 +4179,12 @@ async function init() {
   renderTagFilters();
   renderNotesList();
   switchView('all');
+  if (_dataRecoveryInfo) {
+    const message = _dataRecoveryInfo.backedUp
+      ? `检测到异常主数据，原始内容已备份到恢复区（${_dataRecoveryInfo.key}）`
+      : '检测到异常主数据，正在安全备份；完成前不会覆盖原始内容';
+    setTimeout(() => showToast(message), 0);
+  }
   // 懒加载图片:监听 DOM,为渲染出的 <img data-imgid> 按需从 IDB 填 data: src(只解码可见图,省内存)
   startLazyImageObserver();
   // 静态色点（待办状态点等）一次性 JS 强制上色，规避 WebView2 inline 解析漏洞
@@ -3898,6 +4206,7 @@ async function init() {
   }
   // 桌面/Windows 把 Mac 的 ⌘ 改成 Ctrl（需先知道平台，故放在 bridge 就绪后）
   applyShortcutLabels();
+  await initDesktopReminderActions();
   await initImagesIdb();
   migrateInlineImages();
   migrateLegacyRestoreLabel();
@@ -3984,11 +4293,12 @@ async function init() {
   });
 
   // 事件绑定
-  document.getElementById('searchInput').addEventListener('input', () => {
+  document.getElementById('searchInput').addEventListener('input', debounceUi(() => {
     if (currentView.startsWith('todo:')) renderTodos();
     else renderNotesList();
-  });
+  }, 160));
   document.getElementById('newNoteBtn').addEventListener('click', createNote);
+  document.getElementById('emptyNewNoteBtn')?.addEventListener('click', createNote);
 document.getElementById('openFileBtn').addEventListener('click', openLocalFile);
   document.getElementById('newDrawingBtn')?.addEventListener('click', () => {
     if (typeof window.createDrawing === 'function') window.createDrawing();
@@ -4421,12 +4731,23 @@ renderNotesList = function() {
   const container = document.getElementById('notesList');
   const showNbBadge = !currentView.startsWith('nb:') && !currentView.startsWith('folder:');
   if (list.length === 0) {
+    const hasSearch = !!document.getElementById('searchInput').value.trim() || currentTagFilter !== 'all';
     const empty = currentView === 'trash' ? '回收站为空' :
                   currentView === 'starred' ? '尚无收藏的笔记' :
                   currentView.startsWith('folder:') ? '此文件夹还是空的' :
                   currentView.startsWith('nb:') ? '这本笔记本还是空的' :
                   '尚无笔记，开始书写吧';
-    container.innerHTML = `<div class="empty-list">${empty}</div>`;
+    const action = currentView === 'trash' ? '' : hasSearch
+      ? '<button class="empty-action" type="button" data-empty-action="clear-search">清除筛选</button>'
+      : '<button class="empty-action" type="button" data-empty-action="create-note">新建笔记</button>';
+    container.innerHTML = `<div class="empty-list"><span>${empty}</span>${action}</div>`;
+    container.querySelector('[data-empty-action="clear-search"]')?.addEventListener('click', () => {
+      document.getElementById('searchInput').value = '';
+      currentTagFilter = 'all';
+      renderTagFilters();
+      renderNotesList();
+    });
+    container.querySelector('[data-empty-action="create-note"]')?.addEventListener('click', createNote);
     return;
   }
   const terms = list._terms || [];
@@ -4564,11 +4885,17 @@ autoSaveTodo = function() {
     currentTodo.text = document.getElementById('todoEditTitle').value.trim() || '无标题待办';
     currentTodo.content = document.getElementById('todoEditContent').value;
     const dueRaw = document.getElementById('todoEditDue').value;
-    currentTodo.dueDate = dueRaw ? new Date(dueRaw).getTime() : null;
+    const nextDueDate = dueRaw ? new Date(dueRaw).getTime() : null;
     const r = readRemindFields('todoEditRemind', document.getElementById('todoEditRemindPreset'));
+    const reminderChanged = currentTodo.dueDate !== nextDueDate
+      || Number(currentTodo.remindBeforeMin || 0) !== r.before
+      || Number(currentTodo.remindCount || 0) !== r.count
+      || Number(currentTodo.remindIntervalMin || 5) !== r.interval;
+    currentTodo.dueDate = nextDueDate;
     currentTodo.remindBeforeMin = r.before;
     currentTodo.remindCount = r.count;
     currentTodo.remindIntervalMin = r.interval;
+    if (reminderChanged) delete currentTodo.remindSnoozedUntil;
     saveData();
     scheduleTodoReminders(currentTodo);
     document.getElementById('todoEditStatus').textContent = '已保存';
@@ -4618,115 +4945,6 @@ function openAiCustomModal() {
 }
 function closeAiCustomModal() { document.getElementById('aiCustomModalBg').classList.remove('show'); }
 
-// ---------- AI 流式 callAi ----------
-let _aiAbortCtrl = null;
-const _origCallAi = callAi;
-
-async function _simulateStreamEmit(text, onDelta, chunkSize = 12, delayMs = 6) {
-  if (!text || typeof onDelta !== 'function') return;
-  let acc = '';
-  for (let i = 0; i < text.length; i += chunkSize) {
-    const piece = text.slice(i, i + chunkSize);
-    acc += piece;
-    try { onDelta(piece, acc); } catch {}
-    if (i + chunkSize < text.length) await new Promise(r => setTimeout(r, delayMs));
-  }
-}
-callAi = async function(messages, opts) {
-  const p = getActiveProvider();
-  if (!p) throw new Error('未配置 AI 模型');
-  if (opts && opts.stream === false) return _origCallAi(messages, opts);
-  // HTTP / SOCKS 代理 → 必须走平台后台桥（不做 SSE），响应回来后模拟流式回放
-  // 桌面版 WebView2 不支持 http:// 直连 fetch → 走平台桥（Rust reqwest），模拟流式
-  // 浏览器插件 / HTTPS / localhost → 使用原生 fetch + SSE 真流式
-  {
-    const urlEarly = resolveAiUrl(p);
-    const proxyParsedEarly = parseProxyUrl(p.proxyPrefix || '');
-    const isHttpNonLocal = /^http:\/\//i.test(urlEarly) && !/^http:\/\/(localhost|127\.0\.0\.1)(:|\/|$)/i.test(urlEarly);
-    const isDesktop = !!(window.mn && window.mn.platform && window.mn.platform.kind === 'desktop');
-    const needBridge = proxyParsedEarly.kind === 'http' || (isDesktop && isHttpNonLocal);
-    if (needBridge) {
-      const result = await _origCallAi(messages, Object.assign({}, opts, { stream: false }));
-      if (opts && typeof opts.onDelta === 'function' && typeof result === 'string') {
-        await _simulateStreamEmit(result, opts.onDelta);
-      }
-      return result;
-    }
-  }
-  const body = { model: p.model, messages, temperature: (opts && opts.temperature) ?? p.temperature ?? 0.7, stream: true };
-  // 流式路径也必须尊重调用方的输出预算；旧逻辑只在非流式请求带 max_tokens，
-  // 本地模型可能长时间生成无关内容，既慢又更容易挤占后续上下文。
-  if (opts && opts.max_tokens) body.max_tokens = opts.max_tokens;
-  _aiAbortCtrl = new AbortController();
-  const cancelBtn = document.getElementById('aiCancelBtn');
-  if (cancelBtn) cancelBtn.classList.add('show');
-  try {
-    const url = resolveAiUrl(p);
-    const hdrs = { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + (p.apiKey || '') };
-    if (p.customHeaders && typeof p.customHeaders === 'object') Object.assign(hdrs, p.customHeaders);
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: hdrs,
-      body: JSON.stringify(body),
-      signal: _aiAbortCtrl.signal
-    });
-    if (!res.ok) {
-      const txt = await res.text().catch(() => '');
-      throw new Error(`HTTP ${res.status}: ${txt.slice(0, 200)}`);
-    }
-    const ct = res.headers.get('content-type') || '';
-    if (!ct.includes('event-stream')) {
-      const data = await res.json();
-      const msg = data?.choices?.[0]?.message;
-      let c = msg?.content;
-      if ((!c || typeof c !== 'string') && Array.isArray(msg?.tool_calls) && msg.tool_calls.length) {
-        const actions = msg.tool_calls.map(call => {
-          let args = {};
-          try { args = JSON.parse(call?.function?.arguments || '{}'); } catch {}
-          return { tool: call?.function?.name, args };
-        }).filter(action => action.tool);
-        if (actions.length) c = JSON.stringify({ reply: '', actions });
-      }
-      if (typeof c === 'string' && opts?.onDelta) await _simulateStreamEmit(c, opts.onDelta);
-      return typeof c === 'string' ? stripThinking(c) : '';
-    }
-    const reader = res.body.getReader();
-    const decoder = new TextDecoder();
-    let buf = '', full = '', streamDone = false;
-    while (!streamDone) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      buf += decoder.decode(value, { stream: true });
-      let idx;
-      while ((idx = buf.indexOf('\n')) !== -1) {
-        const line = buf.slice(0, idx).trim();
-        buf = buf.slice(idx + 1);
-        if (!line.startsWith('data:')) continue;
-        const payload = line.slice(5).trim();
-        if (payload === '[DONE]') { streamDone = true; try { reader.cancel(); } catch {} break; }
-        try {
-          const obj = JSON.parse(payload);
-          const d = obj?.choices?.[0]?.delta;
-          const content = d?.content;
-          const reasoning = d?.reasoning_content;
-          if (content) {
-            full += content;
-            if (opts && typeof opts.onDelta === 'function') opts.onDelta(content, full);
-          } else if (reasoning && opts && typeof opts.onDelta === 'function') {
-            opts.onDelta('', full);
-          }
-        } catch {}
-      }
-    }
-    return stripThinking(full);
-  } catch (e) {
-    if (e.name === 'AbortError') throw new Error('已取消');
-    throw e;
-  } finally {
-    if (cancelBtn) cancelBtn.classList.remove('show');
-    _aiAbortCtrl = null;
-  }
-};
 
 // ---------- runAiAction：支持流式 + custom modal ----------
 runAiAction = async function(action) {
@@ -4737,13 +4955,27 @@ runAiAction = async function(action) {
 async function _runAiActionInternal(action) {
   const provider = getActiveProvider();
   if (!provider) { showToast('未配置 AI 模型'); openAiSettings(); return; }
-  const isTodo = !!currentTodo, isNote = !!currentNote;
+  const todoTarget = currentTodo;
+  const noteTarget = currentNote;
+  const isTodo = !!todoTarget, isNote = !!noteTarget;
   if (!isTodo && !isNote) { showToast('请先选择笔记或待办'); return; }
-  const target = isTodo ? 'todo:' + currentTodo.id : 'note:' + currentNote.id;
-  const title = isTodo ? (currentTodo.text || '') : (currentNote.title || '');
-  const content = isTodo ? (currentTodo.content || '') : (currentNote.content || '');
-  pushAiUndoSnapshot(target, { title, content, ts: Date.now() });
-  const userPayload = (title ? `标题：${title}\n\n` : '') + (content || '(空)');
+  const targetObject = isTodo ? todoTarget : noteTarget;
+  const target = (isTodo ? 'todo:' : 'note:') + targetObject.id;
+  const title = isTodo ? (todoTarget.text || '') : (noteTarget.title || '');
+  let content = targetObject.content || '';
+  const ta = isTodo ? document.getElementById('todoEditContent') : document.getElementById('contentInput');
+  if (ta && ta.value !== content) {
+    content = ta.value;
+    targetObject.content = content;
+    if (!isTodo) targetObject.updatedAt = Date.now();
+    saveData();
+  }
+  const selection = ta && ta.selectionEnd > ta.selectionStart
+    ? { start: ta.selectionStart, end: ta.selectionEnd }
+    : null;
+  const edit = window.MarginoteAiEditCore.createTextEdit(targetObject, action.mode, isTodo ? 'todo' : 'note', { selection });
+  const input = edit.selection ? `【仅处理以下选中文本】\n${edit.input}` : edit.input;
+  const userPayload = (title ? `标题：${title}\n\n` : '') + (input || '(空)');
   const messages = [];
   const sysParts = [];
   if (provider.system) sysParts.push(provider.system);
@@ -4752,41 +4984,48 @@ async function _runAiActionInternal(action) {
   messages.push({ role: 'user', content: userPayload });
 
   setAiBusy(true);
-  const ta = isTodo ? document.getElementById('todoEditContent') : document.getElementById('contentInput');
-  const baseContent = action.mode === 'append' ? (content + (content ? '\n\n' : '')) : '';
   // 先占位提示以避免长时间空白
-  if (ta) { const orig = ta.value; ta.value = (baseContent || orig) + '\n\n⏳ AI 生成中…'; ta.scrollTop = ta.scrollHeight; }
+  if (ta) { ta.value = edit.draft('⏳ AI 生成中…'); ta.scrollTop = ta.scrollHeight; }
 
   try {
     const reply = await callAi(messages, {
       stream: true,
       onDelta: (d, full) => {
-        if (isTodo) {
-          currentTodo.content = baseContent + full;
-          ta.value = currentTodo.content;
-          if (isTodoPreviewMode) document.getElementById('todoPreview').innerHTML = renderMarkdown(currentTodo.content);
-        } else {
-          currentNote.content = baseContent + full;
-          ta.value = currentNote.content;
-          if (isPreviewMode) applyNotePreview(currentNote);
-        }
+        // 用户可在生成期间切换笔记；只更新仍打开的原目标 UI，绝不触碰数据对象。
+        if ((isTodo && currentTodo !== todoTarget) || (!isTodo && currentNote !== noteTarget)) return;
+        const draft = edit.draft(full);
+        if (ta) ta.value = draft;
+        if (isTodo && isTodoPreviewMode) document.getElementById('todoPreview').innerHTML = renderMarkdown(draft);
+        if (!isTodo && isPreviewMode) document.getElementById('preview').innerHTML = renderMarkdown(draft);
       }
     });
+    pushAiUndoSnapshot(target, { title, content, ts: Date.now() });
+    const committed = edit.commit(reply, Date.now());
     if (isTodo) {
-      currentTodo.content = baseContent + reply;
       saveData();
-      document.getElementById('todoEditStatus').textContent = '已保存 · AI 已应用';
+      if (currentTodo === todoTarget) {
+        if (ta) ta.value = committed;
+        if (isTodoPreviewMode) document.getElementById('todoPreview').innerHTML = renderMarkdown(committed);
+        document.getElementById('todoEditStatus').textContent = '已保存 · AI 已应用';
+      }
       renderTodos();
     } else {
-      currentNote.content = baseContent + reply;
-      currentNote.updatedAt = Date.now();
       saveData();
-      document.getElementById('editorStatus').textContent = '已保存 · AI 已应用';
-      updateWordCount();
+      if (currentNote === noteTarget) {
+        if (ta) ta.value = committed;
+        if (isPreviewMode) applyNotePreview(noteTarget);
+        document.getElementById('editorStatus').textContent = '已保存 · AI 已应用';
+        updateWordCount();
+      }
       renderNotesList();
     }
-    showToast('AI 已优化 ✓');
+    showToast(edit.selection ? 'AI 已应用到选中文本 ✓' : 'AI 已优化 ✓');
   } catch (e) {
+    if ((isTodo && currentTodo === todoTarget) || (!isTodo && currentNote === noteTarget)) {
+      if (ta) ta.value = edit.original;
+      if (isTodo && isTodoPreviewMode) document.getElementById('todoPreview').innerHTML = renderMarkdown(edit.original);
+      if (!isTodo && isPreviewMode) applyNotePreview(noteTarget);
+    }
     logError(e, 'ai-stream');
     showToast('AI 失败：' + (e.message || e), e && e.stack);
   } finally {
@@ -5048,16 +5287,75 @@ openStorageModal = function() {
 //   · 新增 / 修改：写回目录（卸载软件/扩展不删这些文件）
 // ==========================================================
 const WORKDIR_KEY = 'marginote.workdir';
-let _workdirCfg = { enabled: false, lastSyncAt: 0, name: null, lastImportAt: 0 };
+let _workdirCfg = { enabled: false, lastSyncAt: 0, name: null, lastImportAt: 0, lastError: null };
 try { Object.assign(_workdirCfg, JSON.parse(localStorage.getItem(WORKDIR_KEY) || '{}')); } catch {}
 function saveWorkdirCfg() { try { localStorage.setItem(WORKDIR_KEY, JSON.stringify(_workdirCfg)); } catch {} }
 
 let _workdirTimer = null;
+let _workdirQueue = Promise.resolve();
+let _workdirSyncDepth = 0;
 const TODO_DIR = '待办';
 const WORKDIR_META = '_marginote/meta.json';
 
+function queueWorkdirOperation(task) {
+  const result = _workdirQueue.then(task, task);
+  // Keep the queue usable after a failed operation while returning the real
+  // result/error to the current caller.
+  _workdirQueue = result.catch(() => {});
+  return result;
+}
+
+async function requireWorkdirSuccess(result, action) {
+  if ((await result) !== true) throw new Error(`${action}失败`);
+}
+
+async function preserveWorkdirReconciliation(plan) {
+  const createdAt = Date.now();
+  const key = window.MarginoteDataCore.recoveryKey(createdAt);
+  const raw = JSON.stringify({
+    schemaVersion: window.MarginoteDataCore.CURRENT_SCHEMA_VERSION,
+    notebooks, folders, notes, todos,
+    recovery: {
+      kind: 'workdir-reconciliation',
+      createdAt,
+      missingNoteIds: plan.missingNoteIds,
+      missingTodoIds: plan.missingTodoIds
+    }
+  });
+  try {
+    localStorage.setItem(key, raw);
+    return { key, location: 'localStorage' };
+  } catch (localError) {
+    if (!_idb) throw localError;
+    await idbPut('meta', {
+      key,
+      kind: 'workdir-reconciliation',
+      raw,
+      createdAt,
+      missingNoteIds: plan.missingNoteIds,
+      missingTodoIds: plan.missingTodoIds
+    });
+    return { key, location: 'IndexedDB/meta' };
+  }
+}
+
 function fsApi() { return (window.mn && mn.platform && mn.platform.fs) || null; }
 function workdirAvailable() { const f = fsApi(); return !!(f && f.isAvailable && f.isAvailable()); }
+
+function clearWorkdirError() {
+  if (!_workdirCfg.lastError) return;
+  _workdirCfg.lastError = null;
+  saveWorkdirCfg();
+}
+
+function recordWorkdirError(error, operation) {
+  const message = (error && error.message) || String(error || '未知错误');
+  const previous = _workdirCfg.lastError && _workdirCfg.lastError.message;
+  _workdirCfg.lastError = { operation, message, at: Date.now() };
+  saveWorkdirCfg();
+  renderWorkDirInfo();
+  if (previous !== message) showToast(`工作目录${operation}失败：${message}`);
+}
 
 // 笔记 → 工作目录内的相对路径（笔记本/文件夹/标题.md）
 function noteRelPath(note, usedPaths) {
@@ -5131,7 +5429,14 @@ function todoToMarkdown(t, opts) {
 }
 
 // 写出全部数据到工作目录（app → disk）
-async function workdirWriteAll(silent) {
+function workdirWriteAll(silent) {
+  if (_repositoryTransactionDepth > 0) {
+    return Promise.resolve(true);
+  }
+  return queueWorkdirOperation(() => workdirWriteAllNow(silent));
+}
+
+async function workdirWriteAllNow(silent) {
   const fs = fsApi();
   if (!fs) { if (!silent) showToast('当前环境不支持工作目录'); return false; }
   if (!await fs.hasDir()) { if (!silent) showToast('未绑定工作目录或无权限'); return false; }
@@ -5139,11 +5444,14 @@ async function workdirWriteAll(silent) {
     // 读取上次写入记录的文件路径映射，用于清理"移动/重命名/删除笔记或笔记本后遗留在旧路径"的文件。
     // 只依据 Marginote 自己写过的路径来删除，绝不动用户在工作目录里外部新增的 .md，避免误删。
     let prevNoteFiles = {}, prevTodoFiles = {};
-    try {
-      const prev = JSON.parse((await fs.readText(WORKDIR_META)) || '{}');
+    const previousMetaText = await fs.readText(WORKDIR_META);
+    if (previousMetaText) {
+      let prev;
+      try { prev = JSON.parse(previousMetaText); }
+      catch { throw new Error('工作目录元数据已损坏，已停止写入以避免覆盖；请先备份 _marginote/meta.json'); }
       if (prev && prev.noteFiles && typeof prev.noteFiles === 'object') prevNoteFiles = prev.noteFiles;
       if (prev && prev.todoFiles && typeof prev.todoFiles === 'object') prevTodoFiles = prev.todoFiles;
-    } catch {}
+    }
     const usedPaths = new Set();
     const usedImgIds = new Set();
     const collectIds = (text) => {
@@ -5156,7 +5464,7 @@ async function workdirWriteAll(silent) {
       if (n.type === 'drawing') {
         const rel = drawingRelPath(n, usedPaths);
         idToPath[n.id] = rel;
-        await fs.writeText(rel, drawingToFile(n));
+        await requireWorkdirSuccess(fs.writeText(rel, drawingToFile(n)), `写入画板 ${rel}`);
         continue;
       }
       const rel = noteRelPath(n, usedPaths);
@@ -5165,7 +5473,7 @@ async function workdirWriteAll(silent) {
       // 图片写 _assets/ 相对路径(而非内联 base64/blob):笔记在子目录,按深度补 ../ 指回根 _assets。
       // 资产文件在下方单独写出;导入时 ingestAssetPathRefs 容忍任意 (../)*_assets/ 前缀转回 img:id。
       const _prefix = '../'.repeat(Math.max(0, rel.split('/').length - 1));
-      await fs.writeText(rel, noteToMarkdown(n, { mode: 'zip', prefix: _prefix }));
+      await requireWorkdirSuccess(fs.writeText(rel, noteToMarkdown(n, { mode: 'zip', prefix: _prefix })), `写入笔记 ${rel}`);
     }
     // 待办（统一放 待办/ 子目录）
     const usedTodo = new Set();
@@ -5177,7 +5485,7 @@ async function workdirWriteAll(silent) {
       if (t.id) todoIdToPath[t.id] = rel + '.md';
       collectIds(t.content);
       // 待办在 待办/ 下(深度1),图片用 ../_assets/ 相对路径
-      await fs.writeText(rel + '.md', todoToMarkdown(t, { mode: 'zip', prefix: '../' }));
+      await requireWorkdirSuccess(fs.writeText(rel + '.md', todoToMarkdown(t, { mode: 'zip', prefix: '../' })), `写入待办 ${rel}.md`);
     }
     // 清理旧文件：上次写过、但这次不再写（笔记/待办被移动、重命名、删除，或所在笔记本被删）的
     // 路径，从磁盘删掉，否则下次导入会把它们当新文件读回、"复活"已删的笔记本/笔记。
@@ -5213,10 +5521,10 @@ async function workdirWriteAll(silent) {
       const m = b64.match(/^data:[^;]+;base64,(.+)$/);
       if (!m) continue;
       const ext = img.ext || detectExtFromDataUrl(b64);
-      await fs.writeBinary('_assets/' + id + ext, m[1]);
+      await requireWorkdirSuccess(fs.writeBinary('_assets/' + id + ext, m[1]), `写入图片 ${id}${ext}`);
     }
     // 元数据：笔记本/文件夹/被删笔记/图片元信息/路径映射
-    await fs.writeText(WORKDIR_META, JSON.stringify({
+    await requireWorkdirSuccess(fs.writeText(WORKDIR_META, JSON.stringify({
       version: 'v1.4',
       exportedAt: Date.now(),
       notebooks, folders,
@@ -5225,8 +5533,9 @@ async function workdirWriteAll(silent) {
       imagesMeta: Object.fromEntries(Object.entries(images).map(([k, v]) => [k, { name: v.name, ext: v.ext, createdAt: v.createdAt }])),
       noteFiles: idToPath,
       todoFiles: todoIdToPath
-    }, null, 2));
+    }, null, 2)), '写入工作目录元数据');
 
+    clearWorkdirError();
     _workdirCfg.lastSyncAt = Date.now();
     saveWorkdirCfg();
     renderWorkDirInfo();
@@ -5234,7 +5543,7 @@ async function workdirWriteAll(silent) {
     return true;
   } catch (e) {
     logError(e, 'workdir-write');
-    if (!silent) showToast('写入工作目录失败：' + (e && e.message), e && e.stack);
+    recordWorkdirError(e, '写入');
     return false;
   }
 }
@@ -5242,18 +5551,24 @@ async function workdirWriteAll(silent) {
 // 从工作目录读入并合并（disk → app）。返回新增笔记数。
 // 全量可靠导入：应用尚未载入的文件一律读取,绝不因 mtime 跳过(修复"磁盘有文件却不导入")。
 // 已载入且 mtime 未变的文件才跳过重复解析,详见 importPlan.planImport（回收站/、_ 前缀也在其中排除）。
-async function workdirImportAll(silent) {
+function workdirImportAll(silent) {
+  return queueWorkdirOperation(() => workdirImportAllNow(silent));
+}
+
+async function workdirImportAllNow(silent) {
   const fs = fsApi();
   if (!fs) { if (!silent) showToast('当前环境不支持工作目录'); return 0; }
   if (!await fs.hasDir()) { if (!silent) showToast('未绑定工作目录或无权限'); return 0; }
   let added = 0, updated = 0;
+  _workdirSyncDepth++;
   try {
     // 先读元数据（恢复笔记本/文件夹/图片元）
     let meta = {};
-    try {
-      const metaTxt = await fs.readText(WORKDIR_META);
-      if (metaTxt) meta = JSON.parse(metaTxt);
-    } catch {}
+    const metaTxt = await fs.readText(WORKDIR_META);
+    if (metaTxt) {
+      try { meta = JSON.parse(metaTxt); }
+      catch { throw new Error('工作目录元数据已损坏；请先备份并修复 _marginote/meta.json'); }
+    }
     if (Array.isArray(meta.notebooks)) {
       meta.notebooks.forEach(nb => { if (!notebooks.find(x => x.id === nb.id || x.name === nb.name)) notebooks.push(nb); });
     }
@@ -5274,11 +5589,23 @@ async function workdirImportAll(silent) {
     }
     const imagesMeta = (meta.imagesMeta && typeof meta.imagesMeta === 'object') ? meta.imagesMeta : {};
 
-    const deletedIds = new Set((Array.isArray(meta.deletedNotes) ? meta.deletedNotes : []).map(n => n.id).filter(Boolean));
+    // Application-originated tombstones remain authoritative. A tombstone that
+    // came from an external workdir deletion may be reversed by putting the file
+    // back on disk, so it must not cause that restored file to be deleted again.
+    const deletedIds = new Set((Array.isArray(meta.deletedNotes) ? meta.deletedNotes : [])
+      .filter(n => n && n.deletedBy !== 'workdir')
+      .map(n => n.id).filter(Boolean));
     const entries = await fs.list();
+    const presentPaths = new Set(entries.filter(entry => !entry.dir).map(entry => entry.path));
+    const seenNoteIds = new Set();
+    const seenTodoIds = new Set();
     // 已载入的路径 → mtime，用于跳过未变文件的重复解析（但绝不跳过未载入的文件）
     const loadedByPath = {};
-    for (const n of notes) if (n._srcPath) loadedByPath[n._srcPath] = { mtime: n._srcMtime || 0 };
+    for (const n of notes) {
+      if (n._srcPath && !(n.deleted && n.deletedBy === 'workdir')) {
+        loadedByPath[n._srcPath] = { mtime: n._srcMtime || 0 };
+      }
+    }
     const { toRead } = importPlan.planImport({ entries, loadedByPath });
     const mdFiles = toRead.filter(e => /\.(md|markdown)$/i.test(e.path));
     const drawFiles = toRead.filter(e => /\.excalidraw$/i.test(e.path));
@@ -5294,18 +5621,19 @@ async function workdirImportAll(silent) {
         const b64 = await fs.readBinary(a.path);
         if (!b64) continue;
         const mi = imagesMeta[id] || {};
-        addImageRecord(id, `data:${mimeFromExt(ext)};base64,${b64}`, { name: mi.name || fname, ext: mi.ext || ext, createdAt: mi.createdAt || Date.now() });
+        await addImageRecordPersisted(id, `data:${mimeFromExt(ext)};base64,${b64}`, { name: mi.name || fname, ext: mi.ext || ext, createdAt: mi.createdAt || Date.now() });
       } catch (e) { logError(e, 'workdir-asset:' + a.path); }
     }
 
     for (const f of mdFiles) {
       const text = await fs.readText(f.path);
-      if (text == null) continue;
+      if (text == null) throw new Error(`工作目录中的文件无法读取：${f.path}`);
       const segs = f.path.split('/').filter(Boolean);
       const isTodo = segs[0] === TODO_DIR;
       const { meta: fm, content } = parseMarkdownFile(text);
       if (isTodo) {
         const id = fm.id || uid();
+        seenTodoIds.add(id);
         const existing = todos.find(t => t.id === id);
         const todo = {
           id,
@@ -5326,9 +5654,11 @@ async function workdirImportAll(silent) {
       const folder = folderName ? ensureFolderByName(nb.id, folderName) : null;
       let body = ingestImageDataUrls(ingestAssetPathRefs(content));
       const id = fm.id || uid();
+      seenNoteIds.add(id);
       // 该文件对应一条已删除的笔记(墓碑)→ 这是删除时未清干净的残留文件，直接从磁盘清掉，
       // 否则它既不显示、又让笔记本非空删不掉、还会在扫描时被当"新文件"复活。
-      if (deletedIds.has(id) || notes.some(n => n.id === id && n.deleted)) {
+      const localTombstone = notes.find(n => n.id === id && n.deleted);
+      if (deletedIds.has(id) || (localTombstone && localTombstone.deletedBy !== 'workdir')) {
         try { await fs.remove(f.path); } catch {}
         continue;
       }
@@ -5342,6 +5672,8 @@ async function workdirImportAll(silent) {
         tags: Array.isArray(fm.tags) ? fm.tags : [],
         starred: !!fm.starred,
         deleted: false,
+        deletedBy: null,
+        deletedAt: null,
         createdAt: fm.createdAt ? new Date(fm.createdAt).getTime() : Date.now(),
         updatedAt: fm.updatedAt ? new Date(fm.updatedAt).getTime() : Date.now()
       };
@@ -5349,7 +5681,7 @@ async function workdirImportAll(silent) {
       note._srcMtime = f.mtime || 0;
       if (existing) {
         // 仅当磁盘更新时间较新才覆盖，避免回退正在编辑的内容
-        if ((note.updatedAt || 0) >= (existing.updatedAt || 0)) { Object.assign(existing, note); updated++; }
+        if (existing.deletedBy === 'workdir' || (note.updatedAt || 0) >= (existing.updatedAt || 0)) { Object.assign(existing, note); updated++; }
       } else {
         notes.push(note); added++;
       }
@@ -5358,7 +5690,7 @@ async function workdirImportAll(silent) {
     // 画板 .excalidraw → type:'drawing' 笔记
     for (const f of drawFiles) {
       const text = await fs.readText(f.path);
-      if (text == null) continue;
+      if (text == null) throw new Error(`工作目录中的画板无法读取：${f.path}`);
       let scene = {};
       try { scene = JSON.parse(text); } catch { scene = {}; }
       const mn = (scene && scene._mn) || {};
@@ -5368,6 +5700,7 @@ async function workdirImportAll(silent) {
       let nbId = mn.notebookId, folderId = mn.folderId;
       if (!nbId) { const nb = ensureNotebookByName(nbName); nbId = nb.id; if (folderName) folderId = ensureFolderByName(nb.id, folderName).id; }
       const id = mn.id || uid();
+      seenNoteIds.add(id);
       // 写回 note.content 时去掉 _mn（保持纯场景），但保留它做归属
       let pureContent = text;
       try { const s2 = JSON.parse(text); delete s2._mn; pureContent = JSON.stringify(s2); } catch {}
@@ -5383,21 +5716,65 @@ async function workdirImportAll(silent) {
         tags: Array.isArray(mn.tags) ? mn.tags : [],
         starred: !!mn.starred,
         deleted: false,
+        deletedBy: null,
+        deletedAt: null,
         createdAt: mn.createdAt ? new Date(mn.createdAt).getTime() : Date.now(),
         updatedAt: mn.updatedAt ? new Date(mn.updatedAt).getTime() : Date.now()
       };
       note._srcPath = f.path;
       note._srcMtime = f.mtime || 0;
       if (existing) {
-        if ((note.updatedAt || 0) >= (existing.updatedAt || 0)) { Object.assign(existing, note); updated++; }
+        if (existing.deletedBy === 'workdir' || (note.updatedAt || 0) >= (existing.updatedAt || 0)) { Object.assign(existing, note); updated++; }
       } else { notes.push(note); added++; }
     }
 
-    saveData();
+    // meta.json 中有映射、但磁盘文件确实不存在，且没有在新路径读到相同 id：
+    // 视为用户在文件管理器中执行了删除。笔记软删除，待办移除；执行前必须留下
+    // 可导出的完整恢复快照。未进入 meta 映射的本地新建内容不会被触碰。
+    const reconcilePlan = window.MarginoteWorkdirCore.planReconciliation({
+      noteFiles: meta.noteFiles,
+      todoFiles: meta.todoFiles,
+      presentPaths,
+      seenNoteIds,
+      seenTodoIds
+    });
+    const missingNoteIds = new Set(reconcilePlan.missingNoteIds.filter(id => notes.some(n => n.id === id && !n.deleted)));
+    const missingTodoIds = new Set(reconcilePlan.missingTodoIds.filter(id => todos.some(t => t.id === id)));
+    if (missingNoteIds.size || missingTodoIds.size) {
+      const actualPlan = { missingNoteIds: [...missingNoteIds], missingTodoIds: [...missingTodoIds] };
+      const recovery = await preserveWorkdirReconciliation(actualPlan);
+      const reconciledAt = Date.now();
+      for (const note of notes) {
+        if (!missingNoteIds.has(note.id) || note.deleted) continue;
+        note.deleted = true;
+        note.deletedBy = 'workdir';
+        note.deletedAt = reconciledAt;
+        note.updatedAt = reconciledAt;
+      }
+      todos = todos.filter(todo => !missingTodoIds.has(todo.id));
+      for (const id of missingTodoIds) {
+        try { await clearAlarmsByPrefix(`mtodo:${id}:`); } catch (e) { logError(e, 'workdir-reconcile-alarm'); }
+      }
+      const closedCurrent = (currentNote && missingNoteIds.has(currentNote.id)) || (currentTodo && missingTodoIds.has(currentTodo.id));
+      if (currentNote && missingNoteIds.has(currentNote.id)) currentNote = null;
+      if (currentTodo && missingTodoIds.has(currentTodo.id)) currentTodo = null;
+      if (closedCurrent) {
+        const editor = document.getElementById('editorWrap'); if (editor) editor.style.display = 'none';
+        const todoEditor = document.getElementById('todoEditorWrap'); if (todoEditor) todoEditor.style.display = 'none';
+        const drawing = document.getElementById('drawingWrap'); if (drawing) drawing.style.display = 'none';
+        const empty = document.getElementById('emptyState'); if (empty) empty.style.display = 'flex';
+        const app = document.getElementById('app'); if (app) app.classList.remove('show-editor');
+      }
+      showToast(`工作目录对账：${missingNoteIds.size} 篇笔记、${missingTodoIds.size} 个待办已按磁盘删除同步；恢复副本已保存`);
+      logError(new Error(`recovery=${recovery.key} location=${recovery.location}`), 'workdir-reconcile');
+    }
+
+    if (saveData() === false) throw new Error('工作目录导入完成，但主数据保存失败');
     renderNotebooks();
     renderTagFilters();
     if (currentView.startsWith('todo:')) renderTodos(); else renderNotesList();
     renderTodoCounts();
+    clearWorkdirError();
     _workdirCfg.lastSyncAt = Date.now();
     saveWorkdirCfg();
     renderWorkDirInfo();
@@ -5405,8 +5782,10 @@ async function workdirImportAll(silent) {
     return added;
   } catch (e) {
     logError(e, 'workdir-import');
-    if (!silent) showToast('导入工作目录失败：' + (e && e.message), e && e.stack);
+    recordWorkdirError(e, '导入');
     return 0;
+  } finally {
+    _workdirSyncDepth--;
   }
 }
 
@@ -5436,7 +5815,7 @@ async function forgetWorkDir() {
   const fs = fsApi();
   showModal('停用工作目录？', '将不再把改动写入本地目录（已写出的文件保留在磁盘，不会删除）。', async () => {
     try { if (fs) await fs.forget(); } catch {}
-    _workdirCfg = { enabled: false, lastSyncAt: 0, name: null, lastImportAt: 0 };
+    _workdirCfg = { enabled: false, lastSyncAt: 0, name: null, lastImportAt: 0, lastError: null };
     saveWorkdirCfg();
     renderWorkDirInfo();
     showToast('已停用工作目录');
@@ -5454,20 +5833,126 @@ function renderWorkDirInfo() {
     el.innerHTML = '<span style="color:var(--ink-mute);">未启用（数据仅存本机应用内）</span>';
   } else {
     const last = _workdirCfg.lastSyncAt ? formatFullDate(_workdirCfg.lastSyncAt) : '从未';
+    const error = _workdirCfg.lastError;
     el.innerHTML = `<div><span class="key">路径</span><span class="val" style="word-break:break-all;">${escapeHtml(_workdirCfg.name)}</span></div>
-      <div><span class="key">上次同步</span><span class="val">${last}</span></div>`;
+      <div><span class="key">上次同步</span><span class="val">${last}</span></div>
+      ${error ? `<div><span class="key">同步异常</span><span class="val" style="color:var(--red, #e53e3e);">${escapeHtml(error.message)}（${formatFullDate(error.at)}）</span></div>` : ''}`;
   }
 }
 
 // hook saveData → 工作目录启用时 debounce 写回
 const _origSaveDataWorkdir = saveData;
 saveData = function() {
-  _origSaveDataWorkdir();
-  if (_workdirCfg.enabled && workdirAvailable()) {
+  const saved = _origSaveDataWorkdir();
+  if (saved !== false && _repositoryTransactionDepth === 0 && _workdirSyncDepth === 0 && _workdirCfg.enabled && workdirAvailable()) {
     clearTimeout(_workdirTimer);
     _workdirTimer = setTimeout(() => workdirWriteAll(true), 3000);
   }
+  return saved;
 };
+
+// 统一 Repository / UnitOfWork：AI 与 CLI 的一次业务写操作先在内存快照上执行，
+// 主数据提交失败时恢复快照；工作目录是提交后的异步投影，失败会记录同步错误但不回滚主数据。
+const CHANGESET_SUMMARY_KEY = 'marginote.changeSets.v1';
+const CHANGESET_HISTORY_LIMIT = 30;
+
+function readRepositoryState() {
+  return { notebooks, folders, notes, todos };
+}
+
+function replaceRepositoryState(state) {
+  const currentNoteId = currentNote && currentNote.id;
+  const currentTodoId = currentTodo && currentTodo.id;
+  notebooks = Array.isArray(state.notebooks) ? state.notebooks : [];
+  folders = Array.isArray(state.folders) ? state.folders : [];
+  notes = Array.isArray(state.notes) ? state.notes : [];
+  todos = Array.isArray(state.todos) ? state.todos : [];
+  currentNote = currentNoteId ? notes.find(note => note.id === currentNoteId) || null : null;
+  currentTodo = currentTodoId ? todos.find(todo => todo.id === currentTodoId) || null : null;
+}
+
+function renderRepositoryState() {
+  try { renderNotebooks(); } catch {}
+  try { renderTagFilters(); } catch {}
+  try { if (currentView.startsWith('todo:')) renderTodos(); else renderNotesList(); } catch {}
+  try { renderTodoCounts(); } catch {}
+  try { updateCollectionCount(); } catch {}
+  try {
+    if (currentNote) selectNote(currentNote);
+    else if (currentTodo) selectTodo(currentTodo);
+  } catch {}
+}
+
+function changeSetSummary(changeSet) {
+  return {
+    id: changeSet.id,
+    label: changeSet.label,
+    status: changeSet.status,
+    startedAt: changeSet.startedAt,
+    committedAt: changeSet.committedAt,
+    error: changeSet.error || null,
+    summary: changeSet.summary,
+    changes: changeSet.changes.map(change => ({
+      collection: change.collection,
+      id: change.id,
+      type: change.type,
+      fields: change.fields
+    }))
+  };
+}
+
+async function storeChangeSet(changeSet) {
+  const summary = changeSetSummary(changeSet);
+  try {
+    const history = JSON.parse(localStorage.getItem(CHANGESET_SUMMARY_KEY) || '[]');
+    const next = [summary, ...(Array.isArray(history) ? history : []).filter(item => item && item.id !== summary.id)]
+      .slice(0, CHANGESET_HISTORY_LIMIT);
+    localStorage.setItem(CHANGESET_SUMMARY_KEY, JSON.stringify(next));
+  } catch (error) {
+    logError(error, 'changeset-summary');
+  }
+  if (!_idb) return;
+  try {
+    await idbPut('meta', { key: `changeset:${changeSet.id}`, kind: 'change-set', ...changeSet });
+    const records = (await idbGetAll('meta'))
+      .filter(record => record && record.kind === 'change-set')
+      .sort((a, b) => (b.committedAt || 0) - (a.committedAt || 0));
+    for (const stale of records.slice(CHANGESET_HISTORY_LIMIT)) await idbDelete('meta', stale.key);
+  } catch (error) {
+    logError(error, 'changeset-idb');
+  }
+}
+
+function persistRepositoryState() {
+  if (!persistMainDataNow()) throw new Error('主数据提交失败');
+}
+
+function rollbackRepositoryState(changeSet) {
+  if (changeSet && changeSet.summary && changeSet.summary.total > 0) {
+    rescheduleAllAlarms().catch(error => logError(error, 'repository-rollback-reminders'));
+  }
+  renderRepositoryState();
+  if (changeSet) storeChangeSet(changeSet).catch(error => logError(error, 'repository-rollback-audit'));
+}
+
+if (window.MarginoteRepositoryCore) {
+  window.MarginoteRepository = window.MarginoteRepositoryCore.createRepository({
+    readState: readRepositoryState,
+    replaceState: replaceRepositoryState,
+    onBegin: () => {
+      _repositoryTransactionDepth++;
+    },
+    persist: persistRepositoryState,
+    onCommit: changeSet => { storeChangeSet(changeSet).catch(error => logError(error, 'repository-commit-audit')); },
+    onRollback: rollbackRepositoryState,
+    onEnd: outcome => {
+      _repositoryTransactionDepth = Math.max(0, _repositoryTransactionDepth - 1);
+      const shouldWriteWorkdir = outcome && outcome.committed && outcome.changeSet
+        && _workdirCfg.enabled && workdirAvailable();
+      if (shouldWriteWorkdir) workdirWriteAll(true).catch(error => logError(error, 'repository-workdir'));
+    }
+  });
+}
 
 // 启动：若已启用工作目录，自动从磁盘导入（拖入的 md 会出现）
 (async function initWorkDir() {
@@ -5799,6 +6284,20 @@ if (_origRenderTodos_v121) {
     _origRenderTodos_v121.apply(this, arguments);
     const c = document.getElementById('todoList');
     if (!c) return;
+    const empty = c.querySelector('.todo-empty');
+    if (empty) {
+      const hasSearch = !!document.getElementById('searchInput').value.trim();
+      empty.insertAdjacentHTML('beforeend', hasSearch
+        ? '<button class="empty-action" type="button" data-empty-action="clear-search">清除搜索</button>'
+        : '<button class="empty-action" type="button" data-empty-action="create-todo">新建待办</button>');
+      empty.querySelector('[data-empty-action="clear-search"]')?.addEventListener('click', () => {
+        document.getElementById('searchInput').value = '';
+        renderTodos();
+      });
+      empty.querySelector('[data-empty-action="create-todo"]')?.addEventListener('click', () => {
+        document.getElementById('newTodoBtn').click();
+      });
+    }
     c.querySelectorAll('.todo-row[data-id]').forEach(el => { el.dataset.dragKey = el.dataset.id; });
     enableDragReorder(c, '.todo-row[data-id]', (src, dst) => {
       if (reorderArrayById(todos, src, dst)) {
@@ -6143,13 +6642,27 @@ _runAiActionInternal = async function(action) {
     return _origRunAiActionInternal_v121mm.call(this, action);
   }
   if (!provider) { showToast('未配置 AI 模型'); openAiSettings(); return; }
-  const isTodo = !!currentTodo, isNote = !!currentNote;
+  const todoTarget = currentTodo;
+  const noteTarget = currentNote;
+  const isTodo = !!todoTarget, isNote = !!noteTarget;
   if (!isTodo && !isNote) { showToast('请先选择笔记或待办'); return; }
-  const target = isTodo ? 'todo:' + currentTodo.id : 'note:' + currentNote.id;
-  const title = isTodo ? (currentTodo.text || '') : (currentNote.title || '');
-  const content = isTodo ? (currentTodo.content || '') : (currentNote.content || '');
-  pushAiUndoSnapshot(target, { title, content, ts: Date.now() });
-  const userContent = await buildMultimodalUserContent(provider, title, content);
+  const targetObject = isTodo ? todoTarget : noteTarget;
+  const target = (isTodo ? 'todo:' : 'note:') + targetObject.id;
+  const title = isTodo ? (todoTarget.text || '') : (noteTarget.title || '');
+  let content = targetObject.content || '';
+  const ta = isTodo ? document.getElementById('todoEditContent') : document.getElementById('contentInput');
+  if (ta && ta.value !== content) {
+    content = ta.value;
+    targetObject.content = content;
+    if (!isTodo) targetObject.updatedAt = Date.now();
+    saveData();
+  }
+  const selection = ta && ta.selectionEnd > ta.selectionStart
+    ? { start: ta.selectionStart, end: ta.selectionEnd }
+    : null;
+  const edit = window.MarginoteAiEditCore.createTextEdit(targetObject, action.mode, isTodo ? 'todo' : 'note', { selection });
+  const input = edit.selection ? `【仅处理以下选中文本】\n${edit.input}` : edit.input;
+  const userContent = await buildMultimodalUserContent(provider, title, input);
   const messages = [];
   const sysParts = [];
   if (provider.system) sysParts.push(provider.system);
@@ -6158,38 +6671,44 @@ _runAiActionInternal = async function(action) {
   messages.push({ role: 'user', content: userContent });
 
   setAiBusy(true);
-  const ta = isTodo ? document.getElementById('todoEditContent') : document.getElementById('contentInput');
-  const baseContent = action.mode === 'append' ? (content + (content ? '\n\n' : '')) : '';
   try {
     const reply = await callAi(messages, {
       stream: true,
       onDelta: (d, full) => {
-        if (isTodo) {
-          currentTodo.content = baseContent + full;
-          if (ta) ta.value = currentTodo.content;
-          if (isTodoPreviewMode) document.getElementById('todoPreview').innerHTML = renderMarkdown(currentTodo.content);
-        } else {
-          currentNote.content = baseContent + full;
-          if (ta) ta.value = currentNote.content;
-          if (isPreviewMode) applyNotePreview(currentNote);
-        }
+        if ((isTodo && currentTodo !== todoTarget) || (!isTodo && currentNote !== noteTarget)) return;
+        const draft = edit.draft(full);
+        if (ta) ta.value = draft;
+        if (isTodo && isTodoPreviewMode) document.getElementById('todoPreview').innerHTML = renderMarkdown(draft);
+        if (!isTodo && isPreviewMode) document.getElementById('preview').innerHTML = renderMarkdown(draft);
       }
     });
+    pushAiUndoSnapshot(target, { title, content, ts: Date.now() });
+    const committed = edit.commit(reply, Date.now());
     if (isTodo) {
-      currentTodo.content = baseContent + reply;
       saveData();
-      const st = document.getElementById('todoEditStatus'); if (st) st.textContent = '已保存 · AI 已应用';
+      if (currentTodo === todoTarget) {
+        if (ta) ta.value = committed;
+        if (isTodoPreviewMode) document.getElementById('todoPreview').innerHTML = renderMarkdown(committed);
+        const st = document.getElementById('todoEditStatus'); if (st) st.textContent = '已保存 · AI 已应用';
+      }
       renderTodos();
     } else {
-      currentNote.content = baseContent + reply;
-      currentNote.updatedAt = Date.now();
       saveData();
-      const st = document.getElementById('editorStatus'); if (st) st.textContent = '已保存 · AI 已应用';
-      updateWordCount();
+      if (currentNote === noteTarget) {
+        if (ta) ta.value = committed;
+        if (isPreviewMode) applyNotePreview(noteTarget);
+        const st = document.getElementById('editorStatus'); if (st) st.textContent = '已保存 · AI 已应用';
+        updateWordCount();
+      }
       renderNotesList();
     }
-    showToast('AI 已优化 ✓ 可在 AI 菜单撤销');
+    showToast(edit.selection ? 'AI 已应用到选中文本 ✓ 可撤销' : 'AI 已优化 ✓ 可在 AI 菜单撤销');
   } catch (e) {
+    if ((isTodo && currentTodo === todoTarget) || (!isTodo && currentNote === noteTarget)) {
+      if (ta) ta.value = edit.original;
+      if (isTodo && isTodoPreviewMode) document.getElementById('todoPreview').innerHTML = renderMarkdown(edit.original);
+      if (!isTodo && isPreviewMode) applyNotePreview(noteTarget);
+    }
     logError(e, 'ai-stream-mm');
     showToast('AI 失败：' + (e.message || e), e && e.stack);
   } finally {
@@ -6211,12 +6730,21 @@ function cleanTitleText(s) {
 async function runAiTitleAction(action) {
   const provider = getActiveProvider();
   if (!provider) { showToast('未配置 AI 模型'); openAiSettings(); return; }
-  const isTodo = !!currentTodo, isNote = !!currentNote;
+  const todoTarget = currentTodo;
+  const noteTarget = currentNote;
+  const isTodo = !!todoTarget, isNote = !!noteTarget;
   if (!isTodo && !isNote) { showToast('请先选择笔记或待办'); return; }
-  const target = isTodo ? 'todo:' + currentTodo.id : 'note:' + currentNote.id;
-  const oldTitle = isTodo ? (currentTodo.text || '') : (currentNote.title || '');
-  const content = isTodo ? (currentTodo.content || '') : (currentNote.content || '');
-  pushAiUndoSnapshot(target, { title: oldTitle, content, ts: Date.now() });
+  const targetObject = isTodo ? todoTarget : noteTarget;
+  const target = (isTodo ? 'todo:' : 'note:') + targetObject.id;
+  const oldTitle = isTodo ? (todoTarget.text || '') : (noteTarget.title || '');
+  let content = targetObject.content || '';
+  const contentInput = isTodo ? document.getElementById('todoEditContent') : document.getElementById('contentInput');
+  if (contentInput && contentInput.value !== content) {
+    content = contentInput.value;
+    targetObject.content = content;
+    if (!isTodo) targetObject.updatedAt = Date.now();
+    saveData();
+  }
   const userContent = await buildMultimodalUserContent(provider, oldTitle, content);
   const messages = [];
   const sysParts = [];
@@ -6232,27 +6760,33 @@ async function runAiTitleAction(action) {
       stream: true,
       onDelta: (d, full) => {
         const t = cleanTitleText(full);
-        if (!isTodo && titleInput) titleInput.value = t;
+        if (!isTodo && currentNote === noteTarget && titleInput) titleInput.value = t;
       }
     });
     const clean = cleanTitleText(reply) || oldTitle;
+    pushAiUndoSnapshot(target, { title: oldTitle, content, ts: Date.now() });
     if (isTodo) {
-      currentTodo.text = clean;
+      todoTarget.text = clean;
       saveData();
       renderTodos();
-      const st = document.getElementById('todoEditStatus');
-      if (st) st.textContent = '已保存 · AI 已更新标题';
+      if (currentTodo === todoTarget) {
+        const st = document.getElementById('todoEditStatus');
+        if (st) st.textContent = '已保存 · AI 已更新标题';
+      }
     } else {
-      currentNote.title = clean;
-      currentNote.updatedAt = Date.now();
+      noteTarget.title = clean;
+      noteTarget.updatedAt = Date.now();
       saveData();
-      if (titleInput) titleInput.value = clean;
-      const st = document.getElementById('editorStatus');
-      if (st) st.textContent = '已保存 · AI 已更新标题';
+      if (currentNote === noteTarget) {
+        if (titleInput) titleInput.value = clean;
+        const st = document.getElementById('editorStatus');
+        if (st) st.textContent = '已保存 · AI 已更新标题';
+      }
       renderNotesList();
     }
     showToast('AI 标题已应用 ✓ 可在 AI 菜单撤销');
   } catch (e) {
+    if (!isTodo && currentNote === noteTarget && titleInput) titleInput.value = oldTitle;
     logError(e, 'ai-title');
     showToast('AI 失败：' + (e.message || e), e && e.stack);
   } finally {

@@ -11,7 +11,7 @@
 [![Edge](https://img.shields.io/badge/Edge-supported-success.svg)](https://www.microsoft.com/edge)
 [![Windows](https://img.shields.io/badge/Windows-.exe-blue.svg)](https://github.com/Joeklepko/marginote/releases)
 
-*Marginote — 取自 marginal note（页边批注），让灵感落在浏览器侧边*
+*Marginote — 面向 Windows 与本地 Agent 的 AI 原生个人笔记库，浏览器扩展保持兼容*
 
 [功能](#-核心功能) · [安装](#-安装) · [截图](#-截图) · [AI 配置](#-ai-提供商) · [隐私](#-隐私与数据) · [常见问题](#-faq)
 
@@ -32,7 +32,7 @@
 | 💾 **备份** | 一键导出 zip（笔记 + 图片 + 待办 + 配置），定期自动备份到下载目录 |
 | 🔍 **搜索** | 全文 + 标题 + 标签 + 笔记本范围过滤 |
 | ⌨️ **快捷键** | `Ctrl+N` 新建、`Ctrl+B/I` 加粗斜体、`Ctrl+S` 立即保存、`Ctrl+K` 搜索 |
-| 🌐 **离线** | 100% 本地存储（`chrome.storage.local`），无服务端依赖 |
+| 🌐 **本地优先** | 桌面版使用本机 WebView 数据与可选 Markdown 工作目录；扩展版使用 `chrome.storage.local` |
 
 ---
 
@@ -57,8 +57,10 @@
 
 ```powershell
 marginote-cli status
+marginote-cli instructions
 marginote-cli note list --query "项目" --json
 marginote-cli note create "来自 agent" --content "接口已联调完成" --notebook 工作 --tag agent --json
+marginote-cli note create "发布记录" --content "1.2.4" --dry-run --json
 ```
 
 完整命令、Claude Code 配置建议与安全模型见 [Marginote CLI 文档](docs/cli.md)。
@@ -66,7 +68,7 @@ marginote-cli note create "来自 agent" --content "接口已联调完成" --not
 ### 方式 B · Chrome 扩展（推荐开发者 / Linux/macOS）
 
 ```bash
-git clone -b dev_exe https://github.com/Joeklepko/marginote.git
+git clone -b dev https://github.com/Joeklepko/marginote.git
 ```
 
 1. 浏览器打开 `chrome://extensions/`（Edge 用 `edge://extensions/`）
@@ -74,7 +76,7 @@ git clone -b dev_exe https://github.com/Joeklepko/marginote.git
 3. 点击 **加载已解压的扩展程序** → 选择 `marginote/extension/` 目录（扩展已自包含，无需额外构建）
 4. 点工具栏 Marginote 图标即可使用
 
-> 提示：在 master 分支老结构上，扩展文件直接在仓库根目录，加载该目录即可。`dev_exe` 之后做了 monorepo 重组。
+> 提示：当前 `dev` 分支采用 monorepo 结构；扩展入口固定为 `extension/`，桌面共享前端位于 `shared/`。
 
 ---
 
@@ -112,22 +114,25 @@ git clone -b dev_exe https://github.com/Joeklepko/marginote.git
 
 设置入口：左栏 ⚙️ → AI 配置 → 选 Provider + 填 Key + 选模型。
 
+内置 AI 的 Skill、动作权限、上下文边界和工具扩展规范见 [AI Skills 开发者规格](docs/ai-skills.md)。
+
 ---
 
 ## 🔒 隐私与数据
 
-- **零联网**：除主动调用 AI Provider 外，**不发送任何数据**
-- **本地存储**：所有内容存于 `chrome.storage.local`，路径见 [文件位置](#存储路径)
+- **本地优先**：笔记、待办和配置不上传到 Marginote 服务端；调用 AI 时，只把本轮所需上下文发送到用户配置的 Provider
+- **离线字体**：界面只使用本机系统字体，不会为字体资源访问第三方服务
+- **本地存储**：桌面版默认使用 WebView 本地数据，并可绑定 Markdown 工作目录；扩展版使用 `chrome.storage.local`
+- **密钥说明**：AI API Key 仅保存在本机应用存储中，但当前未做操作系统密钥链加密
 - **无遥测**：无统计、无上报、无远程加载脚本
-- **CSP 严格**：`script-src 'self'`，禁止内联 / 远程脚本执行
+- **CSP**：禁止远程脚本；桌面版因现有单页结构暂保留本地内联脚本/样式权限
 
 ### 存储路径
 
-| OS | 路径 |
+| 运行形态 | 位置 |
 |----|------|
-| Windows | `%LOCALAPPDATA%\Google\Chrome\User Data\Default\Local Extension Settings\<id>\` |
-| macOS | `~/Library/Application Support/Google/Chrome/Default/Local Extension Settings/<id>/` |
-| Linux | `~/.config/google-chrome/Default/Local Extension Settings/<id>/` |
+| Windows 桌面版 | 应用内部数据由 WebView2 管理；建议在「设置 → 导入·导出」绑定可见的 Markdown 工作目录并定期导出 ZIP。工作目录写入使用原子替换，启动会对账外部新增、修改和删除 |
+| Chrome / Edge 扩展 | 浏览器用户目录下的 `Local Extension Settings/<扩展 ID>/` |
 
 > 卸载扩展会清空所有数据。卸载前务必导出 zip。
 
@@ -162,13 +167,18 @@ git clone -b dev_exe https://github.com/Joeklepko/marginote.git
 
 ```
 marginote/
-├── manifest.json        # MV3 配置
-├── background.js        # service worker (alarms + notifications)
-├── index.html           # 主界面
-├── app.js               # 主逻辑（约 160KB）
-├── manual.md            # 完整功能说明书
-├── vendor/jszip.min.js  # zip 编解码
-└── icons/icon{16,48,128}.png
+├── shared/              # Windows 桌面版共享前端与核心业务
+│   ├── index.html
+│   ├── app.js
+│   └── js/              # AI、CLI 桥、平台适配与可测试纯逻辑
+├── desktop/
+│   ├── src-tauri/       # Tauri/Rust 桌面壳、存储、提醒与 CLI 桥
+│   └── cli/             # marginote-cli Rust 客户端
+├── extension/           # 可直接加载的 Chrome/Edge MV3 扩展
+├── test/                # Node 纯逻辑与静态资源回归测试
+├── scripts/             # 跨平台检查、测试与扩展核心同步入口
+├── docs/                # CLI、架构设计与实施文档
+└── .github/workflows/   # Windows 测试、构建与发版
 ```
 
 ---
@@ -188,7 +198,7 @@ marginote/
 <details>
 <summary><b>多设备同步？</b></summary>
 
-不支持自动同步。手动方案：左下角「数据 · 备份」→ 导出 zip → 另一台浏览器导入。
+不内置云服务。可以通过「数据 · 备份」导出 ZIP，或把 Markdown 工作目录放进 OneDrive 等同步盘；多设备同时编辑时需由同步盘处理冲突。
 </details>
 
 <details>
@@ -201,11 +211,15 @@ marginote/
 
 ## 🤝 贡献
 
-欢迎 Issue 与 PR。建议先开 Issue 讨论方案再写代码。
+欢迎 Issue 与 PR。修改前可先阅读 [架构边界](docs/architecture.md)；提交前运行统一门禁：
 
 ```bash
-# Fork → clone → 改代码 → 在 chrome://extensions 加载未打包扩展测试
+npm run verify
+# 修改共享 AI 核心后需要刷新扩展生成副本
+npm run sync:extension
 ```
+
+涉及界面的修改还需在 `chrome://extensions` 加载 `extension/`，并运行桌面版做实际交互验证。
 
 ---
 

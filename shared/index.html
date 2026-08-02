@@ -4,12 +4,6 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Marginote · 笔记本</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<!-- 字体非阻塞加载：先用系统字体瞬间渲染首屏，网络字体到位后再平滑替换（离线/慢网不再白屏卡住）。
-     media=print 让该样式表不阻塞首屏渲染，onload 后切回 all 生效；无 JS 时用 noscript 兜底。 -->
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,300;0,9..144,400;0,9..144,500;0,9..144,600;0,9..144,700;1,9..144,400&family=Noto+Serif+SC:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" media="print" onload="this.media='all'">
-<noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,300;0,9..144,400;0,9..144,500;0,9..144,600;0,9..144,700;1,9..144,400&family=Noto+Serif+SC:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"></noscript>
 <!-- JSZip 仅备份/导入时用,defer 出首屏关键路径(调用处已有 typeof 守卫) -->
 <script defer src="vendor/jszip.min.js"></script>
 <script src="vendor/markdown-it.min.js"></script>
@@ -17,6 +11,10 @@
 <!-- 平台抽象层（桌面端 Tauri 直接静态加载，避免动态 loader 竞态） -->
 <script src="js/platform.js"></script>
 <script src="js/platform-desktop.js"></script>
+<script src="js/reminder-core.js"></script>
+<script src="js/data-core.js"></script>
+<script src="js/repository-core.js"></script>
+<script src="js/ai-edit-core.js"></script>
 <style>
   :root {
     --bg: #f4efe6;
@@ -36,8 +34,7 @@
     --highlight: #f5d76e;
     --shadow-soft: 0 1px 0 rgba(26, 24, 20, 0.04), 0 8px 24px -12px rgba(26, 24, 20, 0.12);
     --shadow-deep: 0 2px 0 rgba(26, 24, 20, 0.04), 0 24px 48px -16px rgba(26, 24, 20, 0.18);
-    /* UI 字体栈：Latin 走 Inter / 系统 sans，CJK 走 PingFang / 微软雅黑 / Noto Sans SC。
-       Fraunces 只用于正文与大标题；rail / 标签 / 控件用 sans 在小号下更清晰。 */
+    /* 完全本地的系统字体栈，启动时不向第三方字体服务发起网络请求。 */
     --font-ui: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI',
                'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei',
                'Source Han Sans SC', 'Noto Sans SC', 'Helvetica Neue', sans-serif;
@@ -88,6 +85,76 @@
   }
   .app.rail-collapsed {
     grid-template-columns: 52px 320px 1fr;
+  }
+
+  /* ====== 桌面 CLI 状态栏 ====== */
+  .cli-status-bar {
+    display: none;
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 220;
+    height: 30px;
+    align-items: center;
+    gap: 8px;
+    padding: 0 14px;
+    border-top: 1px solid var(--rule);
+    background: color-mix(in srgb, var(--bg-warm) 94%, transparent);
+    color: var(--ink-soft);
+    font: 11px/1 var(--font-ui-mono);
+    box-shadow: 0 -4px 14px rgba(26, 24, 20, 0.05);
+    backdrop-filter: blur(12px);
+  }
+  body.is-desktop .cli-status-bar { display: flex; }
+  body.is-desktop .app { height: calc(100vh - 30px); }
+  body.is-desktop .app.reading-mode .editor { height: calc(100vh - 30px); }
+  body.is-desktop .toast { bottom: 48px; }
+  .cli-status-brand {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    flex-shrink: 0;
+    color: var(--ink);
+    font-weight: 600;
+    letter-spacing: 0.04em;
+  }
+  .cli-status-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--ink-mute);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--ink-mute) 14%, transparent);
+  }
+  .cli-status-bar[data-state="running"] .cli-status-dot {
+    background: var(--accent);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent);
+    animation: cli-status-pulse 1.2s ease-in-out infinite;
+  }
+  .cli-status-bar[data-state="success"] .cli-status-dot {
+    background: var(--success);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--success) 16%, transparent);
+  }
+  .cli-status-bar[data-state="error"] .cli-status-dot {
+    background: var(--danger);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--danger) 16%, transparent);
+  }
+  .cli-status-separator { width: 1px; height: 13px; background: var(--rule); flex-shrink: 0; }
+  .cli-status-state { flex-shrink: 0; color: var(--ink-soft); }
+  .cli-status-task {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--ink);
+  }
+  .cli-status-meta { margin-left: auto; flex-shrink: 0; color: var(--ink-mute); }
+  @keyframes cli-status-pulse {
+    0%, 100% { transform: scale(0.86); opacity: 0.68; }
+    50% { transform: scale(1.14); opacity: 1; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .cli-status-bar[data-state="running"] .cli-status-dot { animation: none; }
   }
 
   /* ====== 左侧笔记本侧栏 ====== */
@@ -410,7 +477,8 @@
     padding-left: 4px;
     gap: 1px;
   }
-  .rail-item:hover .nb-actions { display: flex; }
+  .rail-item:hover .nb-actions,
+  .rail-item:focus-within .nb-actions { display: flex; }
   .rail-item:hover .rail-item-count { display: none; }
 
   .nb-actions button {
@@ -496,7 +564,8 @@
     background: inherit;
     padding-left: 4px;
   }
-  .rail-folder-item:hover .nb-actions { display: flex; }
+  .rail-folder-item:hover .nb-actions,
+  .rail-folder-item:focus-within .nb-actions { display: flex; }
   .rail-folder-item:hover .rail-item-count { display: none; }
   .rail-folder-item .nb-actions button {
     width: 24px;
@@ -1020,6 +1089,20 @@
     font-style: italic;
     font-size: 14px;
   }
+
+  .empty-list,
+  .todo-empty { display: flex; flex-direction: column; align-items: center; gap: 12px; }
+  .empty-action {
+    border: 1px solid var(--rule);
+    background: var(--paper);
+    color: var(--ink);
+    border-radius: 6px;
+    padding: 7px 13px;
+    font: inherit;
+    font-style: normal;
+    cursor: pointer;
+  }
+  .empty-action:hover { border-color: var(--accent); color: var(--accent); }
 
   /* ====== 编辑器 ====== */
   .editor {
@@ -2014,6 +2097,10 @@
   .assistant-receipt.cancelled { border-left: 3px solid var(--ink-mute); }
   .assistant-receipt.cancelled .assistant-receipt-icon { color: var(--ink-mute); }
   .assistant-receipt-text { flex: 1; min-width: 0; color: var(--ink-soft); }
+  .assistant-receipt-audit {
+    color: var(--ink-mute); font: 10px var(--font-mono); white-space: nowrap;
+    padding: 2px 4px; border: 1px solid var(--rule-soft); border-radius: 4px;
+  }
   .assistant-receipt-open {
     border: none; background: transparent; color: var(--accent); cursor: pointer;
     padding: 3px 5px; font: 12px var(--font-ui); white-space: nowrap;
@@ -2425,6 +2512,7 @@
     color: var(--ink-mute);
     letter-spacing: 0.05em;
     text-transform: uppercase;
+    flex-wrap: wrap;
   }
   .todo-due {
     display: inline-flex;
@@ -2432,6 +2520,7 @@
     gap: 4px;
   }
   .todo-due.overdue { color: var(--accent); font-weight: 500; }
+  .todo-snoozed { color: var(--accent); font-weight: 500; }
   .todo-del {
     width: 26px;
     height: 26px;
@@ -2445,7 +2534,8 @@
     flex-shrink: 0;
     transition: all 0.15s;
   }
-  .todo-row:hover .todo-del { display: grid; }
+  .todo-row:hover .todo-del,
+  .todo-row:focus-within .todo-del { display: grid; }
   .todo-del:hover { color: var(--accent); background: var(--rule-soft); }
   .todo-del svg { width: 13px; height: 13px; }
 
@@ -2693,8 +2783,8 @@
     font-size: 10px;
     margin-top: 4px;
   }
-  body:not(.is-ext) .ext-only-tip { display: block; }
-  body:not(.is-ext) .todo-remind-row { opacity: 0.55; }
+  body:not(.is-ext):not(.is-desktop) .ext-only-tip { display: block; }
+  body:not(.is-ext):not(.is-desktop) .todo-remind-row { opacity: 0.55; }
 
   /* ====== 存储 / 备份 模态框 ====== */
   .storage-info {
@@ -3977,7 +4067,7 @@
             / <input type="number" id="todoRemindInterval" min="1" max="1440" step="1" value="5"> 分
           </div>
         </div>
-        <div class="ext-only-tip">提醒功能仅在浏览器扩展中可用</div>
+        <div class="ext-only-tip">提醒功能仅在 Windows 桌面版或浏览器扩展中可用</div>
       </div>
       <div class="todo-list" id="todoList"></div>
     </div>
@@ -4028,6 +4118,7 @@
       <div class="ornament">¶</div>
       <h2>open a leaf, or write a new one</h2>
       <p>左侧选择一篇笔记开始阅读，或创建一篇新的笔记。所有文字都会自动保存到本地。</p>
+      <button class="empty-action" id="emptyNewNoteBtn" type="button">新建第一篇笔记</button>
       <div class="kbd"><kbd>⌘</kbd> + <kbd>N</kbd> 新建 · <kbd>⌘</kbd> + <kbd>S</kbd> 保存 · <kbd>⌘</kbd> + <kbd>K</kbd> 搜索</div>
     </div>
 
@@ -4253,6 +4344,7 @@
             <button class="assistant-attach-btn" id="assistantAttachBtn" title="附加笔记 / 待办">
               <svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24" style="width:16px;height:16px"><path stroke-linecap="round" stroke-linejoin="round" d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48"/></svg>
             </button>
+            <button class="assistant-attach-btn" id="assistantCurrentBtn" title="附加当前笔记、待办或选中文本" aria-label="附加当前内容">◎</button>
             <textarea id="assistantInput" rows="1" placeholder="输入消息，可多行（Enter 换行，Ctrl/⌘+Enter 发送）"></textarea>
             <button class="assistant-send-btn" id="assistantSendBtn">发送</button>
           </div>
@@ -4260,6 +4352,14 @@
       </div>
     </div>
   </main>
+</div>
+
+<div class="cli-status-bar" id="cliStatusBar" data-state="idle" role="status" aria-live="polite" aria-label="CLI 执行状态">
+  <span class="cli-status-brand"><span class="cli-status-dot" aria-hidden="true"></span>CLI</span>
+  <span class="cli-status-separator" aria-hidden="true"></span>
+  <span class="cli-status-state" id="cliStatusState">就绪</span>
+  <span class="cli-status-task" id="cliStatusTask">等待本地 Agent 任务</span>
+  <span class="cli-status-meta" id="cliStatusMeta" aria-hidden="true"></span>
 </div>
 
 <div class="toast" id="toast"></div>
@@ -4510,6 +4610,8 @@
           <button id="deleteAllDrawingsBtn" title="画板功能已移除，一次性删除所有旧画板笔记（避免逐个删卡死）">🧹 删除所有画板</button>
         </div>
         <div class="settings-label-mono" style="margin-bottom: 16px;">选择后，新增/修改的笔记与待办会以 .md 实时保存到该目录（笔记本/文件夹/标题.md，待办在「待办」子目录，图片在 _assets）。把外部 .md 放进目录后点「扫描导入」即可出现在应用中。卸载软件或扩展不会删除这些文件。扩展端需 Chrome/Edge 100+，重装后重新选择同一目录即可。</div>
+        <p class="settings-section-title">最近 AI / CLI 变更 <span id="changeSetCount" style="color:var(--accent);">(0)</span></p>
+        <div class="error-log-list" id="changeSetList" style="margin-bottom:16px;"></div>
         <p class="settings-section-title" style="display:flex;justify-content:space-between;align-items:center;">
           <span>错误日志 <span id="errorLogCount" style="color:var(--accent);">(0)</span></span>
           <button class="modal-btn" id="errorLogClearBtn" style="padding:4px 10px;font-size:11px;">清空</button>
@@ -4792,11 +4894,16 @@
 <script src="js/appearance.js"></script>
 <script src="js/trash-core.js"></script>
 <script src="js/import-plan.js"></script>
+<script src="js/workdir-core.js"></script>
 <script src="js/editor-ui-core.js"></script>
+<script src="js/ai-provider-core.js"></script>
 <script src="app.js"></script>
 <script src="js/trash.js"></script>
 <script src="js/drawing.js"></script>
+<script src="js/tool-policy-core.js"></script>
+<script src="js/assistant-skill-core.js"></script>
 <script src="js/assistant-core.js"></script>
+<script src="js/assistant-prompt-core.js"></script>
 <script src="js/assistant.js"></script>
 <script src="js/cli-core.js"></script>
 <script src="js/cli-bridge.js"></script>

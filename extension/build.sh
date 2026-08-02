@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
-# Marginote · Chrome 扩展构建脚本
-# ⚠️ 此脚本已弃用。扩展已改为自包含，下载后直接在 Chrome 加载 extension/ 目录即可，无需运行此脚本。
-# 本文件保留仅用于兼容旧文档。删除此文件不影响任何功能。
-echo "⚠️  Marginote 扩展已自包含，无需运行 build.sh。在 Chrome 中直接加载 extension/ 目录即可。"
-exit 0
+# Marginote · Chrome 扩展准备脚本
+# 扩展仍可直接加载；本脚本负责刷新由 shared 生成的纯逻辑核心并执行资源回归。
+set -euo pipefail
+cd "$(dirname "$0")/.."
+node scripts/sync-extension-cores.mjs
+node test/static-assets.test.js
+echo "Marginote 扩展核心已同步，可加载 extension/ 目录。"

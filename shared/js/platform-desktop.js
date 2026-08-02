@@ -196,36 +196,33 @@
       try { await invoke('cmd_workdir_forget'); } catch (e) {}
     },
     async list() {
-      try { return (await invoke('cmd_workdir_list')) || []; }
-      catch (e) { return []; }
+      return (await invoke('cmd_workdir_list')) || [];
     },
     async readText(relPath) {
-      try { return await invoke('cmd_workdir_read_text', { rel: relPath }); }
-      catch (e) { return null; }
+      return await invoke('cmd_workdir_read_text', { rel: relPath });
     },
     async writeText(relPath, text) {
-      try { await invoke('cmd_workdir_write_text', { rel: relPath, text }); return true; }
-      catch (e) { console.warn('workdir_write_text fail', e); return false; }
+      await invoke('cmd_workdir_write_text', { rel: relPath, text });
+      return true;
     },
     async readBinary(relPath) {
-      try { return await invoke('cmd_workdir_read_binary', { rel: relPath }); }
-      catch (e) { return null; }
+      return await invoke('cmd_workdir_read_binary', { rel: relPath });
     },
     async writeBinary(relPath, base64) {
-      try { await invoke('cmd_workdir_write_binary', { rel: relPath, b64: base64 }); return true; }
-      catch (e) { console.warn('workdir_write_binary fail', e); return false; }
+      await invoke('cmd_workdir_write_binary', { rel: relPath, b64: base64 });
+      return true;
     },
     async remove(relPath) {
-      try { await invoke('cmd_workdir_remove', { rel: relPath }); return true; }
-      catch (e) { return false; }
+      await invoke('cmd_workdir_remove', { rel: relPath });
+      return true;
     },
     async mkdir(relPath) {
-      try { await invoke('cmd_workdir_mkdir', { rel: relPath }); return true; }
-      catch (e) { console.warn('workdir_mkdir fail', e); return false; }
+      await invoke('cmd_workdir_mkdir', { rel: relPath });
+      return true;
     },
     async move(fromRel, toRel) {
-      try { await invoke('cmd_workdir_move', { from: fromRel, to: toRel }); return true; }
-      catch (e) { console.warn('workdir_move fail', e); return false; }
+      await invoke('cmd_workdir_move', { from: fromRel, to: toRel });
+      return true;
     },
   };
 

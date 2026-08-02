@@ -10,6 +10,11 @@
 // =====================================================================
 const ASSISTANT_GROUPS_KEY = 'marginote.assistantGroups';
 const ASSISTANT_HISTORY_MAX = 200;
+const ToolPolicy = window.MarginoteToolPolicyCore;
+const SkillCore = window.MarginoteAssistantSkillCore;
+const AssistantCore = window.MarginoteAssistantCore;
+const PromptCore = window.MarginoteAssistantPromptCore;
+if (!ToolPolicy || !SkillCore || !AssistantCore || !PromptCore) throw new Error('Marginote AI 核心模块未完整加载');
 // 数据结构：assistantGroups = [{id, name, createdAt, sessions: [{id, name, createdAt, messages: [...]}]}]
 let assistantGroups = [];
 let assistantActiveGroupId = null;
@@ -219,6 +224,32 @@ function addPendingAttachment(type, id, title) {
   renderPendingAttachments();
 }
 
+function addPendingSelection(id, title, content) {
+  const text = String(content || '');
+  if (!text.trim()) return;
+  pendingAttachments = pendingAttachments.filter(item => item.type !== 'selection');
+  pendingAttachments.push({ type: 'selection', id, title: String(title || '当前选区'), content: text });
+  renderPendingAttachments();
+}
+
+function attachCurrentAssistantContext() {
+  const target = currentTodo || currentNote;
+  if (!target) { if (typeof showToast === 'function') showToast('请先打开一篇笔记或待办'); return; }
+  const isTodo = !!currentTodo;
+  const textarea = document.getElementById(isTodo ? 'todoEditContent' : 'contentInput');
+  if (textarea && textarea.selectionEnd > textarea.selectionStart) {
+    const selected = textarea.value.slice(textarea.selectionStart, textarea.selectionEnd);
+    if (selected.trim()) {
+      const title = isTodo ? (currentTodo.text || '待办选区') : (currentNote.title || '笔记选区');
+      addPendingSelection(target.id, title, selected);
+      if (typeof showToast === 'function') showToast('已附加选中文本（只读上下文）');
+      return;
+    }
+  }
+  addPendingAttachment(isTodo ? 'todo' : 'note', target.id, isTodo ? target.text : target.title);
+  if (typeof showToast === 'function') showToast(isTodo ? '已附加当前待办' : '已附加当前笔记');
+}
+
 function addPendingImage(dataUrl, name) {
   if (!dataUrl) return;
   pendingAttachments.push({ type: 'image', dataUrl, name: String(name || 'image') });
@@ -279,6 +310,11 @@ function renderPendingAttachments() {
       return `<span class="attach-pill image" title="图片附件 — 点击移除" data-remove="${i}">
         <span class="attach-type-badge" style="background:#fef3c7;color:#92400e;">IMG</span>
         ${escapeHtml((a.name || 'image').slice(0, 20))}
+      </span>`;
+    }
+    if (a.type === 'selection') {
+      return `<span class="attach-pill" title="只读选中文本: ${escapeHtml(a.title || '')} — 点击移除" data-remove="${i}">
+        <span class="attach-type-badge note">选</span>${escapeHtml(String(a.title || '当前选区').slice(0, 24))}
       </span>`;
     }
     const badge = a.type === 'note' ? '<span class="attach-type-badge note">md</span>' : '<span class="attach-type-badge todo">✓</span>';
@@ -428,34 +464,22 @@ const ASSISTANT_TOOLS = {
     })
   },
   search_notes: {
-    desc: '搜索笔记。{query?, limit?(默认30)}',
-    run: ({ query, limit }) => {
+    desc: '搜索笔记(标题+正文+标签+笔记本,中文相关度排序,支持分页)。{query?, limit?(默认12,最大200), cursor?(默认0)}',
+    run: ({ query, limit, cursor }) => {
       const q = String(query || '').trim().toLowerCase();
-      const lim = Math.max(1, Math.min(200, parseInt(limit, 10) || _ctxLimit(30, 50, 80)));
-      let list = notes.filter(n => !n.deleted);
-      if (q) {
-        const terms = q.split(/\s+/).filter(Boolean);
-        list = list.filter(n => {
-          const title = (n.title || '').toLowerCase();
-          const content = (n.content || '').toLowerCase();
-          return terms.some(t => title.includes(t) || content.includes(t));
-        });
-        if (!list.length) {
-          list = notes.filter(n => !n.deleted).filter(n => {
-            const chars = q.replace(/\s+/g, '').split('');
-            const blob = ((n.title || '') + (n.content || '')).toLowerCase();
-            return chars.every(c => blob.includes(c));
-          });
-        }
-      }
-      return list
-        .sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))
-        .slice(0, lim)
-        .map(n => {
-          const nb = notebooks.find(x => x.id === n.notebookId);
-          return { id: n.id, title: n.title || '(无标题)', snippet: extractSnippet(n.content, q, _ctxLimit(200, 400, 800)), notebookName: nb?.name || '', tags: n.tags || [], updatedAt: n.updatedAt };
-        });
+      const lim = Math.max(1, Math.min(200, parseInt(limit, 10) || 12));
+      const offset = Math.max(0, parseInt(cursor, 10) || 0);
+      return AssistantCore.rankNotes(notes, notebooks, q, lim, offset).map(item => {
+        const n = item.note;
+        const nb = notebooks.find(x => x.id === n.notebookId);
+        const snippetQuery = (item.tokens || []).slice().sort((a, b) => b.length - a.length).join(' ');
+        return { id: n.id, title: n.title || '(无标题)', snippet: extractSnippet(n.content, snippetQuery || q, _ctxLimit(240, 700, 1000)), notebookName: nb?.name || '', tags: n.tags || [], starred: !!n.starred, updatedAt: n.updatedAt, relevance: Math.round((item.score || 0) * 10) / 10 };
+      });
     }
+  },
+  query_notes: {
+    desc: '结构化查询/列出笔记并返回精确总数和分页结果。{query?, where?:[{field:"id|title|content|notebook|tag|type|starred|title_length|content_length|created_at|updated_at", operator:"empty|not_empty|equals|not_equals|contains|not_contains|starts_with|ends_with|eq|ne|lt|lte|gt|gte|before|after|on_or_before|on_or_after", value?}], combine?:"all"|"any", cursor?, limit?(最大100)}',
+    run: args => AssistantCore.queryNotes(notes, notebooks, args || {})
   },
   search_todos: {
     desc: '搜索待办。{query?, status?"active"|"done"|"overdue"|"all", due?"today"|"overdue"|"week", limit?}',
@@ -759,6 +783,22 @@ const ASSISTANT_TOOLS = {
         }
       } catch {}
       return { success, failed, details };
+    }
+  },
+  delete_notes_by_query: {
+    desc: '删除全部符合结构化查询的笔记，不受分页数量限制；必须先用query_notes核对。{query?, where:[{field,operator,value?}], combine?:"all"|"any"}；执行前显示精确数量并要求确认',
+    run: async args => {
+      const confirmedIds = Array.isArray(args?.__confirmedNoteIds) ? args.__confirmedNoteIds.slice() : null;
+      if (!confirmedIds) throw new Error('条件批量删除必须先经过用户确认');
+      delete args.__confirmedNoteIds;
+      const noteQuery = AssistantCore.normalizeNoteQuery(args);
+      if (!noteQuery.query && !noteQuery.where.length) throw new Error('条件批量删除必须提供 query 或 where');
+      const currentIds = new Set(AssistantCore.selectNotesByQuery(notes, notebooks, args).notes.map(note => note.id));
+      const noteIds = confirmedIds.filter(id => currentIds.has(id));
+      const skippedChanged = confirmedIds.length - noteIds.length;
+      if (!noteIds.length) return { success: 0, failed: 0, matched: confirmedIds.length, skippedChanged, details: [] };
+      const result = await ASSISTANT_TOOLS.batch_delete_notes.run({ noteIds });
+      return { ...result, matched: confirmedIds.length, skippedChanged };
     }
   },
 
@@ -1108,14 +1148,15 @@ const ASSISTANT_TOOLS = {
   append_to_note: {
     desc: '追加内容到笔记末尾。{noteId?或noteTitle?, text}',
     run: ({ noteId, noteTitle, text }) => {
-      if (!text) throw new Error('text 必填');
       let n;
       if (noteId) n = notes.find(x => x.id === noteId && !x.deleted);
       else if (noteTitle) n = notes.find(x => !x.deleted && (x.title || '').includes(noteTitle));
       if (!n) throw new Error('笔记未找到');
-      n.content = (n.content || '') + '\n\n' + text;
+      const append = AssistantCore.planNoteAppend(n.content, text);
+      if (append.skippedDuplicate) return { id: n.id, title: n.title, appended: 0, skippedDuplicate: true };
+      n.content = append.content;
       n.updatedAt = Date.now(); saveData(); renderNotesList();
-      return { id: n.id, title: n.title, appended: text.length };
+      return { id: n.id, title: n.title, appended: append.appended, skippedDuplicate: false };
     }
   },
   duplicate_note: {
@@ -1232,204 +1273,63 @@ const ASSISTANT_TOOLS = {
   }
 };
 
-// ===================== Sub-Agent 子任务引擎 =====================
+ToolPolicy.assertAssistantTools(ASSISTANT_TOOLS);
+const ASSISTANT_TOOL_NAMES = Object.freeze(Object.keys(ASSISTANT_TOOLS));
 
-async function runSubAgent(step, stepIndex, totalSteps) {
-  const subTools = Object.entries(ASSISTANT_TOOLS)
-    .filter(([n]) => n !== 'sub_agent')
-    .map(([n, t]) => `${n}:${t.desc}`)
-    .join('\n');
-
-  const activeNotes = notes.filter(n => !n.deleted);
-  const sysPrompt = `你是Marginote子任务执行器。直接执行指定任务，不要询问。
-笔记本${notebooks.length} 笔记${activeNotes.length} 待办${todos.length}
-工具:\n${subTools}
-协议:仅输出JSON{"reply":"结果","actions":[{"tool":"名","args":{}}]}
-无工具时actions=[]。每次1个工具。任何问题先search_notes搜索。`;
-
-  const ctx = [
-    { role: 'system', content: sysPrompt },
-    { role: 'user', content: `子任务${stepIndex + 1}/${totalSteps}: ${step.task}${step.context ? '\n上下文: ' + step.context : ''}` }
-  ];
-
-  let result = { reply: '', toolResults: [] };
-  let iter = 0;
-  while (iter++ < _ctxLimit(8, 15, 20)) {
-    let raw;
-    try {
-      raw = await callAi(ctx, { temperature: 0.2, stream: false });
-    } catch (e) {
-      result.reply = '子任务执行错误: ' + (e.message || e);
-      break;
-    }
-    const parsed = parseAssistantReply(raw);
-    if (parsed.reply) result.reply = parsed.reply;
-
-    if (!parsed.actions || !parsed.actions.length) break;
-
-    for (const a of parsed.actions) {
-      const name = a.tool || a.name;
-      const args = a.args || a.arguments || {};
-      try {
-        const toolResult = await runAssistantTool(name, args);
-        const resultStr = JSON.stringify(toolResult).slice(0, _ctxLimit(1200, 5000, 16000));
-        result.toolResults.push({ tool: name, summary: summarizeActionResult(name, toolResult) });
-        ctx.push({ role: 'assistant', content: raw });
-        ctx.push({ role: 'user', content: '工具结果:' + name + ':' + resultStr });
-      } catch (e) {
-        result.toolResults.push({ tool: name, error: e.message || String(e) });
-        ctx.push({ role: 'assistant', content: raw });
-        ctx.push({ role: 'user', content: '工具错误:' + name + ':' + (e.message || e) });
-      }
-    }
-  }
-  return result;
+function buildAssistantSystemPrompt(options = {}) {
+  const provider = typeof getActiveProvider === 'function' ? getActiveProvider() : null;
+  const contextK = Number(options.contextK) || (provider?.contextSize > 0 ? provider.contextSize : 10);
+  return PromptCore.buildAssistantPrompt({
+    ...options,
+    contextK,
+    toolDefinitions: ASSISTANT_TOOLS,
+    attachments: pendingAttachments,
+    notes,
+    notebooks,
+    todos,
+    memories: loadMemories()
+  });
 }
-
-// 注册 sub_agent 工具
-ASSISTANT_TOOLS.sub_agent = {
-  desc: '拆解复杂任务为子步骤独立执行。{steps:[{task:"描述",context?"上下文"}],summary?"汇总说明"}',
-  run: async ({ steps, summary }) => {
-    if (!Array.isArray(steps) || !steps.length) throw new Error('steps 必填');
-    if (steps.length > 20) throw new Error('子任务最多20个');
-    const results = [];
-    for (let i = 0; i < steps.length; i++) {
-      const step = steps[i];
-      const r = await runSubAgent(step, i, steps.length);
-      results.push({ step: step.task, reply: r.reply, actions: r.toolResults });
-    }
-    return { completed: results.length, summary: summary || '子任务全部执行完毕', results };
-  }
-};
-
-function buildAssistantSystemPrompt() {
-  const now = new Date();
-  const toolEntries = Object.entries(ASSISTANT_TOOLS);
-  const toolGroups = {
-    '查询': ['search_notes','search_todos','find_note','get_note','get_todo','list_notebooks','list_tags','list_todos','list_recent_notes','list_starred','count_notes','word_count'],
-    '创建': ['create_note','create_todo','quick_note','quick_todo','create_notebook','create_folder','create_from_template'],
-    '修改': ['update_note','update_todo','rename_notebook','move_note','move_note_to_folder','add_tags','remove_tags','star_note','append_to_note'],
-    '批量': ['batch_move_notes','batch_update_notes','batch_complete_todos','batch_delete_notes','batch_delete_todos','auto_title_notes','merge_notes'],
-    '删除': ['delete_note','delete_notebook','delete_todo','duplicate_note','export_note'],
-    'AI': ['optimize_text','summarize_note','research','translate','translate_note','extract_keywords','clean_text'],
-    '记忆': ['save_memory','recall_memory','delete_memory'],
-    '效率': ['daily_briefing','note_stats','pomodoro','sub_agent']
-  };
-  let tools = '';
-  for (const [group, names] of Object.entries(toolGroups)) {
-    const items = names.map(n => { const t = ASSISTANT_TOOLS[n]; return t ? `${n}:${t.desc}` : null; }).filter(Boolean);
-    if (items.length) tools += `[${group}] ${items.join(' | ')}\n`;
-  }
-  const ungrouped = toolEntries.filter(([n]) => !Object.values(toolGroups).flat().includes(n));
-  if (ungrouped.length) tools += ungrouped.map(([n, t]) => `${n}:${t.desc}`).join(' | ');
-
-  let attachInfo = '';
-  if (pendingAttachments.length) {
-    const parts = [];
-    let imgCount = 0;
-    for (const a of pendingAttachments) {
-      if (a.type === 'note') { const n = notes.find(x => x.id === a.id); if (n) parts.push(`[笔记:id=${n.id},${n.title || '无标题'},${(n.content || '').slice(0, _ctxLimit(1500, 5000, 16000))}]`); }
-      else if (a.type === 'todo') { const t = todos.find(x => x.id === a.id); if (t) parts.push(`[待办:id=${t.id},${t.text},${t.done?'完成':'未完成'}${t.dueDate?',截止'+new Date(t.dueDate).toISOString():''}]`); }
-      else if (a.type === 'image') { imgCount++; }
-    }
-    if (imgCount) parts.push(`[图片${imgCount}张,在最后消息image_url中]`);
-    if (parts.length) { attachInfo = '\n附件:' + parts.join(';') + '\n修改附件用update_note/update_todo,不传id自动匹配附件'; }
-  }
-
-  const activeNotes = notes.filter(n => !n.deleted).sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
-  let noteIndex = '';
-  if (activeNotes.length) {
-    const top = activeNotes.slice(0, _ctxLimit(20, 300, 300));
-    noteIndex = '\n\n笔记(' + activeNotes.length + '篇,近' + top.length + '篇):\n';
-    noteIndex += top.map((n, i) => {
-      const nb = notebooks.find(x => x.id === n.notebookId);
-      const summary = stripMarkdown(n.content).slice(0, _ctxLimit(40, 80, 200));
-      return `${i + 1}.${n.title || '无标题'}${nb ? '[' + nb.name + ']' : ''}${summary ? '—' + summary : ''}`;
-    }).join('\n');
-  }
-
-  const activeTodos = todos.filter(t => !t.done);
-  const todayStart = new Date(); todayStart.setHours(0, 0, 0, 0);
-  const todayEnd = new Date(); todayEnd.setHours(23, 59, 59, 999);
-  const todayTodos = activeTodos.filter(t => t.dueDate && t.dueDate >= todayStart.getTime() && t.dueDate <= todayEnd.getTime());
-  const overdueTodos = activeTodos.filter(t => t.dueDate && t.dueDate < todayStart.getTime());
-  let todoOverview = '';
-  if (todos.length) {
-    todoOverview = '\n\n待办:未完成' + activeTodos.length + '条';
-    if (todayTodos.length) todoOverview += ',今日' + todayTodos.length + '条';
-    if (overdueTodos.length) todoOverview += ',过期' + overdueTodos.length + '条';
-    if (todayTodos.length) {
-      todoOverview += '\n今日:' + todayTodos.slice(0, _ctxLimit(8, 30, 100)).map(t => t.text + (t.dueDate ? '(' + new Date(t.dueDate).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }) + ')' : '')).join('; ');
-    }
-    if (overdueTodos.length) {
-      todoOverview += '\n过期:' + overdueTodos.slice(0, _ctxLimit(5, 20, 50)).map(t => t.text).join('; ');
-    }
-  }
-
-  const memArr = loadMemories();
-  let memorySection = '';
-  if (memArr.length) {
-    const top = memArr.slice(-_ctxLimit(10, 30, 100));
-    memorySection = '\n记忆(' + memArr.length + '条):\n' + top.map(m => `${m.key}:${m.value}`).join('; ');
-  }
-
-  return `你是Marginote笔记应用的内置AI助手,直接运行在用户设备本地。你可以搜索、读取、创建、修改、删除用户的所有笔记和待办事项。
-
-核心原则:用户的笔记和待办是你的唯一知识库。用户问你任何问题,你都必须先用search_notes搜索相关笔记,根据搜索结果回答。绝不能凭自己的知识直接回答——先搜索,搜到了用笔记内容回答,搜不到再告诉用户"未找到相关笔记"。
-严禁说"无法访问笔记"、"没有权限"、"无法搜索"之类的话——你就是笔记应用本身的一部分。
-
-当前状态:${now.toLocaleString('zh-CN')} | 笔记本${notebooks.length}个 | 笔记${activeNotes.length}篇 | 待办${todos.length}条${attachInfo}${noteIndex}${todoOverview}${memorySection}
-
-可用工具:
-${tools}
-回复格式(严格JSON):
-{"reply":"你的回复(Markdown)","actions":[{"tool":"工具名","args":{参数}}]}
-不需要工具时actions为空数组[]。每次最多调用1个工具,多步操作分多轮完成。reply必须完整,不要截断。
-
-示例——用户说"用药上线时间是啥时候":
-{"reply":"正在搜索相关笔记…","actions":[{"tool":"search_notes","args":{"query":"用药 上线时间","limit":20}}]}
-
-示例——搜索结果返回后:
-{"reply":"根据笔记记录,用药功能计划在7月15日上线。\\n\\n> 来源:《产品路线图》笔记","actions":[]}
-
-规则:
-- 任何问题→先search_notes搜索,根据笔记内容回答,不要编造
-- 找笔记→find_note(一步全文) | 查/总结/研究→research | 待办→list_todos
-- 快速记→quick_note | 完成待办→complete_todo(模糊匹配) | 翻译→translate
-- 批量操作:先search_notes({limit:50+})再batch_*(一次传所有ID)
-- 复杂任务(多步骤/跨领域)→sub_agent拆解为独立子步骤执行
-- 搜索无果→换关键词重试 | 记用户偏好→save_memory
-- 回复用Markdown,简洁直接,不要废话`;
-}
-
 // ===================== 渲染 =====================
 
-function parseAssistantReply(raw) {
-  if (!raw) return { reply: '', actions: [] };
-  let s = raw.trim();
-  const fence = s.match(/```(?:json)?\s*([\s\S]*?)```/i);
-  if (fence) s = fence[1].trim();
-  const first = s.indexOf('{');
-  const last = s.lastIndexOf('}');
-  if (first >= 0 && last > first) s = s.slice(first, last + 1);
-  try { const obj = JSON.parse(s); return { reply: typeof obj.reply === 'string' ? obj.reply : '', actions: Array.isArray(obj.actions) ? obj.actions : [] }; }
-  catch {
-    const m = raw.match(/"reply"\s*:\s*"([\s\S]*?)(?:"\s*[,}]|$)/);
-    if (m) {
-      let reply = m[1].replace(/\\n/g, '\n').replace(/\\"/g, '"').replace(/\\\\/g, '\\');
-      const am = raw.match(/"actions"\s*:\s*(\[[\s\S]*?\])/);
-      let actions = [];
-      if (am) { try { actions = JSON.parse(am[1]); } catch {} }
-      return { reply, actions };
-    }
-    return { reply: raw, actions: [] };
-  }
-}
-
-async function runAssistantTool(name, args) {
+async function runAssistantTool(name, args, options = {}) {
+  const allowedToolNames = options.allowedToolNames;
+  const allowed = !allowedToolNames || AssistantCore.isToolAllowed(name, allowedToolNames);
+  if (!allowed) throw new Error('本轮未授权工具：' + (name || '(空)'));
+  if (name === 'sub_agent') throw new Error('子代理工具已禁用');
   const t = ASSISTANT_TOOLS[name];
   if (!t) throw new Error('未知工具：' + name);
   return await t.run(args || {});
+}
+
+const EXTENSION_ASSISTANT_DESTRUCTIVE_TOOLS = new Set(
+  ToolPolicy.assistantToolNames().filter(ToolPolicy.isDestructive)
+);
+const EXTENSION_ASSISTANT_WRITE_TOOLS = new Set(
+  ToolPolicy.assistantToolNames().filter(ToolPolicy.isWrite)
+);
+
+function confirmAssistantDestructiveTool(name, args) {
+  let target = '';
+  if (name === 'delete_note') target = notes.find(note => note.id === args?.id)?.title || args?.id || '指定笔记';
+  else if (name === 'delete_todo') target = todos.find(todo => todo.id === args?.id)?.text || args?.id || '指定待办';
+  else if (name === 'delete_notebook') target = args?.notebookName || notebooks.find(notebook => notebook.id === args?.notebookId)?.name || '指定笔记本';
+  else if (name === 'batch_delete_notes') target = `${Array.isArray(args?.noteIds) ? args.noteIds.length : 0} 篇笔记`;
+  else if (name === 'delete_notes_by_query') {
+    const selected = AssistantCore.selectNotesByQuery(notes, notebooks, args || {});
+    if (!selected.noteQuery.query && !selected.noteQuery.where.length) throw new Error('条件批量删除必须提供 query 或 where');
+    if (args && typeof args === 'object') {
+      Object.defineProperty(args, '__confirmedNoteIds', { value: selected.notes.map(note => note.id), configurable: true, enumerable: false });
+    }
+    const queryLabel = selected.noteQuery.query ? `检索“${selected.noteQuery.query}”` : '';
+    const whereLabel = selected.noteQuery.where.length ? `${selected.noteQuery.where.length} 个结构化条件（${selected.noteQuery.combine === 'any' ? '任一满足' : '全部满足'}）` : '';
+    target = `符合${[queryLabel, whereLabel].filter(Boolean).join('且')}的 ${selected.notes.length} 篇笔记`;
+  }
+  else if (name === 'batch_delete_todos') target = `${Array.isArray(args?.todoIds) ? args.todoIds.length : 0} 条待办`;
+  else if (name === 'delete_memory') target = `记忆：${args?.key || '指定记忆'}`;
+  return new Promise(resolve => {
+    showModal('确认 AI 删除操作', `AI 准备删除「${target}」。请确认目标无误后继续。`, () => resolve(true), () => resolve(false));
+  });
 }
 
 function renderAssistantChat() {
@@ -1447,6 +1347,18 @@ function renderAssistantChat() {
   box.querySelectorAll('.result-item[data-note-id]').forEach(el => {
     el.addEventListener('click', () => { const n = notes.find(x => x.id === el.dataset.noteId); if (n) { hideAssistantPanel(); selectNote(n); } });
   });
+  box.querySelectorAll('.assistant-receipt-open[data-target-type]').forEach(button => {
+    button.addEventListener('click', () => {
+      const id = button.dataset.targetId;
+      if (button.dataset.targetType === 'note') {
+        const note = notes.find(item => item.id === id && !item.deleted);
+        if (note) { hideAssistantPanel(); selectNote(note); }
+      } else if (button.dataset.targetType === 'todo') {
+        const todo = todos.find(item => item.id === id);
+        if (todo) { hideAssistantPanel(); switchView(todo.done ? 'todo:done' : 'todo:active'); selectTodo(todo); }
+      }
+    });
+  });
   box.scrollTop = box.scrollHeight;
 }
 
@@ -1457,6 +1369,20 @@ function renderAssistantMessage(m) {
     ? renderMarkdown(m.content)
     : escapeHtml(m.content || '');
   let html = `<div class="assistant-msg ${role}"><span class="role">${roleLabel}</span><div class="bubble">`;
+  const receipts = (m.toolLog || []).filter(item => item.isWrite);
+  if (receipts.length) {
+    html += '<div class="assistant-receipts">';
+    for (const item of receipts) {
+      const targetButton = item.ok && item.targetType && item.targetId
+        ? `<button class="assistant-receipt-open" data-target-type="${escapeHtml(item.targetType)}" data-target-id="${escapeHtml(item.targetId)}">打开${item.targetType === 'note' ? '笔记' : '待办'}</button>`
+        : '';
+      const receiptClass = item.ok ? 'ok' : (item.cancelled ? 'cancelled' : 'err');
+      const receiptIcon = item.ok ? '✓' : (item.cancelled ? '—' : '!');
+      const receiptText = item.ok ? (item.summary || '操作已完成') : (item.cancelled ? (item.summary || '操作已取消') : ('写入失败：' + (item.summary || item.tool)));
+      html += `<div class="assistant-receipt ${receiptClass}"><span class="assistant-receipt-icon">${receiptIcon}</span><span class="assistant-receipt-text">${escapeHtml(receiptText)}</span>${targetButton}</div>`;
+    }
+    html += '</div>';
+  }
   // 工具执行过程（新格式：折叠展示）
   if (m.toolLog && m.toolLog.length) {
     const okCount = m.toolLog.filter(t => t.ok).length;
@@ -1496,6 +1422,14 @@ function renderAssistantMessage(m) {
     for (const r of m.searchResults) { const meta = r.dueAt ? `截止 ${formatFullDate(new Date(r.dueAt).getTime())}` : (r.updatedAt ? `更新 ${formatFullDate(r.updatedAt)}` : ''); const dataAttr = r.kind === 'note' ? `data-note-id="${escapeHtml(r.id)}"` : ''; const title = r.title || r.text || '(无标题)'; html += `<div class="result-item" ${dataAttr}><div class="title">${escapeHtml(title)}</div>${r.snippet ? `<div class="meta">${escapeHtml(r.snippet)}</div>` : ''}${meta ? `<div class="meta">${escapeHtml(meta)}</div>` : ''}</div>`; }
     html += '</div>';
   }
+  if (m.metrics) {
+    const parts = [];
+    if (m.metrics.retrieved != null) parts.push(`本地检索 ${m.metrics.retrieved} 篇`);
+    if (m.metrics.modelCalls != null) parts.push(`模型 ${m.metrics.modelCalls} 次`);
+    if (m.metrics.totalTokens != null) parts.push(`${m.metrics.tokenEstimated ? '约 ' : ''}${m.metrics.totalTokens} tokens`);
+    if (m.metrics.elapsedMs != null) parts.push(`${(m.metrics.elapsedMs / 1000).toFixed(1)} 秒`);
+    if (parts.length) html += `<div class="assistant-turn-meta">${escapeHtml(parts.join(' · '))}</div>`;
+  }
   html += '</div>';
   return html;
 }
@@ -1524,93 +1458,6 @@ function setAssistantTyping(on, stepInfo) {
     box.appendChild(div);
     box.scrollTop = box.scrollHeight;
   }
-}
-
-function summarizeActionResult(name, result) {
-  if (!result) return '';
-  if (name === 'create_note') return `笔记「${result.title || ''}」已创建`;
-  if (name === 'create_todo') return `待办「${result.text || ''}」${result.dueAt ? ' · ' + formatFullDate(new Date(result.dueAt).getTime()) : ''}`;
-  if (name === 'update_note') return `笔记「${result.title || ''}」已更新`;
-  if (name === 'update_todo') return `待办「${result.text || ''}」已更新`;
-  if (name === 'list_notebooks') return `${(result || []).length} 个笔记本`;
-  if (name === 'search_notes') return `${(result || []).length} 篇笔记`;
-  if (name === 'search_todos') return `${(result || []).length} 条待办`;
-  if (name === 'create_notebook') return `笔记本「${result.name || ''}」${result.existed ? '已存在' : '已创建'}`;
-  if (name === 'rename_notebook') return `笔记本「${result.oldName || ''}」→「${result.newName || ''}」`;
-  if (name === 'delete_notebook') return `笔记本「${result.deleted || ''}」已删除，${result.movedCount || 0} 篇笔记移至「${result.movedNotesTo || ''}」`;
-  if (name === 'move_note') return `笔记「${result.title || ''}」已移至「${result.notebookName || ''}」`;
-  if (name === 'delete_note') return `笔记「${result.title || ''}」已删除`;
-  if (name === 'get_note') return `笔记「${result.title || ''}」内容已获取`;
-  if (name === 'get_todo') return `待办「${result.text || ''}」详情已获取`;
-  if (name === 'optimize_text') return `已优化文本`;
-  if (name === 'save_memory') return `记忆「${result.key || ''}」已保存`;
-  if (name === 'recall_memory') return `${(result || []).length} 条记忆`;
-  if (name === 'delete_memory') return `记忆${result.deleted ? '已删除' : '未找到'}`;
-  if (name === 'batch_move_notes') return `${result.success || 0} 篇笔记已移至「${result.notebookName || ''}」`;
-  if (name === 'batch_update_notes') return `${result.success || 0} 篇笔记已更新`;
-  if (name === 'batch_complete_todos') return `${result.success || 0} 条待办已完成`;
-  if (name === 'batch_delete_notes') return `${result.success || 0} 篇笔记已删除`;
-  if (name === 'add_tags') return `笔记「${result.title || ''}」添加 ${result.added || 0} 个标签`;
-  if (name === 'remove_tags') return `笔记「${result.title || ''}」移除 ${result.removed || 0} 个标签`;
-  if (name === 'list_tags') return `${(result || []).length} 个标签`;
-  if (name === 'daily_briefing') return `今日简报已生成`;
-  if (name === 'note_stats') return `统计：${result.totalNotes || 0} 篇笔记 / ${result.totalCharacters || 0} 字`;
-  if (name === 'create_from_template') return `从${result.template || ''}模板创建「${result.title || ''}」`;
-  if (name === 'summarize_note') return `笔记「${result.title || ''}」摘要已生成`;
-  if (name === 'create_folder') return `文件夹「${result.name || ''}」${result.existed ? '已存在' : '已创建'}`;
-  if (name === 'move_note_to_folder') return `笔记「${result.title || ''}」已移入「${result.folderName || ''}」`;
-  if (name === 'list_todos') return `${(result || []).length} 条待办`;
-  if (name === 'complete_todo') return `待办「${result.text || ''}」已完成`;
-  if (name === 'delete_todo') return `待办「${result.text || ''}」已删除`;
-  if (name === 'batch_delete_todos') return `${result.success || 0} 条待办已删除`;
-  if (name === 'find_note') return result.found ? `找到笔记「${result.title || ''}」` : '未找到匹配笔记';
-  if (name === 'quick_note') return `快速笔记「${result.title || ''}」已创建`;
-  if (name === 'quick_todo') return `待办「${result.text || ''}」已创建`;
-  if (name === 'auto_title_notes') return `${result.success || 0} 篇无标题笔记已自动命名`;
-  if (name === 'list_recent_notes') return `${(result || []).length} 篇最近笔记`;
-  if (name === 'count_notes') return `${result.notebookName || ''}共 ${result.count || 0} 篇笔记`;
-  if (name === 'research') return `从 ${result.found || 0} 篇笔记中提取了关键信息`;
-  if (name === 'translate') return `已翻译为${result.targetLang || ''}`;
-  if (name === 'extract_keywords') return `关键词：${(result.keywords || []).slice(0, 5).join('、')}`;
-  if (name === 'translate_note') return `笔记「${result.originalTitle || ''}」已翻译为${result.lang || ''}`;
-  if (name === 'append_to_note') return `已追加 ${result.appended || 0} 字到「${result.title || ''}」`;
-  if (name === 'duplicate_note') return `笔记「${result.title || ''}」已复制`;
-  if (name === 'merge_notes') return `${result.mergedCount || 0} 篇笔记已合并为「${result.title || ''}」`;
-  if (name === 'star_note') return `笔记「${result.title || ''}」${result.starred ? '已收藏' : '已取消收藏'}`;
-  if (name === 'list_starred') return `${(result || []).length} 篇收藏笔记`;
-  if (name === 'word_count') return result.noteId ? `「${result.title || ''}」${result.chars || 0} 字` : `共 ${result.totalChars || 0} 字`;
-  if (name === 'clean_text') return `笔记「${result.title || ''}」已清理`;
-  if (name === 'export_note') return `笔记「${result.title || ''}」已导出`;
-  if (name === 'pomodoro') return result.started ? `番茄钟已开始 ${result.duration}分钟` : result.stopped ? '番茄钟已停止' : (result.active ? `剩余 ${result.remaining} 分钟` : '无进行中的番茄钟');
-  if (name === 'sub_agent') return `${result.completed || 0} 个子任务已完成`;
-  return '';
-}
-
-// 为 AI 上下文生成精简摘要（去掉 id/color 等模型不需要的字段，保留关键信息）
-function compressForContext(name, result) {
-  try {
-    if (name === 'list_notebooks' && Array.isArray(result))
-      return result.map(nb => `${nb.name}(${nb.noteCount ?? '?'}篇)`).join(', ');
-    if ((name === 'search_notes' || name === 'list_recent_notes' || name === 'list_starred') && Array.isArray(result))
-      return result.map(n => `「${n.title || '无标题'}」`).join(', ');
-    if ((name === 'search_todos' || name === 'list_todos') && Array.isArray(result))
-      return result.map(t => `${t.done ? '✓' : '○'}${(t.text || '').slice(0, _ctxLimit(30, 80, 200))}`).join('; ');
-    if (name === 'get_note' && result)
-      return `「${result.title || ''}」nb:${result.notebookName || ''} tags:${(result.tags || []).join(',')} content:${(result.content || '').slice(0, _ctxLimit(300, 1000, 4000))}`;
-    if (name === 'get_todo' && result)
-      return `${result.done ? '✓' : '○'}「${result.text || ''}」due:${result.dueAt || ''} note:${result.note || ''}`;
-    if (name === 'list_tags' && Array.isArray(result))
-      return result.map(t => `${t.tag}(${t.count})`).join(', ');
-    if (name === 'export_note' && result)
-      return `「${result.title || ''}」\n${(result.markdown || '').slice(0, _ctxLimit(500, 2000, 6000))}`;
-    if (name === 'research' && result)
-      return `found:${result.found} summary:${(result.summary || '').slice(0, _ctxLimit(400, 1500, 5000))}`;
-    if (name === 'daily_briefing' && result)
-      return (result.briefing || '').slice(0, _ctxLimit(500, 2000, 6000));
-    if (name === 'note_stats' && result)
-      return JSON.stringify(result);
-  } catch {}
-  return JSON.stringify(result).slice(0, _ctxLimit(500, 2000, 6000));
 }
 
 // 流式中从未完成 JSON 中提取 "reply": "...部分..." 的可见字符
@@ -1656,6 +1503,9 @@ async function runAssistantTurn(userInput) {
   if (assistantBusy) { showToast('AI 正在思考中...'); return; }
 
   const trimmed = userInput.trim();
+  const turnStartedAt = performance.now();
+  let modelCalls = 0;
+  let tokenUsage = AssistantCore.createTokenUsage();
   const inputEl = document.getElementById('assistantInput');
 
   // --- 录制模式 ---
@@ -1701,16 +1551,27 @@ async function runAssistantTurn(userInput) {
     : undefined;
   if (!/^结束记录/.test(trimmed)) pushAssistantMessage('user', userInput, attachSnapshot ? { attachments: attachSnapshot } : undefined);
 
-  const sysPrompt = buildAssistantSystemPrompt();
-  const ctx = [{ role: 'system', content: sysPrompt }];
   const s = getActiveSession();
   const provider = getActiveProvider();
   const mm = !!(provider && provider.multimodal);
   const ctxK = (provider && provider.contextSize > 0) ? provider.contextSize : 10;
-  const historyWindow = ctxK <= 16 ? 20 : ctxK <= 64 ? 60 : ctxK <= 128 ? 100 : 200;
+  const requestText = String(userInput || '').trim();
+  const turnPlan = AssistantCore.planAssistantTurn(requestText, pendingAttachments, ctxK);
+  const intent = turnPlan.intent;
+  const allowedToolNames = new Set(turnPlan.allowedToolNames);
+  let prefetchedNotes = [];
+  if (intent.prefetchNotes) {
+    try { prefetchedNotes = await runAssistantTool('search_notes', { query: intent.query, limit: 8 }, { allowedToolNames }); }
+    catch (error) { if (typeof logError === 'function') logError(error, 'assistant-prefetch'); }
+  }
+  const prompt = buildAssistantSystemPrompt({ userInput: requestText, intent, prefetchedNotes, allowedToolNames: [...allowedToolNames] });
+  const ctx = [
+    { role: 'system', content: prompt.system },
+    { role: 'user', content: prompt.context }
+  ];
   const loopCompressThreshold = ctxK <= 16 ? 40 : ctxK <= 64 ? 120 : ctxK <= 128 ? 250 : 500;
   const loopCompressKeep = Math.floor(loopCompressThreshold * 0.75);
-  const recent = (s?.messages || []).slice(-historyWindow);
+  const recent = AssistantCore.selectRecentHistory(s?.messages || [], ctxK);
   // 如果有图片附件但未开启多模态，提醒用户
   const hasImages = pendingAttachments.some(a => a.type === 'image');
   if (hasImages && !mm) {
@@ -1719,13 +1580,12 @@ async function runAssistantTurn(userInput) {
   // 收集图片附件（仅当本轮多模态启用时生效）
   const pendingImages = mm ? pendingAttachments.filter(a => a.type === 'image') : [];
   // 同时也把笔记附件里包含的 img:<id> 拉出来一并发送
-  const noteAttachmentImages = mm
-    ? pendingAttachments
-        .filter(a => a.type === 'note')
-        .flatMap(a => {
-          const n = notes.find(x => x.id === a.id);
-          return n && typeof _resolveContentImages === 'function' ? _resolveContentImages(n.content || '') : [];
-        })
+  const noteAttachmentImages = mm && typeof _resolveContentImages === 'function'
+    ? await AssistantCore.resolveNoteAttachmentImages(
+        pendingAttachments,
+        id => notes.find(note => note.id === id),
+        _resolveContentImages
+      )
     : [];
   // 预先把每张图片缩到 1280px / JPEG，避免 413 + 限速
   const allImagesAll = [...pendingImages, ...noteAttachmentImages];
@@ -1749,82 +1609,138 @@ async function runAssistantTurn(userInput) {
     else if (m.role === 'assistant') {
       let ctxContent = m.content || '';
       if (m.toolLog && m.toolLog.length) {
-        ctxContent = '[执行了' + m.toolLog.length + '步:' + m.toolLog.map(t => t.tool + (t.ok ? '✓' : '✗')).join(',') + '] ' + ctxContent;
+        ctxContent = '[执行了' + m.toolLog.length + '步:' + AssistantCore.summarizeToolLogForHistory(m.toolLog) + '] ' + ctxContent;
       }
       ctx.push({ role: 'assistant', content: ctxContent });
     }
     else if (m.role === 'system') ctx.push({ role: 'user', content: '【工具结果】' + m.content });
   }
 
+  let iter = 0;
+  const toolLog = [];
+  const allSearchResults = AssistantCore.searchResultsForTool('search_notes', prefetchedNotes);
+  let finalReply = '';
+  const callSigs = new Set();
+  let thrash = false;
+  const maxToolSteps = turnPlan.maxToolSteps;
+  const turnMetrics = () => AssistantCore.buildTurnMetrics({
+    retrieved: prefetchedNotes.length,
+    modelCalls,
+    elapsedMs: performance.now() - turnStartedAt,
+    usage: tokenUsage
+  });
   assistantBusy = true;
+  const sendButton = document.getElementById('assistantSendBtn');
+  const attachButton = document.getElementById('assistantAttachBtn');
+  const currentButton = document.getElementById('assistantCurrentBtn');
+  if (sendButton) { sendButton.disabled = true; sendButton.textContent = '处理中…'; }
+  if (attachButton) attachButton.disabled = true;
+  if (currentButton) currentButton.disabled = true;
   try {
-    let iter = 0;
-    const toolLog = [];
-    const allSearchResults = [];
-    let finalReply = '';
-
-    while (iter++ < 100) {
+    while (iter++ < maxToolSteps + 2) {
       // 上下文压缩：防止极长任务溢出（根据模型上下文大小动态调整）
       if (ctx.length > loopCompressThreshold) {
-        const sysMsg = ctx[0];
-        const recent = ctx.slice(-loopCompressKeep);
-        ctx.length = 0;
-        ctx.push(sysMsg, { role: 'user', content: '（前序步骤已省略，继续完成任务，不要重复已做过的操作）' }, ...recent);
+        const compacted = AssistantCore.compactConversation(ctx, loopCompressThreshold, loopCompressKeep);
+        ctx.splice(0, ctx.length, ...compacted);
       }
 
       setAssistantTyping(true, toolLog.length ? `执行中 (${toolLog.length} 步)…` : '');
       let raw;
       try {
-        raw = await callAi(ctx, { temperature: 0.3, max_tokens: _ctxLimit(2048, 4096, 16384), stream: false });
+        modelCalls++;
+        raw = await callAi(ctx, {
+          temperature: 0.3,
+          max_tokens: Math.min(_ctxLimit(2048, 4096, 16384), 16384),
+          stream: true,
+          onDelta: (_delta, full) => setAssistantTyping(true, _streamingHint(full, toolLog.length)),
+          onUsage: usage => { tokenUsage = AssistantCore.mergeTokenUsage(tokenUsage, usage); }
+        });
       } finally { setAssistantTyping(false); }
 
-      const parsed = parseAssistantReply(raw);
+      const parsed = AssistantCore.parseAssistantReply(raw, {
+        knownToolNames: ASSISTANT_TOOL_NAMES,
+        maxActions: Math.max(0, maxToolSteps - toolLog.length)
+      });
       let hasActions = false;
 
       for (const a of (parsed.actions || [])) {
+        const name = a.tool;
+        const args = a.args;
+        const signature = AssistantCore.toolCallSignature(name, args);
+        if (callSigs.has(signature)) { thrash = true; break; }
+        callSigs.add(signature);
         hasActions = true;
-        const name = a.tool || a.name;
-        const args = a.args || a.arguments || {};
         try {
-          const result = await runAssistantTool(name, args);
-          const summary = summarizeActionResult(name, result);
-          toolLog.push({ tool: name, summary, ok: true });
-          if (name === 'search_notes' && Array.isArray(result)) for (const r of result) allSearchResults.push({ kind: 'note', id: r.id, title: r.title, snippet: r.snippet, updatedAt: r.updatedAt });
-          else if (name === 'search_todos' && Array.isArray(result)) for (const r of result) allSearchResults.push({ kind: 'todo', id: r.id, title: r.text, snippet: r.done ? '已完成' : '进行中', dueAt: r.dueAt });
-          else if (name === 'list_notebooks' && Array.isArray(result)) for (const r of result) allSearchResults.push({ kind: 'notebook', id: r.id, title: r.name });
-          else if (name === 'research' && result && Array.isArray(result.sources)) for (const r of result.sources) allSearchResults.push({ kind: 'note', id: r.id, title: r.title, snippet: r.notebook ? `来自「${r.notebook}」` : '' });
+          if (EXTENSION_ASSISTANT_DESTRUCTIVE_TOOLS.has(name)) {
+            setAssistantTyping(true, '等待确认删除操作…');
+            const confirmed = await confirmAssistantDestructiveTool(name, args);
+            setAssistantTyping(false);
+            if (!confirmed) {
+              toolLog.push({ tool: name, summary: '用户取消了删除操作', ok: false, cancelled: true, isWrite: true });
+              ctx.push({ role: 'assistant', content: JSON.stringify({ actions: [{ tool: name }] }) });
+              ctx.push({ role: 'user', content: '【取消】用户拒绝了删除操作。不要重试，直接说明已取消。' });
+              continue;
+            }
+          }
+          const result = await runAssistantTool(name, args, { allowedToolNames });
+          const summary = AssistantCore.summarizeToolResult(name, result, { formatDate: formatFullDate });
+          toolLog.push({ tool: name, summary, ok: true, isWrite: EXTENSION_ASSISTANT_WRITE_TOOLS.has(name), ...AssistantCore.toolResultTarget(name, result) });
+          allSearchResults.push(...AssistantCore.searchResultsForTool(name, result));
           // AI 上下文：大模型直传，小模型智能压缩
-          const contextResult = ctxK >= 64
-            ? JSON.stringify(result).slice(0, _ctxLimit(4000, 12000, 30000))
-            : compressForContext(name, result);
+          const contextResult = AssistantCore.toolResultForContext(name, result, ctxK);
           ctx.push({ role: 'assistant', content: JSON.stringify({ actions: [{ tool: name }] }) });
           ctx.push({ role: 'user', content: '【结果】' + name + ': ' + contextResult });
           setAssistantTyping(true, `执行中 (${toolLog.length} 步)…`);
         } catch (e) {
-          toolLog.push({ tool: name, summary: e.message || String(e), ok: false });
+          toolLog.push({ tool: name, summary: e.message || String(e), ok: false, isWrite: EXTENSION_ASSISTANT_WRITE_TOOLS.has(name) });
           ctx.push({ role: 'assistant', content: JSON.stringify({ actions: [{ tool: name }] }) });
           ctx.push({ role: 'user', content: '【错误】' + name + ': ' + (e.message || e) });
         }
       }
 
       finalReply = parsed.reply || finalReply;
+      if (thrash) {
+        finalReply = (finalReply || '') + (finalReply ? '\n\n' : '') + '（已停止：检测到重复的相同操作，为避免空转未继续。）';
+        break;
+      }
+      if (toolLog.length >= maxToolSteps) {
+        finalReply = (finalReply || '') + (finalReply ? '\n\n' : '') + `（已执行 ${toolLog.length} 步并停止，请将复杂任务拆分后继续。）`;
+        break;
+      }
       if (!hasActions) break;
     }
 
-    const WRITE_TOOLS = new Set(['create_note','update_note','delete_note','quick_note','create_todo','update_todo','delete_todo','create_notebook','delete_notebook','rename_notebook','move_note','move_note_to_folder','batch_move_notes','batch_update_notes','batch_complete_todos','batch_delete_notes','batch_delete_todos','auto_title_notes','merge_notes','star_note','add_tags','remove_tags','append_to_note','duplicate_note','create_folder','create_from_template','translate_note','clean_text','optimize_text']);
-    if (toolLog.some(t => t.ok && WRITE_TOOLS.has(t.tool))) {
+    if (toolLog.some(t => t.ok && ToolPolicy.projectsToWorkdir(t.tool))) {
       try { if (typeof workdirWriteAll === 'function') await workdirWriteAll(true); } catch {}
+    }
+
+    const wroteSomething = toolLog.some(item => item.ok && EXTENSION_ASSISTANT_WRITE_TOOLS.has(item.tool));
+    if (AssistantCore.claimsSuccessfulWrite(finalReply) && !wroteSomething) {
+      const failed = toolLog.filter(item => !item.ok).map(item => item.tool + (item.summary ? `（${item.summary}）` : ''));
+      finalReply = '⚠️ 实际并未创建或保存成功——' + (failed.length
+        ? '工具执行失败：' + failed.join('；') + '。'
+        : '模型只描述了结果，但没有真正调用写入工具。')
+        + '\n\n请重新说明要记录的内容，或在 AI 设置中更换模型后重试。';
     }
 
     pushAssistantMessage('assistant', finalReply, {
       toolLog: toolLog.length ? toolLog : undefined,
-      searchResults: allSearchResults.length ? allSearchResults : undefined
+      searchResults: allSearchResults.length ? AssistantCore.dedupeSearchResults(allSearchResults) : undefined,
+      metrics: turnMetrics()
     });
   } catch (e) {
-    pushAssistantMessage('assistant', '出错：' + (e.message || String(e)));
-    if (typeof logError === 'function') logError(e, 'assistant');
+    const failure = AssistantCore.assistantFailureReply(e, finalReply);
+    pushAssistantMessage('assistant', failure.reply, {
+      toolLog: toolLog.length ? toolLog : undefined,
+      searchResults: allSearchResults.length ? AssistantCore.dedupeSearchResults(allSearchResults) : undefined,
+      metrics: turnMetrics()
+    });
+    if (failure.shouldLog && typeof logError === 'function') logError(e, 'assistant');
   } finally {
     assistantBusy = false;
+    if (sendButton) { sendButton.disabled = false; sendButton.textContent = '发送'; }
+    if (attachButton) attachButton.disabled = false;
+    if (currentButton) currentButton.disabled = false;
     setAssistantTyping(false);
   }
 }
@@ -2134,6 +2050,8 @@ function bindAssistantUi() {
   // 附件
   const attachBtn = document.getElementById('assistantAttachBtn');
   if (attachBtn) attachBtn.addEventListener('click', openAttachmentPicker);
+  const currentBtn = document.getElementById('assistantCurrentBtn');
+  if (currentBtn) currentBtn.addEventListener('click', attachCurrentAssistantContext);
 
   const attachClose = document.getElementById('attachmentPickerClose');
   if (attachClose) attachClose.addEventListener('click', closeAttachmentPicker);

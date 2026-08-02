@@ -3,6 +3,7 @@
 
 use tauri::{Manager, WindowEvent};
 
+mod atomic_file;
 mod cli_bridge;
 mod commands;
 mod scheduler;

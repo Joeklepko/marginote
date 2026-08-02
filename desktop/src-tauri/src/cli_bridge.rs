@@ -23,7 +23,7 @@ use tauri::{AppHandle, Emitter, Manager};
 
 const ENDPOINT_FILE: &str = "cli-endpoint.json";
 const MAX_REQUEST_BYTES: u64 = 16 * 1024 * 1024;
-const RESPONSE_TIMEOUT: Duration = Duration::from_secs(60);
+const RESPONSE_TIMEOUT: Duration = Duration::from_secs(180);
 
 #[derive(Debug, Deserialize)]
 struct WireRequest {
@@ -31,19 +31,25 @@ struct WireRequest {
     command: String,
     #[serde(default)]
     args: Value,
+    #[serde(default, rename = "requestId")]
+    request_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CliRequest {
     pub id: String,
+    pub request_id: String,
     pub command: String,
     pub args: Value,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct CliResponse {
     pub ok: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub request_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub data: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -71,6 +77,7 @@ static BRIDGE: Lazy<BridgeState> = Lazy::new(BridgeState::default);
 fn error_response(message: impl Into<String>) -> CliResponse {
     CliResponse {
         ok: false,
+        request_id: None,
         data: None,
         error: Some(message.into()),
     }
@@ -141,8 +148,22 @@ fn handle_connection(mut stream: TcpStream, token: &str, app: &AppHandle) {
 
     let seq = BRIDGE.sequence.fetch_add(1, Ordering::Relaxed) + 1;
     let id = format!("{}-{seq}", std::process::id());
+    let request_id = wire.request_id.unwrap_or_else(|| id.clone());
+    if request_id.is_empty()
+        || request_id.len() > 128
+        || !request_id
+            .chars()
+            .all(|value| value.is_ascii_alphanumeric() || matches!(value, '-' | '_' | '.' | ':'))
+    {
+        write_response(
+            &mut stream,
+            &error_response("requestId 仅允许 1-128 个字母、数字、-、_、.、:"),
+        );
+        return;
+    }
     let request = CliRequest {
         id: id.clone(),
+        request_id: request_id.clone(),
         command: wire.command,
         args: wire.args,
     };
@@ -167,7 +188,7 @@ fn handle_connection(mut stream: TcpStream, token: &str, app: &AppHandle) {
     // as a fallback for the short startup window before its listener is ready.
     let _ = app.emit("marginote-cli-pending", ());
 
-    let response = match receiver.recv_timeout(RESPONSE_TIMEOUT) {
+    let mut response = match receiver.recv_timeout(RESPONSE_TIMEOUT) {
         Ok(value) => value,
         Err(mpsc::RecvTimeoutError::Timeout) => {
             if let Ok(mut pending) = BRIDGE.pending.lock() {
@@ -177,6 +198,7 @@ fn handle_connection(mut stream: TcpStream, token: &str, app: &AppHandle) {
         }
         Err(_) => error_response("Marginote 在返回结果前已关闭"),
     };
+    response.request_id = Some(request_id);
     write_response(&mut stream, &response);
 }
 
@@ -272,7 +294,12 @@ pub fn cmd_cli_complete(
         .remove(&id)
         .ok_or_else(|| format!("CLI 请求已过期：{id}"))?;
     sender
-        .send(CliResponse { ok, data, error })
+        .send(CliResponse {
+            ok,
+            request_id: None,
+            data,
+            error,
+        })
         .map_err(|_| format!("CLI 客户端已断开：{id}"))
 }
 
@@ -291,12 +318,14 @@ mod tests {
     fn response_omits_empty_fields() {
         let encoded = serde_json::to_value(CliResponse {
             ok: true,
+            request_id: Some("req-1".into()),
             data: Some(serde_json::json!({ "id": "n1" })),
             error: None,
         })
         .unwrap();
         assert_eq!(encoded["ok"], true);
         assert_eq!(encoded["data"]["id"], "n1");
+        assert_eq!(encoded["requestId"], "req-1");
         assert!(encoded.get("error").is_none());
     }
 }

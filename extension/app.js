@@ -379,6 +379,7 @@ let currentTagFilter = 'all';
 let saveTimer = null;
 let isPreviewMode = false;
 let modalCallback = null;
+let modalCancelCallback = null;
 let editingNotebook = null; // 当前编辑中的笔记本（null = 新建）
 let editingFolder = null;   // 当前编辑中的文件夹
 let pickedColor = NOTEBOOK_COLORS[0];
@@ -523,9 +524,11 @@ function saveData() {
   try {
     // 图片不入 localStorage（改用 IndexedDB），主表只存元数据避免大对象阻塞
     localStorage.setItem(STORAGE_KEY, JSON.stringify({ notebooks, folders, notes, todos }));
+    return true;
   } catch (e) {
     showToast('存储失败：可能超出本地存储容量');
     logError(e, 'saveData');
+    return false;
   }
 }
 
@@ -534,6 +537,17 @@ function saveNotes() { saveData(); }
 
 function uid() {
   return Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+}
+
+function debounceUi(callback, delayMs = 160) {
+  let timer = null;
+  return (...args) => {
+    if (timer) clearTimeout(timer);
+    timer = setTimeout(() => {
+      timer = null;
+      callback(...args);
+    }, delayMs);
+  };
 }
 
 // 兜底：用 JS 强制把 data-color 的值落到 background-color。
@@ -1431,7 +1445,7 @@ function selectNote(note) {
 
   const modeBtn = document.getElementById('modeBtn');
   modeBtn.classList.remove('active');
-  modeBtn.setAttribute('data-tip', '编辑');
+  updateNoteModeButton();
 
   // 默认预览模式
   applyNotePreview(note);
@@ -1851,15 +1865,28 @@ function togglePreview() {
     ta.style.display = 'none';
     pv.style.display = 'block';
     modeBtn.classList.remove('active');
-    modeBtn.setAttribute('data-tip', '编辑');
   } else {
     ta.style.display = '';
     pv.style.display = 'none';
     modeBtn.classList.add('active');
-    modeBtn.setAttribute('data-tip', '预览');
     ta.focus();
     ta.setSelectionRange(ta.value.length, ta.value.length);
   }
+  updateNoteModeButton();
+}
+
+function updateNoteModeButton() {
+  const button = document.getElementById('modeBtn');
+  if (!button) return;
+  const action = isPreviewMode ? '编辑' : '预览';
+  const label = document.getElementById('modeBtnLabel');
+  if (label) label.textContent = action;
+  const previewIcon = button.querySelector('[data-mode-icon="preview"]');
+  const editIcon = button.querySelector('[data-mode-icon="edit"]');
+  if (previewIcon) previewIcon.hidden = isPreviewMode;
+  if (editIcon) editIcon.hidden = !isPreviewMode;
+  button.setAttribute('data-tip', action);
+  button.setAttribute('aria-label', `切换为${action}模式`);
 }
 
 function copyContent() {
@@ -2057,11 +2084,12 @@ function showToast(msg) {
   t._timer = setTimeout(() => t.classList.remove('show'), 3000);
 }
 
-function showModal(title, text, callback) {
+function showModal(title, text, callback, cancelCallback) {
   document.getElementById('modalTitle').textContent = title;
   document.getElementById('modalText').textContent = text;
   document.getElementById('modalBg').classList.add('show');
   modalCallback = callback;
+  modalCancelCallback = typeof cancelCallback === 'function' ? cancelCallback : null;
 }
 
 // ===================== 工具栏格式化 =====================
@@ -2498,25 +2526,95 @@ async function exportAll(opts) {
   return true;
 }
 
+function createImportSnapshot() {
+  const clone = value => JSON.parse(JSON.stringify(value));
+  return {
+    notebooks: clone(notebooks), folders: clone(folders), notes: clone(notes), todos: clone(todos),
+    imageIds: new Set(Object.keys(images)),
+    currentNoteId: currentNote?.id || null,
+    currentTodoId: currentTodo?.id || null
+  };
+}
+
+const IMPORT_MAX_TEXT_BYTES = 32 * 1024 * 1024;
+const IMPORT_MAX_ZIP_BYTES = 256 * 1024 * 1024;
+const IMPORT_MAX_ZIP_ENTRIES = 5000;
+const IMPORT_MAX_UNCOMPRESSED_BYTES = 512 * 1024 * 1024;
+
+function validateImportFile(file) {
+  const name = String(file?.name || '').toLowerCase();
+  const limit = name.endsWith('.zip') ? IMPORT_MAX_ZIP_BYTES : IMPORT_MAX_TEXT_BYTES;
+  if (Number(file?.size) > limit) throw new Error(`文件过大，最大允许 ${Math.round(limit / 1024 / 1024)} MB`);
+}
+
+function validateImportZip(zip) {
+  const entries = Object.values(zip?.files || {}).filter(entry => !entry.dir);
+  if (entries.length > IMPORT_MAX_ZIP_ENTRIES) throw new Error(`压缩包文件过多（最多 ${IMPORT_MAX_ZIP_ENTRIES} 个）`);
+  const total = entries.reduce((sum, entry) => sum + Math.max(0, Number(entry?._data?.uncompressedSize) || 0), 0);
+  if (total > IMPORT_MAX_UNCOMPRESSED_BYTES) throw new Error('压缩包解压后超过 512 MB');
+}
+
+async function rollbackImport(snapshot) {
+  notebooks = snapshot.notebooks;
+  folders = snapshot.folders;
+  notes = snapshot.notes;
+  todos = snapshot.todos;
+  currentNote = snapshot.currentNoteId ? notes.find(note => note.id === snapshot.currentNoteId) || null : null;
+  currentTodo = snapshot.currentTodoId ? todos.find(todo => todo.id === snapshot.currentTodoId) || null : null;
+  const addedImageIds = Object.keys(images).filter(id => !snapshot.imageIds.has(id));
+  for (const id of addedImageIds) {
+    delete images[id];
+    try { await idbDelete('images', id); } catch (error) { logError(error, 'import-rollback-image'); }
+  }
+  saveData();
+}
+
 function importFiles(files) {
   if (!files || !files.length) return;
+  const snapshot = createImportSnapshot();
   let pending = files.length;
   let added = 0;
-  const done = () => {
-    saveData();
+  const failures = [];
+  const stagedVersions = [];
+  const done = async () => {
+    if (failures.length) {
+      await rollbackImport(snapshot);
+      renderNotebooks(); renderTagFilters(); renderNotesList(); renderTodoCounts();
+      const first = failures[0];
+      showToast(`导入失败，未修改现有数据：${first.file}（${first.message}）`);
+      return;
+    }
+    if (saveData() === false) {
+      await rollbackImport(snapshot);
+      renderNotebooks(); renderTagFilters(); renderNotesList(); renderTodoCounts();
+      showToast('导入失败：主数据无法保存，已恢复原数据');
+      return;
+    }
+    if (stagedVersions.length) await bulkPutVersions(stagedVersions);
     renderNotebooks();
     renderTagFilters();
     renderNotesList();
     renderTodoCounts();
+    rescheduleAllAlarms().catch(error => logError(error, 'import-reminders'));
     showToast(`已导入 ${added} 篇`);
+  };
+  const finish = (file, error) => {
+    if (error) {
+      logError(error, 'import:' + file.name);
+      failures.push({ file: file.name, message: error.message || String(error) });
+    }
+    if (--pending === 0) void done();
   };
   Array.from(files).forEach(file => {
     const name = file.name.toLowerCase();
     const reader = new FileReader();
+    try { validateImportFile(file); }
+    catch (error) { finish(file, error); return; }
     if (name.endsWith('.zip')) {
       reader.onload = async e => {
         try {
           const zip = await JSZip.loadAsync(e.target.result);
+          validateImportZip(zip);
           const meta = zip.file('_marginote_meta.json');
           let imagesMeta = {};
           if (meta) {
@@ -2543,14 +2641,16 @@ function importFiles(files) {
                 });
               }
               if (obj.imagesMeta && typeof obj.imagesMeta === 'object') imagesMeta = obj.imagesMeta;
-            } catch {}
+            } catch (error) {
+              throw new Error('备份元信息损坏：' + (error.message || error));
+            }
           }
           // 历史版本（旧备份无此字段则跳过）
           const versionsFile = zip.file('_versions.json');
           if (versionsFile) {
             try {
               const versionsArr = JSON.parse(await versionsFile.async('string'));
-              if (Array.isArray(versionsArr)) await bulkPutVersions(versionsArr);
+              if (Array.isArray(versionsArr)) stagedVersions.push(...versionsArr);
             } catch (err) { logError(err, 'import-versions'); }
           }
           // 资产目录读入 images 映射
@@ -2562,12 +2662,15 @@ function importFiles(files) {
             const b64 = await zip.files[path].async('base64');
             const mime = mimeFromExt(ext);
             const metaInfo = imagesMeta[id] || {};
-            images[id] = {
-              name: metaInfo.name || filename,
-              ext: metaInfo.ext || ext,
-              createdAt: metaInfo.createdAt || Date.now(),
-              dataUrl: `data:${mime};base64,${b64}`
-            };
+            if (!images[id]) {
+              images[id] = {
+                name: metaInfo.name || filename,
+                ext: metaInfo.ext || ext,
+                createdAt: metaInfo.createdAt || Date.now(),
+                dataUrl: `data:${mime};base64,${b64}`
+              };
+              await idbPut('images', { id, ...images[id] });
+            }
           }
           const entries = Object.keys(zip.files).filter(p => !zip.files[p].dir && p.toLowerCase().endsWith('.md'));
           for (const path of entries) {
@@ -2599,10 +2702,12 @@ function importFiles(files) {
             }
           }
         } catch (err) {
-          showToast('压缩包解析失败');
+          finish(file, err);
+          return;
         }
-        if (--pending === 0) done();
+        finish(file);
       };
+      reader.onerror = () => finish(file, reader.error || new Error('文件读取失败'));
       reader.readAsArrayBuffer(file);
     } else if (name.endsWith('.md') || name.endsWith('.markdown')) {
       reader.onload = e => {
@@ -2624,9 +2729,10 @@ function importFiles(files) {
             updatedAt: meta.updatedAt ? new Date(meta.updatedAt).getTime() : Date.now()
           };
           if (!notes.find(x => x.id === note.id)) { notes.push(note); added++; }
-        } catch { showToast('Markdown 解析失败'); }
-        if (--pending === 0) done();
+        } catch (error) { finish(file, error); return; }
+        finish(file);
       };
+      reader.onerror = () => finish(file, reader.error || new Error('文件读取失败'));
       reader.readAsText(file);
     } else if (name.endsWith('.json')) {
       reader.onload = e => {
@@ -2638,12 +2744,13 @@ function importFiles(files) {
           incoming.forEach(n => {
             if (!existingIds.has(n.id)) { notes.push(n); added++; }
           });
-        } catch { showToast('JSON 解析失败'); }
-        if (--pending === 0) done();
+        } catch (error) { finish(file, error); return; }
+        finish(file);
       };
+      reader.onerror = () => finish(file, reader.error || new Error('文件读取失败'));
       reader.readAsText(file);
     } else {
-      if (--pending === 0) done();
+      finish(file, new Error('不支持的文件类型'));
     }
   });
 }
@@ -3048,91 +3155,155 @@ async function syncProxyToBackground() {
   } catch (e) { logError(e, 'clear-proxy-on-startup'); }
 }
 
-async function callAi(messages, opts) {
-  const p = getActiveProvider();
-  if (!p) throw new Error('未配置 AI 模型，请先在 AI 设置中添加');
-  const body = {
-    model: p.model,
-    messages,
-    temperature: opts?.temperature ?? p.temperature ?? 0.7,
-    stream: false
-  };
-  if (opts?.max_tokens) body.max_tokens = opts.max_tokens;
-  const url = resolveAiUrl(p);
-  const hdrs = { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + (p.apiKey || '') };
-  if (p.customHeaders && typeof p.customHeaders === 'object') Object.assign(hdrs, p.customHeaders);
+const AiProviderCore = window.MarginoteAiProviderCore;
+let _aiAbortCtrl = null;
 
-  function parseAiResponse(text) {
-    let raw = (typeof text === 'string' ? text : '').trim();
-    if (!raw) throw new Error('AI 返回空响应，请检查模型服务是否正常');
-    if (raw.startsWith('data: ')) {
-      let combined = '';
-      for (const line of raw.split('\n')) {
-        const l = line.trim();
-        if (l.startsWith('data: ') && l !== 'data: [DONE]') {
-          try { const chunk = JSON.parse(l.slice(6)); const delta = chunk?.choices?.[0]?.delta?.content || chunk?.choices?.[0]?.message?.content || ''; combined += delta; } catch {}
+async function _simulateStreamEmit(text, onDelta, chunkSize = 12, delayMs = 6) {
+  if (!text || typeof onDelta !== 'function') return;
+  let accumulated = '';
+  for (let index = 0; index < text.length; index += chunkSize) {
+    const piece = text.slice(index, index + chunkSize);
+    accumulated += piece;
+    try { onDelta(piece, accumulated); } catch {}
+    if (index + chunkSize < text.length) await new Promise(resolve => setTimeout(resolve, delayMs));
+  }
+}
+
+async function callAi(messages, opts = {}) {
+  const provider = getActiveProvider();
+  if (!provider) throw new Error('未配置 AI 模型，请先在 AI 设置中添加');
+  if (!AiProviderCore) throw new Error('AI Provider 运行时未加载，请刷新页面后重试');
+
+  const stream = opts.stream !== false;
+  const body = AiProviderCore.buildChatRequest(provider, messages, opts, stream);
+  const headers = AiProviderCore.buildHeaders(provider);
+  const url = resolveAiUrl(provider);
+  const proxy = parseProxyUrl(provider.proxyPrefix || '');
+  const isHttpNonLocal = /^http:\/\//i.test(url) && !/^http:\/\/(localhost|127\.0\.0\.1)(:|\/|$)/i.test(url);
+  const retries = Number.isFinite(Number(opts.retries)) ? Number(opts.retries) : 1;
+  const finish = parsed => {
+    if (!parsed || typeof parsed.content !== 'string' || !parsed.content.trim()) {
+      throw new Error('AI 返回空响应，请检查模型服务是否正常');
+    }
+    AiProviderCore.emitUsage(opts, messages, parsed.content, parsed.usage);
+    return parsed.content;
+  };
+
+  // 代理和非本机 HTTP 请求由平台层转发。平台桥当前返回完整响应，
+  // 因此在要求流式展示时只做稳定的本地分段回放。
+  if (proxy.kind === 'http' || isHttpNonLocal) {
+    try { if (window.mn?.ready) await window.mn.ready; } catch {}
+    const proxyOptions = proxy.kind === 'http' ? {
+      providerHost: (() => { try { return new URL(provider.endpoint).hostname; } catch { return ''; } })(),
+      host: proxy.host,
+      port: proxy.port,
+      scheme: proxy.scheme,
+      user: proxy.user,
+      pass: proxy.pass
+    } : null;
+    const responseText = await AiProviderCore.withRetry(async () => {
+      let response;
+      try {
+        response = await window.mn.platform.fetch(url, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({ ...body, stream: false })
+        }, proxyOptions);
+      } catch (error) {
+        const wrapped = new Error('网络错误: ' + (error?.message || error));
+        wrapped.cause = error;
+        throw wrapped;
+      }
+      if (!response?.ok) {
+        if (response?.error && !response?.status) throw new Error('网络错误: ' + response.error);
+        throw AiProviderCore.createHttpError(response?.status, response?.error || response?.body);
+      }
+      return response.body;
+    }, { retries });
+    const parsed = AiProviderCore.parseChatResponse(responseText);
+    const content = finish(parsed);
+    if (stream && typeof opts.onDelta === 'function') await _simulateStreamEmit(content, opts.onDelta);
+    return content;
+  }
+
+  _aiAbortCtrl = new AbortController();
+  const cancelButton = document.getElementById('aiCancelBtn');
+  if (cancelButton) cancelButton.classList.add('show');
+  try {
+    const response = await AiProviderCore.withRetry(async () => {
+      const current = await fetch(url, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(body),
+        signal: _aiAbortCtrl.signal
+      });
+      if (!current.ok) {
+        let detail = '';
+        try { detail = await current.text(); } catch {}
+        throw AiProviderCore.createHttpError(current.status, detail);
+      }
+      return current;
+    }, { retries });
+
+    const contentType = response.headers.get('content-type') || '';
+    if (!stream || !contentType.includes('event-stream') || !response.body) {
+      const parsed = AiProviderCore.parseChatResponse(await response.text());
+      const content = finish(parsed);
+      if (stream && typeof opts.onDelta === 'function') await _simulateStreamEmit(content, opts.onDelta);
+      return content;
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    const accumulator = AiProviderCore.createStreamAccumulator();
+    let buffer = '';
+    let visible = '';
+    let doneByMarker = false;
+    const consumeLine = lineValue => {
+      const line = lineValue.trim();
+      if (!line.startsWith('data:')) return false;
+      const payload = line.slice(5).trim();
+      if (payload === '[DONE]') return true;
+      if (!payload) return false;
+      try {
+        const delta = accumulator.push(JSON.parse(payload));
+        if (delta.contentDelta) {
+          visible += delta.contentDelta;
+          if (typeof opts.onDelta === 'function') opts.onDelta(delta.contentDelta, visible);
+        } else if (delta.reasoningDelta && typeof opts.onDelta === 'function') {
+          opts.onDelta('', visible);
+        }
+      } catch {}
+      return false;
+    };
+
+    while (!doneByMarker) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      let newline;
+      while ((newline = buffer.indexOf('\n')) !== -1) {
+        const line = buffer.slice(0, newline);
+        buffer = buffer.slice(newline + 1);
+        if (consumeLine(line)) {
+          doneByMarker = true;
+          try { await reader.cancel(); } catch {}
+          break;
         }
       }
-      if (combined) return combined.trim();
     }
-    try {
-      const data = JSON.parse(raw);
-      const content = data?.choices?.[0]?.message?.content;
-      if (typeof content === 'string') return content.trim();
-      if (data?.choices?.[0]?.delta?.content) return data.choices[0].delta.content.trim();
-      if (data?.response) return String(data.response).trim();
-      if (data?.result) return String(data.result).trim();
-      throw new Error('返回数据缺少 choices[0].message.content');
-    } catch (e) {
-      if (e instanceof SyntaxError) {
-        if (raw.length > 20) return raw;
-        throw new Error('AI 返回无法解析: ' + raw.slice(0, 200));
-      }
-      throw e;
-    }
+    buffer += decoder.decode();
+    if (!doneByMarker && buffer.trim()) consumeLine(buffer);
+    return finish(accumulator.result());
+  } catch (error) {
+    if (error?.name === 'AbortError') throw new Error('已取消');
+    throw error;
+  } finally {
+    if (cancelButton) cancelButton.classList.remove('show');
+    _aiAbortCtrl = null;
   }
-
-  const proxyParsed = parseProxyUrl(p.proxyPrefix || '');
-  const isHttpNonLocal = /^http:\/\//i.test(url) && !/^http:\/\/(localhost|127\.0\.0\.1)(:\/|$)/i.test(url);
-  if (proxyParsed.kind === 'http' || isHttpNonLocal) {
-    try { if (window.mn && window.mn.ready) await window.mn.ready; } catch {}
-    let res;
-    try {
-      res = await mn.platform.fetch(url, {
-        method: 'POST',
-        headers: hdrs,
-        body: JSON.stringify(body)
-      }, proxyParsed.kind === 'http' ? {
-        providerHost: (() => { try { return new URL(p.endpoint).hostname; } catch { return ''; } })(),
-        host: proxyParsed.host,
-        port: proxyParsed.port,
-        scheme: proxyParsed.scheme,
-        user: proxyParsed.user,
-        pass: proxyParsed.pass
-      } : null);
-    } catch (e) {
-      throw new Error('\u65e0\u6cd5\u8fde\u63a5\u5e73\u53f0\u540e\u53f0: ' + (e.message || e));
-    }
-    if (!res.ok) {
-      if (res.error) throw new Error(res.error);
-      throw new Error(`HTTP ${res.status}: ${(res.body || '').slice(0, 200)}`);
-    }
-    return parseAiResponse(res.body);
-  }
-  // HTTPS / localhost \u2192 \u76f4\u63a5 fetch
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: hdrs,
-    body: JSON.stringify(body)
-  });
-  if (!res.ok) {
-    let detail = '';
-    try { detail = await res.text(); } catch {}
-    throw new Error(`HTTP ${res.status}: ${detail.slice(0, 200)}`);
-  }
-  const text = await res.text();
-  return parseAiResponse(text);
 }
+
 
 function aiUndoKeyForCurrent() {
   if (currentTodo) return 'todo:' + currentTodo.id;
@@ -3681,11 +3852,12 @@ async function init() {
   });
 
   // 事件绑定
-  document.getElementById('searchInput').addEventListener('input', () => {
+  document.getElementById('searchInput').addEventListener('input', debounceUi(() => {
     if (currentView.startsWith('todo:')) renderTodos();
     else renderNotesList();
-  });
+  }, 160));
   document.getElementById('newNoteBtn').addEventListener('click', createNote);
+  document.getElementById('emptyNewNoteBtn')?.addEventListener('click', createNote);
 document.getElementById('openFileBtn').addEventListener('click', openLocalFile);
   document.getElementById('newDrawingBtn')?.addEventListener('click', () => {
     if (typeof window.createDrawing === 'function') window.createDrawing();
@@ -3795,6 +3967,40 @@ document.getElementById('openFileBtn').addEventListener('click', openLocalFile);
   });
 
   // 操作按钮
+  const editorMoreBtn = document.getElementById('editorMoreBtn');
+  const editorMoreMenu = document.getElementById('editorMoreMenu');
+  const closeEditorMoreMenu = () => {
+    editorMoreMenu?.classList.remove('show');
+    editorMoreBtn?.setAttribute('aria-expanded', 'false');
+  };
+  editorMoreBtn?.addEventListener('click', event => {
+    event.stopPropagation();
+    const open = editorMoreMenu?.classList.toggle('show');
+    editorMoreBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
+  });
+  editorMoreMenu?.addEventListener('click', event => {
+    if (event.target.closest('button')) closeEditorMoreMenu();
+  });
+  document.addEventListener('click', event => {
+    if (!event.target.closest('#editorMoreMenu') && !event.target.closest('#editorMoreBtn')) closeEditorMoreMenu();
+  });
+  const editorToolbar = editorMoreBtn?.closest('.editor-toolbar');
+  const syncEditorActionsLayout = () => {
+    if (!editorToolbar) return;
+    const core = window.MarginoteEditorUiCore;
+    const width = editorToolbar.getBoundingClientRect().width;
+    const expanded = core?.shouldExpandEditorActions ? core.shouldExpandEditorActions(width) : width >= 1280;
+    const compact = core?.shouldUseCompactToolbar ? core.shouldUseCompactToolbar(width) : (width > 0 && width < 1040);
+    editorToolbar.classList.toggle('actions-expanded', !!expanded);
+    editorToolbar.classList.toggle('actions-compact', !!compact);
+    if (expanded) closeEditorMoreMenu();
+  };
+  if (editorToolbar && typeof ResizeObserver === 'function') {
+    const observer = new ResizeObserver(syncEditorActionsLayout);
+    observer.observe(editorToolbar);
+  }
+  window.addEventListener('resize', syncEditorActionsLayout);
+  requestAnimationFrame(syncEditorActionsLayout);
   document.getElementById('starBtn').addEventListener('click', toggleStar);
   document.getElementById('modeBtn').addEventListener('click', togglePreview);
   const htmlBtn = document.getElementById('htmlModeBtn');
@@ -3878,18 +4084,23 @@ document.getElementById('openFileBtn').addEventListener('click', openLocalFile);
 
   // 通用模态框
   document.getElementById('modalCancel').addEventListener('click', () => {
+    if (modalCancelCallback) modalCancelCallback();
     document.getElementById('modalBg').classList.remove('show');
     modalCallback = null;
+    modalCancelCallback = null;
   });
   document.getElementById('modalConfirm').addEventListener('click', () => {
     if (modalCallback) modalCallback();
     document.getElementById('modalBg').classList.remove('show');
     modalCallback = null;
+    modalCancelCallback = null;
   });
   document.getElementById('modalBg').addEventListener('click', e => {
     if (e.target.id === 'modalBg') {
+      if (modalCancelCallback) modalCancelCallback();
       document.getElementById('modalBg').classList.remove('show');
       modalCallback = null;
+      modalCancelCallback = null;
     }
   });
 
@@ -3936,6 +4147,7 @@ document.getElementById('openFileBtn').addEventListener('click', openLocalFile);
     if (mod && e.key === 'i' && document.activeElement.id === 'contentInput') { e.preventDefault(); applyFormat('italic'); }
     if (mod && e.key === 'p') { e.preventDefault(); togglePreview(); }
     if (e.key === 'Escape') {
+      if (modalCancelCallback) modalCancelCallback();
       document.getElementById('modalBg').classList.remove('show');
       document.getElementById('notebookModalBg').classList.remove('show');
       document.getElementById('folderModalBg').classList.remove('show');
@@ -3944,6 +4156,7 @@ document.getElementById('openFileBtn').addEventListener('click', openLocalFile);
       hideMoveMenu();
       hideAiMenu();
       modalCallback = null;
+      modalCancelCallback = null;
       editingNotebook = null;
       editingFolder = null;
     }
@@ -4073,12 +4286,23 @@ renderNotesList = function() {
   const container = document.getElementById('notesList');
   const showNbBadge = !currentView.startsWith('nb:') && !currentView.startsWith('folder:');
   if (list.length === 0) {
+    const hasSearch = !!document.getElementById('searchInput').value.trim() || currentTagFilter !== 'all';
     const empty = currentView === 'trash' ? '回收站为空' :
                   currentView === 'starred' ? '尚无收藏的笔记' :
                   currentView.startsWith('folder:') ? '此文件夹还是空的' :
                   currentView.startsWith('nb:') ? '这本笔记本还是空的' :
                   '尚无笔记，开始书写吧';
-    container.innerHTML = `<div class="empty-list">${empty}</div>`;
+    const action = currentView === 'trash' ? '' : hasSearch
+      ? '<button class="empty-action" type="button" data-empty-action="clear-search">清除筛选</button>'
+      : '<button class="empty-action" type="button" data-empty-action="create-note">新建笔记</button>';
+    container.innerHTML = `<div class="empty-list"><span>${empty}</span>${action}</div>`;
+    container.querySelector('[data-empty-action="clear-search"]')?.addEventListener('click', () => {
+      document.getElementById('searchInput').value = '';
+      currentTagFilter = 'all';
+      renderTagFilters();
+      renderNotesList();
+    });
+    container.querySelector('[data-empty-action="create-note"]')?.addEventListener('click', createNote);
     return;
   }
   const terms = list._terms || [];
@@ -4270,103 +4494,6 @@ function openAiCustomModal() {
 }
 function closeAiCustomModal() { document.getElementById('aiCustomModalBg').classList.remove('show'); }
 
-// ---------- AI 流式 callAi ----------
-let _aiAbortCtrl = null;
-const _origCallAi = callAi;
-
-async function _simulateStreamEmit(text, onDelta, chunkSize = 12, delayMs = 6) {
-  if (!text || typeof onDelta !== 'function') return;
-  let acc = '';
-  for (let i = 0; i < text.length; i += chunkSize) {
-    const piece = text.slice(i, i + chunkSize);
-    acc += piece;
-    try { onDelta(piece, acc); } catch {}
-    if (i + chunkSize < text.length) await new Promise(r => setTimeout(r, delayMs));
-  }
-}
-callAi = async function(messages, opts) {
-  const p = getActiveProvider();
-  if (!p) throw new Error('未配置 AI 模型');
-  if (opts && opts.stream === false) return _origCallAi(messages, opts);
-  // HTTP / SOCKS 代理 → 必须走平台后台桥（不做 SSE），响应回来后模拟流式回放
-  // 桌面版 WebView2 不支持 http:// 直连 fetch → 走平台桥（Rust reqwest），模拟流式
-  // 浏览器插件 / HTTPS / localhost → 使用原生 fetch + SSE 真流式
-  {
-    const urlEarly = resolveAiUrl(p);
-    const proxyParsedEarly = parseProxyUrl(p.proxyPrefix || '');
-    const isHttpNonLocal = /^http:\/\//i.test(urlEarly) && !/^http:\/\/(localhost|127\.0\.0\.1)(:|\/|$)/i.test(urlEarly);
-    const isDesktop = !!(window.mn && window.mn.platform && window.mn.platform.kind === 'desktop');
-    const needBridge = proxyParsedEarly.kind === 'http' || (isDesktop && isHttpNonLocal);
-    if (needBridge) {
-      const result = await _origCallAi(messages, Object.assign({}, opts, { stream: false }));
-      if (opts && typeof opts.onDelta === 'function' && typeof result === 'string') {
-        await _simulateStreamEmit(result, opts.onDelta);
-      }
-      return result;
-    }
-  }
-  const body = { model: p.model, messages, temperature: (opts && opts.temperature) ?? p.temperature ?? 0.7, stream: true };
-  _aiAbortCtrl = new AbortController();
-  const cancelBtn = document.getElementById('aiCancelBtn');
-  if (cancelBtn) cancelBtn.classList.add('show');
-  try {
-    const url = resolveAiUrl(p);
-    const hdrs = { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + (p.apiKey || '') };
-    if (p.customHeaders && typeof p.customHeaders === 'object') Object.assign(hdrs, p.customHeaders);
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: hdrs,
-      body: JSON.stringify(body),
-      signal: _aiAbortCtrl.signal
-    });
-    if (!res.ok) {
-      const txt = await res.text().catch(() => '');
-      throw new Error(`HTTP ${res.status}: ${txt.slice(0, 200)}`);
-    }
-    const ct = res.headers.get('content-type') || '';
-    if (!ct.includes('event-stream')) {
-      const data = await res.json();
-      const c = data?.choices?.[0]?.message?.content;
-      if (typeof c === 'string' && opts?.onDelta) await _simulateStreamEmit(c, opts.onDelta);
-      return typeof c === 'string' ? c.trim() : '';
-    }
-    const reader = res.body.getReader();
-    const decoder = new TextDecoder();
-    let buf = '', full = '', streamDone = false;
-    while (!streamDone) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      buf += decoder.decode(value, { stream: true });
-      let idx;
-      while ((idx = buf.indexOf('\n')) !== -1) {
-        const line = buf.slice(0, idx).trim();
-        buf = buf.slice(idx + 1);
-        if (!line.startsWith('data:')) continue;
-        const payload = line.slice(5).trim();
-        if (payload === '[DONE]') { streamDone = true; try { reader.cancel(); } catch {} break; }
-        try {
-          const obj = JSON.parse(payload);
-          const d = obj?.choices?.[0]?.delta;
-          const content = d?.content;
-          const reasoning = d?.reasoning_content;
-          if (content) {
-            full += content;
-            if (opts && typeof opts.onDelta === 'function') opts.onDelta(content, full);
-          } else if (reasoning && opts && typeof opts.onDelta === 'function') {
-            opts.onDelta('', full);
-          }
-        } catch {}
-      }
-    }
-    return full.trim();
-  } catch (e) {
-    if (e.name === 'AbortError') throw new Error('已取消');
-    throw e;
-  } finally {
-    if (cancelBtn) cancelBtn.classList.remove('show');
-    _aiAbortCtrl = null;
-  }
-};
 
 // ---------- runAiAction：支持流式 + custom modal ----------
 runAiAction = async function(action) {
@@ -4377,13 +4504,27 @@ runAiAction = async function(action) {
 async function _runAiActionInternal(action) {
   const provider = getActiveProvider();
   if (!provider) { showToast('未配置 AI 模型'); openAiSettings(); return; }
-  const isTodo = !!currentTodo, isNote = !!currentNote;
+  const todoTarget = currentTodo;
+  const noteTarget = currentNote;
+  const isTodo = !!todoTarget, isNote = !!noteTarget;
   if (!isTodo && !isNote) { showToast('请先选择笔记或待办'); return; }
-  const target = isTodo ? 'todo:' + currentTodo.id : 'note:' + currentNote.id;
-  const title = isTodo ? (currentTodo.text || '') : (currentNote.title || '');
-  const content = isTodo ? (currentTodo.content || '') : (currentNote.content || '');
-  pushAiUndoSnapshot(target, { title, content, ts: Date.now() });
-  const userPayload = (title ? `标题：${title}\n\n` : '') + (content || '(空)');
+  const targetObject = isTodo ? todoTarget : noteTarget;
+  const target = (isTodo ? 'todo:' : 'note:') + targetObject.id;
+  const title = isTodo ? (todoTarget.text || '') : (noteTarget.title || '');
+  let content = targetObject.content || '';
+  const ta = isTodo ? document.getElementById('todoEditContent') : document.getElementById('contentInput');
+  if (ta && ta.value !== content) {
+    content = ta.value;
+    targetObject.content = content;
+    if (!isTodo) targetObject.updatedAt = Date.now();
+    saveData();
+  }
+  const selection = ta && ta.selectionEnd > ta.selectionStart
+    ? { start: ta.selectionStart, end: ta.selectionEnd }
+    : null;
+  const edit = window.MarginoteAiEditCore.createTextEdit(targetObject, action.mode, isTodo ? 'todo' : 'note', { selection });
+  const input = edit.selection ? `【仅处理以下选中文本】\n${edit.input}` : edit.input;
+  const userPayload = (title ? `标题：${title}\n\n` : '') + (input || '(空)');
   const messages = [];
   const sysParts = [];
   if (provider.system) sysParts.push(provider.system);
@@ -4392,41 +4533,47 @@ async function _runAiActionInternal(action) {
   messages.push({ role: 'user', content: userPayload });
 
   setAiBusy(true);
-  const ta = isTodo ? document.getElementById('todoEditContent') : document.getElementById('contentInput');
-  const baseContent = action.mode === 'append' ? (content + (content ? '\n\n' : '')) : '';
   // 先占位提示以避免长时间空白
-  if (ta) { const orig = ta.value; ta.value = (baseContent || orig) + '\n\n⏳ AI 生成中…'; ta.scrollTop = ta.scrollHeight; }
+  if (ta) { ta.value = edit.draft('⏳ AI 生成中…'); ta.scrollTop = ta.scrollHeight; }
 
   try {
     const reply = await callAi(messages, {
       stream: true,
       onDelta: (d, full) => {
-        if (isTodo) {
-          currentTodo.content = baseContent + full;
-          ta.value = currentTodo.content;
-          if (isTodoPreviewMode) document.getElementById('todoPreview').innerHTML = renderMarkdown(currentTodo.content);
-        } else {
-          currentNote.content = baseContent + full;
-          ta.value = currentNote.content;
-          if (isPreviewMode) applyNotePreview(currentNote);
-        }
+        if ((isTodo && currentTodo !== todoTarget) || (!isTodo && currentNote !== noteTarget)) return;
+        const draft = edit.draft(full);
+        if (ta) ta.value = draft;
+        if (isTodo && isTodoPreviewMode) document.getElementById('todoPreview').innerHTML = renderMarkdown(draft);
+        if (!isTodo && isPreviewMode) document.getElementById('preview').innerHTML = renderMarkdown(draft);
       }
     });
+    pushAiUndoSnapshot(target, { title, content, ts: Date.now() });
+    const committed = edit.commit(reply, Date.now());
     if (isTodo) {
-      currentTodo.content = baseContent + reply;
       saveData();
-      document.getElementById('todoEditStatus').textContent = '已保存 · AI 已应用';
+      if (currentTodo === todoTarget) {
+        if (ta) ta.value = committed;
+        if (isTodoPreviewMode) document.getElementById('todoPreview').innerHTML = renderMarkdown(committed);
+        document.getElementById('todoEditStatus').textContent = '已保存 · AI 已应用';
+      }
       renderTodos();
     } else {
-      currentNote.content = baseContent + reply;
-      currentNote.updatedAt = Date.now();
       saveData();
-      document.getElementById('editorStatus').textContent = '已保存 · AI 已应用';
-      updateWordCount();
+      if (currentNote === noteTarget) {
+        if (ta) ta.value = committed;
+        if (isPreviewMode) applyNotePreview(noteTarget);
+        document.getElementById('editorStatus').textContent = '已保存 · AI 已应用';
+        updateWordCount();
+      }
       renderNotesList();
     }
-    showToast('AI 已优化 ✓');
+    showToast(edit.selection ? 'AI 已应用到选中文本 ✓' : 'AI 已优化 ✓');
   } catch (e) {
+    if ((isTodo && currentTodo === todoTarget) || (!isTodo && currentNote === noteTarget)) {
+      if (ta) ta.value = edit.original;
+      if (isTodo && isTodoPreviewMode) document.getElementById('todoPreview').innerHTML = renderMarkdown(edit.original);
+      if (!isTodo && isPreviewMode) applyNotePreview(noteTarget);
+    }
     logError(e, 'ai-stream');
     showToast('AI 失败：' + (e.message || e), e && e.stack);
   } finally {
@@ -4443,24 +4590,7 @@ async function runCustomAi() {
   await _runAiActionInternal({ id: 'custom', mode: 'replace', system: ins });
 }
 
-// ---------- 主题 hover 实时预览 ----------
-function previewTheme(name) {
-  const preset = THEMES[name];
-  if (!preset) return;
-  document.body.setAttribute('data-theme', preset.mode);
-  THEME_VAR_NAMES.forEach(v => document.body.style.removeProperty(v));
-  Object.entries(preset.vars).forEach(([k, v]) => document.body.style.setProperty(k, v));
-}
-function restoreTheme() { applyTheme(currentThemePreset); }
-
-const _origRenderThemeGrid = renderThemeGrid;
-renderThemeGrid = function() {
-  _origRenderThemeGrid();
-  document.querySelectorAll('#themeGrid .theme-card').forEach(el => {
-    el.addEventListener('mouseenter', () => previewTheme(el.dataset.theme));
-    el.addEventListener('mouseleave', () => restoreTheme());
-  });
-};
+// 主题只在点击时应用，避免鼠标经过时造成误切换和页面闪烁。
 
 // ---------- Outline 大纲面板 ----------
 function getOutline(text) {
@@ -4666,24 +4796,7 @@ function bindV12() {
   // 双击切换 编辑/预览：
   //   预览模式下双击渲染文字 -> 切回编辑
   //   编辑模式下双击非输入区空白 -> 切到预览
-  const FORM_SEL = 'input, textarea, select, button, .icon-btn, .tag-pill, .tag-input-wrap, .editor-toolbar, .modal, .outline-panel';
-  function bindDblToggle(rootId, previewId, isPreviewFn, toggleFn, isActiveFn) {
-    const root = document.getElementById(rootId);
-    if (!root) return;
-    root.addEventListener('dblclick', (e) => {
-      if (!isActiveFn()) return;
-      const t = e.target;
-      const previewEl = document.getElementById(previewId);
-      const inPreview = previewEl && previewEl.contains(t);
-      if (isPreviewFn() && inPreview) {
-        toggleFn();
-      } else if (!isPreviewFn() && !t.closest(FORM_SEL)) {
-        toggleFn();
-      }
-    });
-  }
-  bindDblToggle('editor',         'preview',     () => isPreviewMode,     togglePreview,     () => !!currentNote);
-  bindDblToggle('todoEditorWrap', 'todoPreview', () => isTodoPreviewMode, toggleTodoPreview, () => !!currentTodo);
+  // 编辑 / 预览只由右上角按钮或快捷键切换；双击始终保留给选词和复制。
 
   // 搜索 placeholder 加语法提示
   const si = document.getElementById('searchInput');
@@ -5075,11 +5188,12 @@ function renderWorkDirInfo() {
 // hook saveData → 工作目录启用时 debounce 写回
 const _origSaveDataWorkdir = saveData;
 saveData = function() {
-  _origSaveDataWorkdir();
-  if (_workdirCfg.enabled && workdirAvailable()) {
+  const saved = _origSaveDataWorkdir();
+  if (saved !== false && _workdirCfg.enabled && workdirAvailable()) {
     clearTimeout(_workdirTimer);
     _workdirTimer = setTimeout(() => workdirWriteAll(true), 3000);
   }
+  return saved;
 };
 
 // 启动：若已启用工作目录，自动从磁盘导入（拖入的 md 会出现）
@@ -5122,6 +5236,8 @@ function enterReadingMode() {
   ta.style.display = 'none';
   app.classList.add('reading-mode');
   document.getElementById('readingBtn').classList.add('active');
+  applyEditorZoom();
+  applyReadingViewportLayout();
   document.querySelector('.editor').scrollTop = 0;
   updateReadingProgress();
 }
@@ -5131,6 +5247,7 @@ function exitReadingMode() {
   if (!app.classList.contains('reading-mode')) return;
   app.classList.remove('reading-mode');
   document.getElementById('readingBtn').classList.remove('active');
+  clearReadingViewportLayout();
   // 恢复进入前的预览/编辑状态
   if (!isPreviewMode) {
     document.getElementById('preview').style.display = 'none';
@@ -5330,6 +5447,20 @@ if (_origRenderTodos_v121) {
     _origRenderTodos_v121.apply(this, arguments);
     const c = document.getElementById('todoList');
     if (!c) return;
+    const empty = c.querySelector('.todo-empty');
+    if (empty) {
+      const hasSearch = !!document.getElementById('searchInput').value.trim();
+      empty.insertAdjacentHTML('beforeend', hasSearch
+        ? '<button class="empty-action" type="button" data-empty-action="clear-search">清除搜索</button>'
+        : '<button class="empty-action" type="button" data-empty-action="create-todo">新建待办</button>');
+      empty.querySelector('[data-empty-action="clear-search"]')?.addEventListener('click', () => {
+        document.getElementById('searchInput').value = '';
+        renderTodos();
+      });
+      empty.querySelector('[data-empty-action="create-todo"]')?.addEventListener('click', () => {
+        document.getElementById('newTodoBtn').click();
+      });
+    }
     c.querySelectorAll('.todo-row[data-id]').forEach(el => { el.dataset.dragKey = el.dataset.id; });
     enableDragReorder(c, '.todo-row[data-id]', (src, dst) => {
       if (reorderArrayById(todos, src, dst)) {
@@ -5344,32 +5475,95 @@ if (_origRenderTodos_v121) {
 const EDITOR_ZOOM_KEY = 'marginote.editorZoom';
 let _editorZoom = (function() {
   const n = parseFloat(localStorage.getItem(EDITOR_ZOOM_KEY));
-  return isFinite(n) && n > 0 ? Math.max(0.5, Math.min(3, n)) : 1.0;
+  const core = window.MarginoteEditorUiCore;
+  return core && typeof core.normalizeEditorZoom === 'function'
+    ? core.normalizeEditorZoom(n)
+    : (isFinite(n) && n > 0 ? Math.max(0.5, Math.min(3, n)) : 1.0);
 })();
 function applyEditorZoom() {
   document.documentElement.style.setProperty('--editor-zoom', _editorZoom.toFixed(2));
+  if (typeof setEditorContentZoom === 'function') {
+    setEditorContentZoom(_editorZoom);
+  } else {
+    const fallbackPx = Math.round(16 * _editorZoom * 100) / 100;
+    document.querySelectorAll('.content-input, .preview').forEach(el => {
+      el.style.setProperty('font-size', fallbackPx + 'px', 'important');
+    });
+  }
+  const label = `${Math.round(_editorZoom * 100)}%`;
+  const readingValue = document.getElementById('readingZoomValue');
+  const editorValue = document.getElementById('editorZoomValue');
+  if (readingValue) readingValue.textContent = label;
+  if (editorValue) editorValue.textContent = label;
 }
-function bumpEditorZoom(delta) {
-  const next = Math.max(0.5, Math.min(3, Math.round((_editorZoom + delta) * 100) / 100));
-  if (next === _editorZoom) return;
+function applyReadingViewportLayout() {
+  const surface = document.querySelector('#editorWrap > .editor-content');
+  if (!surface) return;
+  const core = window.MarginoteEditorUiCore;
+  const layout = core && typeof core.readingLayout === 'function'
+    ? core.readingLayout(window.innerWidth)
+    : {
+        width: Math.min(1920, window.innerWidth * 0.88),
+        horizontalPadding: Math.max(32, Math.min(96, window.innerWidth * 0.045))
+      };
+  surface.style.width = layout.width + 'px';
+  surface.style.maxWidth = 'none';
+  surface.style.padding = `72px ${layout.horizontalPadding}px 160px`;
+}
+function clearReadingViewportLayout() {
+  const surface = document.querySelector('#editorWrap > .editor-content');
+  if (!surface) return;
+  surface.style.removeProperty('width');
+  surface.style.removeProperty('max-width');
+  surface.style.removeProperty('padding');
+}
+function setEditorZoom(value) {
+  const core = window.MarginoteEditorUiCore;
+  const next = core && typeof core.normalizeEditorZoom === 'function'
+    ? core.normalizeEditorZoom(value)
+    : Math.max(0.5, Math.min(3, Math.round(Number(value) * 100) / 100));
+  if (next === _editorZoom) {
+    applyEditorZoom();
+    return;
+  }
   _editorZoom = next;
   applyEditorZoom();
   try { localStorage.setItem(EDITOR_ZOOM_KEY, String(_editorZoom)); } catch {}
-  if (typeof showToast === 'function') showToast(`编辑区缩放 ${Math.round(_editorZoom * 100)}%`);
+  if (typeof showToast === 'function') {
+    const reading = document.getElementById('app')?.classList.contains('reading-mode');
+    showToast(`${reading ? '阅读' : '编辑区'}缩放 ${Math.round(_editorZoom * 100)}%`);
+  }
+}
+function bumpEditorZoom(delta) {
+  const core = window.MarginoteEditorUiCore;
+  const next = core && typeof core.nextEditorZoom === 'function'
+    ? core.nextEditorZoom(_editorZoom, delta)
+    : Math.max(0.5, Math.min(3, Math.round((_editorZoom + delta) * 100) / 100));
+  setEditorZoom(next);
 }
 function bindEditorZoomTargets() {
-  const ids = ['contentInput', 'preview', 'todoEditContent', 'todoPreview'];
-  ids.forEach(id => {
-    const el = document.getElementById(id);
-    if (!el || el.dataset.zoomBound === '1') return;
-    el.dataset.zoomBound = '1';
-    el.addEventListener('wheel', (e) => {
-      if (!(e.ctrlKey || e.metaKey)) return;
-      e.preventDefault();
-      bumpEditorZoom(e.deltaY < 0 ? 0.1 : -0.1);
-    }, { passive: false });
-  });
+  const editor = document.getElementById('editor');
+  if (!editor || editor.dataset.zoomBound === '1') return;
+  editor.dataset.zoomBound = '1';
+  editor.addEventListener('wheel', (e) => {
+    if (!(e.ctrlKey || e.metaKey)) return;
+    const reading = document.getElementById('app')?.classList.contains('reading-mode');
+    const inContent = e.target.closest && e.target.closest('#editorWrap .editor-content, #todoEditorWrap .editor-content');
+    if (!reading && !inContent) return;
+    e.preventDefault();
+    bumpEditorZoom(e.deltaY < 0 ? 0.1 : -0.1);
+  }, { passive: false });
 }
+
+document.getElementById('readingZoomOut')?.addEventListener('click', () => bumpEditorZoom(-0.1));
+document.getElementById('readingZoomIn')?.addEventListener('click', () => bumpEditorZoom(0.1));
+document.getElementById('readingZoomReset')?.addEventListener('click', () => setEditorZoom(1));
+document.getElementById('editorZoomOut')?.addEventListener('click', () => bumpEditorZoom(-0.1));
+document.getElementById('editorZoomIn')?.addEventListener('click', () => bumpEditorZoom(0.1));
+document.getElementById('editorZoomReset')?.addEventListener('click', () => setEditorZoom(1));
+window.addEventListener('resize', () => {
+  if (document.getElementById('app')?.classList.contains('reading-mode')) applyReadingViewportLayout();
+});
 
 // ---------- AI 指令管理 modal ----------
 function openAiActionManager() {
@@ -5560,9 +5754,6 @@ openAiCustomModal = function() {
     [draggable="true"].rail-item, [draggable="true"].todo-row, [draggable="true"].ai-session-item {
       -webkit-user-drag: element;
     }
-    #contentInput, #preview, #todoEditContent, #todoPreview {
-      zoom: var(--editor-zoom, 1);
-    }
     .ai-action-row textarea:focus, .ai-action-row input:focus {
       outline: none;
       border-color: var(--accent, #888) !important;
@@ -5613,13 +5804,27 @@ _runAiActionInternal = async function(action) {
     return _origRunAiActionInternal_v121mm.call(this, action);
   }
   if (!provider) { showToast('未配置 AI 模型'); openAiSettings(); return; }
-  const isTodo = !!currentTodo, isNote = !!currentNote;
+  const todoTarget = currentTodo;
+  const noteTarget = currentNote;
+  const isTodo = !!todoTarget, isNote = !!noteTarget;
   if (!isTodo && !isNote) { showToast('请先选择笔记或待办'); return; }
-  const target = isTodo ? 'todo:' + currentTodo.id : 'note:' + currentNote.id;
-  const title = isTodo ? (currentTodo.text || '') : (currentNote.title || '');
-  const content = isTodo ? (currentTodo.content || '') : (currentNote.content || '');
-  pushAiUndoSnapshot(target, { title, content, ts: Date.now() });
-  const userContent = await buildMultimodalUserContent(provider, title, content);
+  const targetObject = isTodo ? todoTarget : noteTarget;
+  const target = (isTodo ? 'todo:' : 'note:') + targetObject.id;
+  const title = isTodo ? (todoTarget.text || '') : (noteTarget.title || '');
+  let content = targetObject.content || '';
+  const ta = isTodo ? document.getElementById('todoEditContent') : document.getElementById('contentInput');
+  if (ta && ta.value !== content) {
+    content = ta.value;
+    targetObject.content = content;
+    if (!isTodo) targetObject.updatedAt = Date.now();
+    saveData();
+  }
+  const selection = ta && ta.selectionEnd > ta.selectionStart
+    ? { start: ta.selectionStart, end: ta.selectionEnd }
+    : null;
+  const edit = window.MarginoteAiEditCore.createTextEdit(targetObject, action.mode, isTodo ? 'todo' : 'note', { selection });
+  const input = edit.selection ? `【仅处理以下选中文本】\n${edit.input}` : edit.input;
+  const userContent = await buildMultimodalUserContent(provider, title, input);
   const messages = [];
   const sysParts = [];
   if (provider.system) sysParts.push(provider.system);
@@ -5628,38 +5833,44 @@ _runAiActionInternal = async function(action) {
   messages.push({ role: 'user', content: userContent });
 
   setAiBusy(true);
-  const ta = isTodo ? document.getElementById('todoEditContent') : document.getElementById('contentInput');
-  const baseContent = action.mode === 'append' ? (content + (content ? '\n\n' : '')) : '';
   try {
     const reply = await callAi(messages, {
       stream: true,
       onDelta: (d, full) => {
-        if (isTodo) {
-          currentTodo.content = baseContent + full;
-          if (ta) ta.value = currentTodo.content;
-          if (isTodoPreviewMode) document.getElementById('todoPreview').innerHTML = renderMarkdown(currentTodo.content);
-        } else {
-          currentNote.content = baseContent + full;
-          if (ta) ta.value = currentNote.content;
-          if (isPreviewMode) applyNotePreview(currentNote);
-        }
+        if ((isTodo && currentTodo !== todoTarget) || (!isTodo && currentNote !== noteTarget)) return;
+        const draft = edit.draft(full);
+        if (ta) ta.value = draft;
+        if (isTodo && isTodoPreviewMode) document.getElementById('todoPreview').innerHTML = renderMarkdown(draft);
+        if (!isTodo && isPreviewMode) document.getElementById('preview').innerHTML = renderMarkdown(draft);
       }
     });
+    pushAiUndoSnapshot(target, { title, content, ts: Date.now() });
+    const committed = edit.commit(reply, Date.now());
     if (isTodo) {
-      currentTodo.content = baseContent + reply;
       saveData();
-      const st = document.getElementById('todoEditStatus'); if (st) st.textContent = '已保存 · AI 已应用';
+      if (currentTodo === todoTarget) {
+        if (ta) ta.value = committed;
+        if (isTodoPreviewMode) document.getElementById('todoPreview').innerHTML = renderMarkdown(committed);
+        const st = document.getElementById('todoEditStatus'); if (st) st.textContent = '已保存 · AI 已应用';
+      }
       renderTodos();
     } else {
-      currentNote.content = baseContent + reply;
-      currentNote.updatedAt = Date.now();
       saveData();
-      const st = document.getElementById('editorStatus'); if (st) st.textContent = '已保存 · AI 已应用';
-      updateWordCount();
+      if (currentNote === noteTarget) {
+        if (ta) ta.value = committed;
+        if (isPreviewMode) applyNotePreview(noteTarget);
+        const st = document.getElementById('editorStatus'); if (st) st.textContent = '已保存 · AI 已应用';
+        updateWordCount();
+      }
       renderNotesList();
     }
-    showToast('AI 已优化 ✓ 可在 AI 菜单撤销');
+    showToast(edit.selection ? 'AI 已应用到选中文本 ✓ 可撤销' : 'AI 已优化 ✓ 可在 AI 菜单撤销');
   } catch (e) {
+    if ((isTodo && currentTodo === todoTarget) || (!isTodo && currentNote === noteTarget)) {
+      if (ta) ta.value = edit.original;
+      if (isTodo && isTodoPreviewMode) document.getElementById('todoPreview').innerHTML = renderMarkdown(edit.original);
+      if (!isTodo && isPreviewMode) applyNotePreview(noteTarget);
+    }
     logError(e, 'ai-stream-mm');
     showToast('AI 失败：' + (e.message || e), e && e.stack);
   } finally {
@@ -5681,12 +5892,21 @@ function cleanTitleText(s) {
 async function runAiTitleAction(action) {
   const provider = getActiveProvider();
   if (!provider) { showToast('未配置 AI 模型'); openAiSettings(); return; }
-  const isTodo = !!currentTodo, isNote = !!currentNote;
+  const todoTarget = currentTodo;
+  const noteTarget = currentNote;
+  const isTodo = !!todoTarget, isNote = !!noteTarget;
   if (!isTodo && !isNote) { showToast('请先选择笔记或待办'); return; }
-  const target = isTodo ? 'todo:' + currentTodo.id : 'note:' + currentNote.id;
-  const oldTitle = isTodo ? (currentTodo.text || '') : (currentNote.title || '');
-  const content = isTodo ? (currentTodo.content || '') : (currentNote.content || '');
-  pushAiUndoSnapshot(target, { title: oldTitle, content, ts: Date.now() });
+  const targetObject = isTodo ? todoTarget : noteTarget;
+  const target = (isTodo ? 'todo:' : 'note:') + targetObject.id;
+  const oldTitle = isTodo ? (todoTarget.text || '') : (noteTarget.title || '');
+  let content = targetObject.content || '';
+  const contentInput = isTodo ? document.getElementById('todoEditContent') : document.getElementById('contentInput');
+  if (contentInput && contentInput.value !== content) {
+    content = contentInput.value;
+    targetObject.content = content;
+    if (!isTodo) targetObject.updatedAt = Date.now();
+    saveData();
+  }
   const userContent = await buildMultimodalUserContent(provider, oldTitle, content);
   const messages = [];
   const sysParts = [];
@@ -5702,27 +5922,33 @@ async function runAiTitleAction(action) {
       stream: true,
       onDelta: (d, full) => {
         const t = cleanTitleText(full);
-        if (!isTodo && titleInput) titleInput.value = t;
+        if (!isTodo && currentNote === noteTarget && titleInput) titleInput.value = t;
       }
     });
     const clean = cleanTitleText(reply) || oldTitle;
+    pushAiUndoSnapshot(target, { title: oldTitle, content, ts: Date.now() });
     if (isTodo) {
-      currentTodo.text = clean;
+      todoTarget.text = clean;
       saveData();
       renderTodos();
-      const st = document.getElementById('todoEditStatus');
-      if (st) st.textContent = '已保存 · AI 已更新标题';
+      if (currentTodo === todoTarget) {
+        const st = document.getElementById('todoEditStatus');
+        if (st) st.textContent = '已保存 · AI 已更新标题';
+      }
     } else {
-      currentNote.title = clean;
-      currentNote.updatedAt = Date.now();
+      noteTarget.title = clean;
+      noteTarget.updatedAt = Date.now();
       saveData();
-      if (titleInput) titleInput.value = clean;
-      const st = document.getElementById('editorStatus');
-      if (st) st.textContent = '已保存 · AI 已更新标题';
+      if (currentNote === noteTarget) {
+        if (titleInput) titleInput.value = clean;
+        const st = document.getElementById('editorStatus');
+        if (st) st.textContent = '已保存 · AI 已更新标题';
+      }
       renderNotesList();
     }
     showToast('AI 标题已应用 ✓ 可在 AI 菜单撤销');
   } catch (e) {
+    if (!isTodo && currentNote === noteTarget && titleInput) titleInput.value = oldTitle;
     logError(e, 'ai-title');
     showToast('AI 失败：' + (e.message || e), e && e.stack);
   } finally {
@@ -5841,4 +6067,3 @@ init()
 
 // AI 助手代码已移到 js/assistant.js
 const _ASSISTANT_MOVED = 'see js/assistant.js';
-

@@ -8,12 +8,163 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::{Command as ProcessCommand, Stdio};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 // Must match tauri.conf.json's identifier so both processes find the endpoint.
 const APP_ID: &str = "com.marginote.app";
 const ENDPOINT_FILE: &str = "cli-endpoint.json";
 const CONNECT_RETRIES: usize = 80;
+
+#[derive(Clone, Copy)]
+struct CliCallPolicy {
+    name: &'static str,
+    destructive: bool,
+}
+
+// 与 shared/js/tool-policy-core.js 的 cliCallNames 保持一致；Node 回归测试会跨语言校验。
+// schema、raw call 白名单和删除确认均从此表派生，避免三份手写列表互相漂移。
+const CLI_CALL_POLICIES: &[CliCallPolicy] = &[
+    CliCallPolicy {
+        name: "list_notebooks",
+        destructive: false,
+    },
+    CliCallPolicy {
+        name: "search_notes",
+        destructive: false,
+    },
+    CliCallPolicy {
+        name: "search_todos",
+        destructive: false,
+    },
+    CliCallPolicy {
+        name: "create_note",
+        destructive: false,
+    },
+    CliCallPolicy {
+        name: "create_todo",
+        destructive: false,
+    },
+    CliCallPolicy {
+        name: "batch_move_notes",
+        destructive: false,
+    },
+    CliCallPolicy {
+        name: "batch_update_notes",
+        destructive: false,
+    },
+    CliCallPolicy {
+        name: "batch_complete_todos",
+        destructive: false,
+    },
+    CliCallPolicy {
+        name: "batch_delete_notes",
+        destructive: true,
+    },
+    CliCallPolicy {
+        name: "batch_delete_todos",
+        destructive: true,
+    },
+    CliCallPolicy {
+        name: "update_todo",
+        destructive: false,
+    },
+    CliCallPolicy {
+        name: "create_notebook",
+        destructive: false,
+    },
+    CliCallPolicy {
+        name: "rename_notebook",
+        destructive: false,
+    },
+    CliCallPolicy {
+        name: "delete_notebook",
+        destructive: true,
+    },
+    CliCallPolicy {
+        name: "move_note",
+        destructive: false,
+    },
+    CliCallPolicy {
+        name: "delete_note",
+        destructive: true,
+    },
+    CliCallPolicy {
+        name: "get_note",
+        destructive: false,
+    },
+    CliCallPolicy {
+        name: "get_todo",
+        destructive: false,
+    },
+    CliCallPolicy {
+        name: "add_tags",
+        destructive: false,
+    },
+    CliCallPolicy {
+        name: "remove_tags",
+        destructive: false,
+    },
+    CliCallPolicy {
+        name: "list_tags",
+        destructive: false,
+    },
+    CliCallPolicy {
+        name: "note_stats",
+        destructive: false,
+    },
+    CliCallPolicy {
+        name: "list_todos",
+        destructive: false,
+    },
+    CliCallPolicy {
+        name: "complete_todo",
+        destructive: false,
+    },
+    CliCallPolicy {
+        name: "delete_todo",
+        destructive: true,
+    },
+    CliCallPolicy {
+        name: "append_to_note",
+        destructive: false,
+    },
+    CliCallPolicy {
+        name: "star_note",
+        destructive: false,
+    },
+    CliCallPolicy {
+        name: "word_count",
+        destructive: false,
+    },
+    CliCallPolicy {
+        name: "export_note",
+        destructive: false,
+    },
+    CliCallPolicy {
+        name: "status",
+        destructive: false,
+    },
+    CliCallPolicy {
+        name: "search_all",
+        destructive: false,
+    },
+    CliCallPolicy {
+        name: "list_notes",
+        destructive: false,
+    },
+    CliCallPolicy {
+        name: "update_note_cli",
+        destructive: false,
+    },
+    CliCallPolicy {
+        name: "rename_notebook_cli",
+        destructive: false,
+    },
+    CliCallPolicy {
+        name: "delete_notebook_cli",
+        destructive: true,
+    },
+];
 
 #[derive(Parser, Debug)]
 #[command(
@@ -31,6 +182,14 @@ struct Cli {
     /// Marginote 未运行时不自动启动
     #[arg(long, global = true)]
     no_start: bool,
+
+    /// 仅返回写入计划，不修改任何数据
+    #[arg(long, global = true)]
+    dry_run: bool,
+
+    /// 幂等请求 ID；重试同一写操作时复用该值，避免重复创建
+    #[arg(long, global = true)]
+    request_id: Option<String>,
 
     #[command(subcommand)]
     command: TopCommand,
@@ -61,6 +220,8 @@ enum TopCommand {
     Call(CallArgs),
     /// 输出机器可读的命令能力说明，不需要启动 Marginote
     Schema,
+    /// 输出可直接粘贴给 Claude Code/Codex 的使用说明
+    Instructions,
 }
 
 #[derive(Args, Debug)]
@@ -86,6 +247,8 @@ enum NoteCommand {
     Append(NoteAppendArgs),
     /// 将笔记移入回收站
     Delete(DeleteArgs),
+    /// 导出完整 Markdown；默认写到标准输出
+    Export(NoteExportArgs),
 }
 
 #[derive(Args, Debug)]
@@ -100,6 +263,12 @@ struct NoteListArgs {
     starred: bool,
     #[arg(long, default_value_t = 20)]
     limit: usize,
+    /// 返回带 nextCursor 的分页信封
+    #[arg(long)]
+    paged: bool,
+    /// 上一页返回的游标；需同时使用 --paged
+    #[arg(long, requires = "paged")]
+    cursor: Option<String>,
 }
 
 #[derive(Args, Debug)]
@@ -177,6 +346,17 @@ struct DeleteArgs {
     yes: bool,
 }
 
+#[derive(Args, Debug)]
+struct NoteExportArgs {
+    id: String,
+    /// 写入 UTF-8 Markdown 文件，而不是标准输出
+    #[arg(short, long)]
+    output: Option<PathBuf>,
+    /// 允许覆盖已存在的输出文件
+    #[arg(long, requires = "output")]
+    force: bool,
+}
+
 #[derive(Subcommand, Debug)]
 enum TodoCommand {
     /// 列出或搜索待办
@@ -205,6 +385,12 @@ struct TodoListArgs {
     due: Option<String>,
     #[arg(long, default_value_t = 50)]
     limit: usize,
+    /// 返回带 nextCursor 的分页信封
+    #[arg(long)]
+    paged: bool,
+    /// 上一页返回的游标；需同时使用 --paged
+    #[arg(long, requires = "paged")]
+    cursor: Option<String>,
 }
 
 #[derive(Args, Debug)]
@@ -296,6 +482,9 @@ struct CallArgs {
     /// JSON 对象参数
     #[arg(long, default_value = "{}")]
     args: String,
+    /// 确认调用删除类工具
+    #[arg(long)]
+    yes: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -312,6 +501,8 @@ struct EndpointInfo {
 #[derive(Debug, Serialize)]
 struct WireRequest<'a> {
     token: &'a str,
+    #[serde(rename = "requestId")]
+    request_id: &'a str,
     command: &'a str,
     args: &'a Value,
 }
@@ -319,15 +510,20 @@ struct WireRequest<'a> {
 #[derive(Debug, Deserialize, Serialize)]
 struct WireResponse {
     ok: bool,
+    #[serde(default, rename = "requestId")]
+    request_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     data: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     error: Option<String>,
 }
 
-fn fail(message: impl AsRef<str>, code: i32, json_output: bool) -> ! {
+fn fail(message: impl AsRef<str>, code: i32, json_output: bool, request_id: Option<&str>) -> ! {
     if json_output {
-        println!("{}", json!({ "ok": false, "error": message.as_ref() }));
+        println!(
+            "{}",
+            json!({ "ok": false, "requestId": request_id, "error": message.as_ref() })
+        );
     } else {
         eprintln!("错误：{}", message.as_ref());
     }
@@ -368,7 +564,24 @@ fn insert_if_some(map: &mut Map<String, Value>, key: &str, value: Option<Value>)
     }
 }
 
-fn request_for(command: &TopCommand) -> Result<(String, Value, &'static str), String> {
+fn cli_call_policy(tool: &str) -> Option<CliCallPolicy> {
+    CLI_CALL_POLICIES
+        .iter()
+        .copied()
+        .find(|policy| policy.name == tool)
+}
+
+fn confirmed_args(mut value: Value) -> Value {
+    if let Some(map) = value.as_object_mut() {
+        map.insert("_confirmed".into(), Value::Bool(true));
+    }
+    value
+}
+
+fn request_for(
+    command: &TopCommand,
+    dry_run: bool,
+) -> Result<(String, Value, &'static str), String> {
     match command {
         TopCommand::Status => Ok(("status".into(), json!({}), "status")),
         TopCommand::Search(args) => Ok((
@@ -376,12 +589,20 @@ fn request_for(command: &TopCommand) -> Result<(String, Value, &'static str), St
             json!({ "query": args.query, "limit": args.limit }),
             "search",
         )),
-        TopCommand::Schema => unreachable!("schema is local"),
+        TopCommand::Schema | TopCommand::Instructions => unreachable!("local command"),
         TopCommand::Call(args) => {
-            let value: Value = serde_json::from_str(&args.args)
+            let policy = cli_call_policy(&args.tool)
+                .ok_or_else(|| format!("CLI 工具不在白名单中：{}", args.tool))?;
+            let mut value: Value = serde_json::from_str(&args.args)
                 .map_err(|error| format!("--args 不是有效 JSON：{error}"))?;
             if !value.is_object() {
                 return Err("--args 必须是 JSON 对象".into());
+            }
+            if policy.destructive {
+                if !args.yes && !dry_run {
+                    return Err("调用删除类工具需要显式传入 --yes".into());
+                }
+                value = confirmed_args(value);
             }
             Ok((args.tool.clone(), value, "call"))
         }
@@ -393,7 +614,9 @@ fn request_for(command: &TopCommand) -> Result<(String, Value, &'static str), St
                     "notebookName": args.notebook,
                     "tags": args.tags,
                     "starred": args.starred,
-                    "limit": args.limit
+                    "limit": args.limit,
+                    "paged": args.paged,
+                    "cursor": args.cursor
                 }),
                 "note-list",
             )),
@@ -458,16 +681,25 @@ fn request_for(command: &TopCommand) -> Result<(String, Value, &'static str), St
                 ))
             }
             NoteCommand::Delete(args) => {
-                if !args.yes {
+                if !args.yes && !dry_run {
                     return Err("删除需要显式传入 --yes".into());
                 }
-                Ok(("delete_note".into(), json!({ "id": args.id }), "note-write"))
+                Ok((
+                    "delete_note".into(),
+                    confirmed_args(json!({ "id": args.id })),
+                    "note-write",
+                ))
             }
+            NoteCommand::Export(args) => Ok((
+                "export_note".into(),
+                json!({ "noteId": args.id }),
+                "note-export",
+            )),
         },
         TopCommand::Todo { command } => match command {
             TodoCommand::List(args) => Ok((
                 "search_todos".into(),
-                json!({ "query": args.query, "status": args.status, "due": args.due, "limit": args.limit }),
+                json!({ "query": args.query, "status": args.status, "due": args.due, "limit": args.limit, "paged": args.paged, "cursor": args.cursor }),
                 "todo-list",
             )),
             TodoCommand::Get(args) => Ok(("get_todo".into(), json!({ "id": args.id }), "todo-get")),
@@ -522,10 +754,14 @@ fn request_for(command: &TopCommand) -> Result<(String, Value, &'static str), St
                 "todo-write",
             )),
             TodoCommand::Delete(args) => {
-                if !args.yes {
+                if !args.yes && !dry_run {
                     return Err("删除需要显式传入 --yes".into());
                 }
-                Ok(("delete_todo".into(), json!({ "id": args.id }), "todo-write"))
+                Ok((
+                    "delete_todo".into(),
+                    confirmed_args(json!({ "id": args.id })),
+                    "todo-write",
+                ))
             }
         },
         TopCommand::Notebook { command } => match command {
@@ -545,12 +781,12 @@ fn request_for(command: &TopCommand) -> Result<(String, Value, &'static str), St
                 "notebook-write",
             )),
             NotebookCommand::Delete(args) => {
-                if !args.yes {
+                if !args.yes && !dry_run {
                     return Err("删除需要显式传入 --yes".into());
                 }
                 Ok((
                     "delete_notebook_cli".into(),
-                    json!({ "notebookRef": args.notebook }),
+                    confirmed_args(json!({ "notebookRef": args.notebook })),
                     "notebook-write",
                 ))
             }
@@ -559,30 +795,57 @@ fn request_for(command: &TopCommand) -> Result<(String, Value, &'static str), St
 }
 
 fn schema() -> Value {
+    let call_tools: Vec<&str> = CLI_CALL_POLICIES.iter().map(|policy| policy.name).collect();
+    let destructive_tools: Vec<&str> = CLI_CALL_POLICIES
+        .iter()
+        .filter(|policy| policy.destructive)
+        .map(|policy| policy.name)
+        .collect();
     json!({
         "name": "marginote-cli",
         "version": env!("CARGO_PKG_VERSION"),
-        "jsonEnvelope": { "success": { "ok": true, "data": {} }, "failure": { "ok": false, "error": "message" } },
+        "jsonEnvelope": {
+            "success": { "ok": true, "requestId": "mn-...", "data": {} },
+            "failure": { "ok": false, "requestId": "mn-...", "error": "message" }
+        },
         "commands": [
             "status", "search <query>",
-            "note list|get|create|update|append|delete",
-            "todo list|get|create|update|complete|delete",
+            "instructions",
+            "note list [--paged --cursor <cursor>]|get|create|update|append|delete|export",
+            "todo list [--paged --cursor <cursor>]|get|create|update|complete|delete",
             "notebook list|create|rename|delete",
             "call <tool> --args <json>"
         ],
-        "callTools": [
-            "list_notebooks", "create_notebook", "rename_notebook", "delete_notebook", "rename_notebook_cli", "delete_notebook_cli",
-            "list_notes", "search_notes", "get_note", "create_note", "update_note_cli", "append_to_note", "move_note", "delete_note", "add_tags", "remove_tags", "star_note",
-            "search_todos", "list_todos", "get_todo", "create_todo", "update_todo", "complete_todo", "delete_todo",
-            "search_all", "list_tags", "note_stats", "word_count"
-        ],
+        "safety": {
+            "destructiveCallsRequireYes": true,
+            "destructiveTools": destructive_tools,
+            "dryRun": "全局 --dry-run 只返回计划，不修改数据",
+            "idempotency": "全局 --request-id；重试同一写入时复用，保留 24 小时"
+        },
+        "callTools": call_tools,
         "examples": [
             "marginote-cli --json note list --query 项目",
             "printf '# 内容' | marginote-cli note create '新笔记' --stdin --notebook 工作 --tag agent",
+            "marginote-cli note export <NOTE_ID> --output note.md",
             "marginote-cli todo create '提交周报' --due 2026-08-02T09:00:00+08:00",
             "marginote-cli call create_note --args '{\"title\":\"来自 agent\",\"content\":\"正文\"}' --json"
         ]
     })
+}
+
+fn agent_instructions() -> &'static str {
+    r#"当用户要求记录、查找、整理或更新个人笔记和待办时，使用 marginote-cli。
+
+操作规则：
+1. 首次使用先运行 `marginote-cli status --json`，需要能力清单时运行 `marginote-cli schema --json`。
+2. 自动化调用一律加 `--json`，只解析 stdout 的 JSON，并根据退出码判断成功；不要从自然语言输出猜测结果。
+3. 修改前先用 `note list/search` 或 `todo list` 找到准确 ID。大量结果使用 `--paged --cursor <nextCursor>`。
+4. 写入前优先加 `--dry-run` 检查计划；正式写入设置稳定的 `--request-id`，不确定结果重试时必须复用同一个 ID。
+5. 删除只在用户明确要求后加 `--yes`；不要擅自删除、覆盖导出文件或复用 requestId 执行不同参数。
+6. 长正文使用 `--content-file` 或 `--stdin`。导出笔记使用 `note export <ID>`，写文件时用 `--output`。
+7. 批量整理使用 schema 白名单中的 batch_* 工具；批量删除仍必须 `--yes`。
+8. 不要直接读写 Marginote 的 WebView2、LevelDB 或端点令牌文件；只通过 marginote-cli 操作。
+9. 命令失败时把 JSON error 和 requestId 告诉用户，不要声称已经写入成功。"#
 }
 
 fn data_dir() -> Result<PathBuf, String> {
@@ -592,6 +855,28 @@ fn data_dir() -> Result<PathBuf, String> {
     dirs::data_dir()
         .map(|path| path.join(APP_ID))
         .ok_or_else(|| "无法确定 Marginote 应用数据目录；可设置 MARGINOTE_DATA_DIR".into())
+}
+
+fn resolve_request_id(value: Option<&str>) -> Result<String, String> {
+    let request_id = match value {
+        Some(value) => value.trim().to_string(),
+        None => {
+            let nanos = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos();
+            format!("mn-{}-{nanos:x}", std::process::id())
+        }
+    };
+    if request_id.is_empty()
+        || request_id.len() > 128
+        || !request_id
+            .chars()
+            .all(|value| value.is_ascii_alphanumeric() || matches!(value, '-' | '_' | '.' | ':'))
+    {
+        return Err("--request-id 仅允许 1-128 个字母、数字、-、_、.、:".into());
+    }
+    Ok(request_id)
 }
 
 fn read_endpoint() -> Result<EndpointInfo, String> {
@@ -606,15 +891,16 @@ fn read_endpoint() -> Result<EndpointInfo, String> {
     Ok(endpoint)
 }
 
-fn send_once(command: &str, args: &Value) -> Result<WireResponse, String> {
+fn send_once(command: &str, args: &Value, request_id: &str) -> Result<WireResponse, String> {
     let endpoint = read_endpoint()?;
     let address = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), endpoint.port);
     let mut stream = TcpStream::connect_timeout(&address, Duration::from_millis(350))
         .map_err(|error| format!("无法连接 Marginote：{error}"))?;
-    let _ = stream.set_read_timeout(Some(Duration::from_secs(65)));
+    let _ = stream.set_read_timeout(Some(Duration::from_secs(185)));
     let _ = stream.set_write_timeout(Some(Duration::from_secs(10)));
     let request = WireRequest {
         token: &endpoint.token,
+        request_id,
         command,
         args,
     };
@@ -679,18 +965,23 @@ fn launch_app() -> Result<(), String> {
         .map_err(|error| format!("启动 {} 失败：{error}", app.display()))
 }
 
-fn send_with_start(command: &str, args: &Value, no_start: bool) -> Result<WireResponse, String> {
+fn send_with_start(
+    command: &str,
+    args: &Value,
+    request_id: &str,
+    no_start: bool,
+) -> Result<WireResponse, String> {
     if no_start {
-        return send_once(command, args);
+        return send_once(command, args, request_id);
     }
-    if let Ok(response) = send_once(command, args) {
+    if let Ok(response) = send_once(command, args, request_id) {
         return Ok(response);
     }
     let launch_error = launch_app().err();
     let mut last_error = String::new();
     for _ in 0..CONNECT_RETRIES {
         thread::sleep(Duration::from_millis(150));
-        match send_once(command, args) {
+        match send_once(command, args, request_id) {
             Ok(response) => return Ok(response),
             Err(error) => last_error = error,
         }
@@ -703,6 +994,21 @@ fn send_with_start(command: &str, args: &Value, no_start: bool) -> Result<WireRe
 }
 
 fn print_human(kind: &str, data: &Value) {
+    if kind == "note-export" {
+        print!(
+            "{}",
+            data.get("markdown").and_then(Value::as_str).unwrap_or("")
+        );
+        if !data
+            .get("markdown")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .ends_with('\n')
+        {
+            println!();
+        }
+        return;
+    }
     if kind == "note-get" {
         println!(
             "# {}",
@@ -729,6 +1035,13 @@ fn print_human(kind: &str, data: &Value) {
                 .ends_with('\n')
         {
             println!();
+        }
+        return;
+    }
+    if let Some(items) = data.get("items").and_then(Value::as_array) {
+        print_human(kind, &Value::Array(items.clone()));
+        if let Some(cursor) = data.get("nextCursor").and_then(Value::as_str) {
+            println!("下一页 cursor: {cursor}");
         }
         return;
     }
@@ -763,6 +1076,32 @@ fn print_human(kind: &str, data: &Value) {
     );
 }
 
+fn export_target(command: &TopCommand) -> Option<(&Path, bool)> {
+    match command {
+        TopCommand::Note {
+            command: NoteCommand::Export(args),
+        } => args.output.as_deref().map(|path| (path, args.force)),
+        _ => None,
+    }
+}
+
+fn write_export(path: &Path, markdown: &str, force: bool) -> Result<(), String> {
+    if path.exists() && !force {
+        return Err(format!(
+            "输出文件已存在：{}；如需覆盖请加 --force",
+            path.display()
+        ));
+    }
+    let parent = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty());
+    if parent.is_some_and(|parent| !parent.is_dir()) {
+        return Err(format!("输出目录不存在：{}", parent.unwrap().display()));
+    }
+    fs::write(path, markdown.as_bytes())
+        .map_err(|error| format!("写入导出文件 {} 失败：{error}", path.display()))
+}
+
 fn main() {
     let cli = Cli::parse();
     if matches!(cli.command, TopCommand::Schema) {
@@ -777,11 +1116,33 @@ fn main() {
         }
         return;
     }
+    if matches!(cli.command, TopCommand::Instructions) {
+        let text = agent_instructions();
+        if cli.json {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(
+                    &json!({ "ok": true, "requestId": null, "data": { "text": text } })
+                )
+                .unwrap()
+            );
+        } else {
+            println!("{text}");
+        }
+        return;
+    }
 
-    let (command, args, kind) =
-        request_for(&cli.command).unwrap_or_else(|error| fail(error, 2, cli.json));
-    let response = send_with_start(&command, &args, cli.no_start)
-        .unwrap_or_else(|error| fail(error, 3, cli.json));
+    let request_id = resolve_request_id(cli.request_id.as_deref())
+        .unwrap_or_else(|error| fail(error, 2, cli.json, None));
+    let (command, mut args, kind) = request_for(&cli.command, cli.dry_run)
+        .unwrap_or_else(|error| fail(error, 2, cli.json, Some(&request_id)));
+    if cli.dry_run {
+        if let Some(map) = args.as_object_mut() {
+            map.insert("_dryRun".into(), Value::Bool(true));
+        }
+    }
+    let response = send_with_start(&command, &args, &request_id, cli.no_start)
+        .unwrap_or_else(|error| fail(error, 3, cli.json, Some(&request_id)));
     if !response.ok {
         fail(
             response
@@ -789,13 +1150,49 @@ fn main() {
                 .unwrap_or_else(|| "Marginote 操作失败".into()),
             4,
             cli.json,
+            response.request_id.as_deref().or(Some(&request_id)),
         );
     }
-    let data = response.data.unwrap_or(Value::Null);
+    let mut data = response.data.unwrap_or(Value::Null);
+    if let Some((path, force)) = export_target(&cli.command) {
+        if cli.dry_run {
+            data = json!({
+                "dryRun": true,
+                "command": "export_note",
+                "output": path.to_string_lossy(),
+                "overwrite": force
+            });
+            if !cli.json {
+                println!("预演：导出笔记到 {}（未写入文件）", path.display());
+                return;
+            }
+        } else {
+            let markdown = data
+                .get("markdown")
+                .and_then(Value::as_str)
+                .ok_or_else(|| "Marginote 导出响应缺少 markdown".to_string())
+                .unwrap_or_else(|error| fail(error, 4, cli.json, Some(&request_id)));
+            write_export(path, markdown, force)
+                .unwrap_or_else(|error| fail(error, 2, cli.json, Some(&request_id)));
+            data = json!({
+                "id": data.get("id"),
+                "title": data.get("title"),
+                "output": path.to_string_lossy(),
+                "bytes": markdown.len()
+            });
+            if !cli.json {
+                println!("已导出到 {}", path.display());
+                return;
+            }
+        }
+    }
     if cli.json {
         println!(
             "{}",
-            serde_json::to_string_pretty(&json!({ "ok": true, "data": data })).unwrap()
+            serde_json::to_string_pretty(
+                &json!({ "ok": true, "requestId": request_id, "data": data })
+            )
+            .unwrap()
         );
     } else {
         print_human(kind, &data);
@@ -822,7 +1219,7 @@ mod tests {
             "--json",
         ])
         .unwrap();
-        let (command, args, _) = request_for(&cli.command).unwrap();
+        let (command, args, _) = request_for(&cli.command, false).unwrap();
         assert_eq!(command, "create_note");
         assert_eq!(args["title"], "联调记录");
         assert_eq!(args["notebookName"], "工作");
@@ -831,18 +1228,160 @@ mod tests {
     }
 
     #[test]
+    fn instructions_are_available_without_the_desktop_app() {
+        let cli = Cli::try_parse_from(["marginote-cli", "instructions", "--json"]).unwrap();
+        assert!(matches!(cli.command, TopCommand::Instructions));
+        assert!(cli.json);
+        assert!(agent_instructions().contains("--request-id"));
+        assert!(agent_instructions().contains("不要直接读写"));
+    }
+
+    #[test]
+    fn note_export_maps_to_markdown_tool_and_local_target() {
+        let cli = Cli::try_parse_from([
+            "marginote-cli",
+            "note",
+            "export",
+            "note-1",
+            "--output",
+            "note.md",
+        ])
+        .unwrap();
+        let (command, args, kind) = request_for(&cli.command, false).unwrap();
+        assert_eq!(command, "export_note");
+        assert_eq!(args["noteId"], "note-1");
+        assert_eq!(kind, "note-export");
+        let (path, force) = export_target(&cli.command).unwrap();
+        assert_eq!(path, Path::new("note.md"));
+        assert!(!force);
+    }
+
+    #[test]
+    fn export_does_not_overwrite_without_force() {
+        let path = env::temp_dir().join(format!(
+            "marginote-cli-export-{}-{}.md",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()
+        ));
+        write_export(&path, "first", false).unwrap();
+        assert!(write_export(&path, "second", false)
+            .unwrap_err()
+            .contains("--force"));
+        write_export(&path, "second", true).unwrap();
+        assert_eq!(fs::read_to_string(&path).unwrap(), "second");
+        fs::remove_file(path).unwrap();
+    }
+
+    #[test]
     fn deletion_requires_explicit_confirmation() {
         let cli = Cli::try_parse_from(["marginote-cli", "note", "delete", "n1"]).unwrap();
-        assert!(request_for(&cli.command).unwrap_err().contains("--yes"));
+        assert!(request_for(&cli.command, false)
+            .unwrap_err()
+            .contains("--yes"));
+        assert!(request_for(&cli.command, true).is_ok());
+    }
+
+    #[test]
+    fn raw_destructive_call_requires_explicit_confirmation() {
+        let cli = Cli::try_parse_from([
+            "marginote-cli",
+            "call",
+            "delete_note",
+            "--args",
+            "{\"id\":\"n1\"}",
+        ])
+        .unwrap();
+        assert!(request_for(&cli.command, false)
+            .unwrap_err()
+            .contains("--yes"));
+
+        let confirmed = Cli::try_parse_from([
+            "marginote-cli",
+            "call",
+            "delete_note",
+            "--args",
+            "{\"id\":\"n1\"}",
+            "--yes",
+        ])
+        .unwrap();
+        let (command, args, _) = request_for(&confirmed.command, false).unwrap();
+        assert_eq!(command, "delete_note");
+        assert_eq!(args["_confirmed"], true);
     }
 
     #[test]
     fn schema_matches_binary_version() {
         assert_eq!(schema()["version"], env!("CARGO_PKG_VERSION"));
-        assert!(schema()["callTools"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|item| item == "create_note"));
+        let schema = schema();
+        let call_tools = schema["callTools"].as_array().unwrap();
+        assert_eq!(call_tools.len(), CLI_CALL_POLICIES.len());
+        assert!(call_tools.iter().any(|item| item == "create_note"));
+        assert_eq!(
+            schema["safety"]["destructiveTools"]
+                .as_array()
+                .unwrap()
+                .len(),
+            CLI_CALL_POLICIES
+                .iter()
+                .filter(|policy| policy.destructive)
+                .count()
+        );
+    }
+
+    #[test]
+    fn raw_unknown_call_is_rejected_before_connecting() {
+        let cli =
+            Cli::try_parse_from(["marginote-cli", "call", "unknown_tool", "--args", "{}"]).unwrap();
+        assert!(request_for(&cli.command, false)
+            .unwrap_err()
+            .contains("不在白名单"));
+    }
+
+    #[test]
+    fn request_id_is_stable_and_validated() {
+        assert_eq!(
+            resolve_request_id(Some("agent:release-124")).unwrap(),
+            "agent:release-124"
+        );
+        assert!(resolve_request_id(Some("contains space")).is_err());
+        assert!(resolve_request_id(None).unwrap().starts_with("mn-"));
+    }
+
+    #[test]
+    fn global_automation_flags_parse() {
+        let cli = Cli::try_parse_from([
+            "marginote-cli",
+            "note",
+            "create",
+            "记录",
+            "--dry-run",
+            "--request-id",
+            "agent-1",
+        ])
+        .unwrap();
+        assert!(cli.dry_run);
+        assert_eq!(cli.request_id.as_deref(), Some("agent-1"));
+    }
+
+    #[test]
+    fn paged_note_list_maps_cursor() {
+        let cli = Cli::try_parse_from([
+            "marginote-cli",
+            "note",
+            "list",
+            "--limit",
+            "10",
+            "--paged",
+            "--cursor",
+            "mn1:20",
+        ])
+        .unwrap();
+        let (command, args, _) = request_for(&cli.command, false).unwrap();
+        assert_eq!(command, "list_notes");
+        assert_eq!(args["paged"], true);
+        assert_eq!(args["cursor"], "mn1:20");
     }
 }

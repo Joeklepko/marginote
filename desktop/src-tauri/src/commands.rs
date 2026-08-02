@@ -107,7 +107,12 @@ pub async fn cmd_fetch(
             let status = resp.status().as_u16();
             let ok = resp.status().is_success();
             let body = resp.text().await.unwrap_or_default();
-            Ok(FetchResponse { ok, status, body, error: None })
+            Ok(FetchResponse {
+                ok,
+                status,
+                body,
+                error: None,
+            })
         }
         Err(e) => Ok(FetchResponse {
             ok: false,
@@ -155,7 +160,8 @@ pub async fn cmd_window_hide(window: tauri::Window) -> Result<(), String> {
 
 #[tauri::command]
 pub async fn cmd_register_hotkey(app: AppHandle, combo: String) -> Result<(), String> {
-    let shortcut = Shortcut::from_str(&combo).map_err(|e| format!("invalid combo '{combo}': {e:?}"))?;
+    let shortcut =
+        Shortcut::from_str(&combo).map_err(|e| format!("invalid combo '{combo}': {e:?}"))?;
 
     // 先注销旧的
     {
@@ -233,7 +239,10 @@ pub async fn cmd_get_app_paths(app: AppHandle) -> Result<AppPaths, String> {
         .map_err(|e| format!("app_data_dir: {e}"))?;
     let kv_file = data_dir.join(crate::storage::FILE);
     // WebView2 在 app_data_dir 下的 EBWebView/Default/Local Storage（Tauri 2 默认）
-    let webview_dir = data_dir.join("EBWebView").join("Default").join("Local Storage");
+    let webview_dir = data_dir
+        .join("EBWebView")
+        .join("Default")
+        .join("Local Storage");
     Ok(AppPaths {
         data_dir: data_dir.to_string_lossy().to_string(),
         kv_file: kv_file.to_string_lossy().to_string(),
@@ -246,7 +255,7 @@ pub async fn cmd_get_app_paths(app: AppHandle) -> Result<AppPaths, String> {
 #[derive(Debug, Serialize, Clone)]
 pub struct StreamChunk {
     pub stream_id: String,
-    pub data: String,        // SSE data payload
+    pub data: String, // SSE data payload
     pub done: bool,
     pub error: Option<String>,
 }
@@ -286,24 +295,30 @@ pub async fn cmd_stream_fetch(
     }
 
     let resp = req.send().await.map_err(|e| {
-        let _ = app.emit("ai-stream-chunk", StreamChunk {
-            stream_id: stream_id.clone(),
-            data: String::new(),
-            done: true,
-            error: Some(format!("{e}")),
-        });
+        let _ = app.emit(
+            "ai-stream-chunk",
+            StreamChunk {
+                stream_id: stream_id.clone(),
+                data: String::new(),
+                done: true,
+                error: Some(format!("{e}")),
+            },
+        );
         format!("{e}")
     })?;
 
     if !resp.status().is_success() {
         let status = resp.status().as_u16();
         let txt = resp.text().await.unwrap_or_default();
-        let _ = app.emit("ai-stream-chunk", StreamChunk {
-            stream_id: stream_id.clone(),
-            data: String::new(),
-            done: true,
-            error: Some(format!("HTTP {status}: {txt}")),
-        });
+        let _ = app.emit(
+            "ai-stream-chunk",
+            StreamChunk {
+                stream_id: stream_id.clone(),
+                data: String::new(),
+                done: true,
+                error: Some(format!("HTTP {status}: {txt}")),
+            },
+        );
         return Err(format!("HTTP {status}"));
     }
 
@@ -314,31 +329,40 @@ pub async fn cmd_stream_fetch(
         match item {
             Ok(bytes) => {
                 let chunk = String::from_utf8_lossy(&bytes).to_string();
-                let _ = app.emit("ai-stream-chunk", StreamChunk {
-                    stream_id: stream_id.clone(),
-                    data: chunk,
-                    done: false,
-                    error: None,
-                });
+                let _ = app.emit(
+                    "ai-stream-chunk",
+                    StreamChunk {
+                        stream_id: stream_id.clone(),
+                        data: chunk,
+                        done: false,
+                        error: None,
+                    },
+                );
             }
             Err(e) => {
-                let _ = app.emit("ai-stream-chunk", StreamChunk {
-                    stream_id: stream_id.clone(),
-                    data: String::new(),
-                    done: true,
-                    error: Some(format!("stream error: {e}")),
-                });
+                let _ = app.emit(
+                    "ai-stream-chunk",
+                    StreamChunk {
+                        stream_id: stream_id.clone(),
+                        data: String::new(),
+                        done: true,
+                        error: Some(format!("stream error: {e}")),
+                    },
+                );
                 return Err(format!("{e}"));
             }
         }
     }
 
-    let _ = app.emit("ai-stream-chunk", StreamChunk {
-        stream_id: stream_id.clone(),
-        data: String::new(),
-        done: true,
-        error: None,
-    });
+    let _ = app.emit(
+        "ai-stream-chunk",
+        StreamChunk {
+            stream_id: stream_id.clone(),
+            data: String::new(),
+            done: true,
+            error: None,
+        },
+    );
 
     Ok(())
 }
