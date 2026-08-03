@@ -166,6 +166,13 @@ fn codeagent_settings_path(root: &Path) -> PathBuf {
     root.join("settings.json")
 }
 
+fn paths_refer_to_same_location(left: &Path, right: &Path) -> bool {
+    match (left.canonicalize(), right.canonicalize()) {
+        (Ok(left), Ok(right)) => left == right,
+        _ => left == right,
+    }
+}
+
 fn codeagent_plugin_dir(root: &Path) -> PathBuf {
     root.join("plugins")
         .join("cache")
@@ -581,7 +588,7 @@ fn codeagent_status_at(root: &Path) -> Value {
     let registry_error = installed_result.err().or_else(|| settings_result.err());
     let configured = registered && enabled && mcp_path.is_file();
     let version_current = installed_version.as_deref() == Some(env!("CARGO_PKG_VERSION"));
-    let path_current = plugin_dir == expected_plugin_dir;
+    let path_current = paths_refer_to_same_location(&plugin_dir, &expected_plugin_dir);
     let update_available = configured && (!version_current || !path_current);
     let repair_required = registry_error.is_none() && registered && !configured;
     json!({
