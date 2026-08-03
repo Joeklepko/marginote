@@ -3634,17 +3634,27 @@ let aiConfig = { providers: [], activeId: null };
 let aiUndoStore = {};
 let aiEditingProviderId = null;
 
+function notifyAiConfigChanged() {
+  try { window.dispatchEvent(new Event('marginote:ai-config-changed')); } catch {}
+}
+
 function loadAiConfig() {
   try { aiConfig = JSON.parse(localStorage.getItem(AI_STORAGE_KEY)) || { providers: [], activeId: null }; }
   catch { aiConfig = { providers: [], activeId: null }; }
-  if (!aiConfig.providers) aiConfig.providers = [];
+  if (!aiConfig || typeof aiConfig !== 'object' || Array.isArray(aiConfig)) aiConfig = { providers: [], activeId: null };
+  if (!Array.isArray(aiConfig.providers)) aiConfig.providers = [];
+  if (!aiConfig.providers.some(provider => provider && provider.id === aiConfig.activeId)) {
+    aiConfig.activeId = aiConfig.providers.find(provider => provider && provider.id)?.id || null;
+  }
   try { aiUndoStore = JSON.parse(localStorage.getItem(AI_UNDO_KEY)) || {}; }
   catch { aiUndoStore = {}; }
+  notifyAiConfigChanged();
 }
 
 function saveAiConfig() {
   localStorage.setItem(AI_STORAGE_KEY, JSON.stringify(aiConfig));
   scheduleDesktopPreferenceSave();
+  notifyAiConfigChanged();
 }
 
 function saveAiUndo() {

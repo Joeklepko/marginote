@@ -157,6 +157,8 @@ for (const appPath of ['shared/app.js', 'extension/app.js']) {
   assert.match(source, /reader\.onerror\s*=/, `${appPath} 导入必须处理底层文件读取错误`);
   assert.match(source, /validateImportZip\(zip\)/, `${appPath} ZIP 导入必须限制文件数和解压体积`);
   assert.match(source, /stagedVersions/, `${appPath} 历史版本必须在主导入成功后再提交`);
+  assert.match(source, /notifyAiConfigChanged\(\)/, `${appPath} 加载或保存模型后必须通知 AI 助手刷新`);
+  assert.match(source, /aiConfig\.providers\.some\(provider => provider && provider\.id === aiConfig\.activeId\)/, `${appPath} 必须修复已失效的活动模型 ID`);
 }
 
 for (const assistantPath of ['shared/js/assistant.js', 'extension/js/assistant.js']) {
@@ -179,6 +181,8 @@ for (const assistantPath of ['shared/js/assistant.js', 'extension/js/assistant.j
   assert.doesNotMatch(source, /你是 Marginote 本地笔记应用的 AI 助手/, `${assistantPath} 不应复制内置系统 Prompt`);
   assert.doesNotMatch(source, /function (?:parseAssistantReply|salvageToolCalls|summarizeActionResult|compressForContext)\s*\(/, `${assistantPath} 不应复制共享助手循环纯逻辑`);
   assert.doesNotMatch(source, /\.flatMap\([\s\S]{0,240}_resolveContentImages/, `${assistantPath} 不得把异步图片解析 Promise 当成图片对象`);
+  assert.match(source, /addEventListener\('marginote:ai-config-changed', refreshModelSelect\)/, `${assistantPath} 必须在模型配置异步恢复后刷新下拉框`);
+  assert.doesNotMatch(source, /window\.saveAiConfig\s*=/, `${assistantPath} 不应通过替换全局保存函数同步模型下拉框`);
 }
 
 const extensionAssistant = fs.readFileSync('extension/js/assistant.js', 'utf8');

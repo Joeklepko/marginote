@@ -2182,6 +2182,7 @@ function bindAssistantUi() {
   }
   if (modelSelect) {
     refreshModelSelect();
+    window.addEventListener('marginote:ai-config-changed', refreshModelSelect);
     modelSelect.addEventListener('change', () => {
       const id = modelSelect.value;
       if (id && typeof aiConfig !== 'undefined') {
@@ -2191,13 +2192,6 @@ function bindAssistantUi() {
         if (typeof showToast === 'function' && p) showToast('已切换为 ' + (p.name || p.model));
       }
     });
-    if (typeof saveAiConfig === 'function') {
-      const _origSave = saveAiConfig;
-      window.saveAiConfig = function() {
-        _origSave();
-        try { refreshModelSelect(); } catch {}
-      };
-    }
   }
 
   // 记忆管理面板（左侧栏折叠区）
