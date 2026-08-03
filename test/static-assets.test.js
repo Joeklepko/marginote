@@ -73,8 +73,13 @@ const desktopLoadStart = desktopApp.indexOf('async function loadDesktopWorkdirDa
 const desktopLoadEnd = desktopApp.indexOf('\nfunction saveData()', desktopLoadStart);
 const desktopLoadSource = desktopApp.slice(desktopLoadStart, desktopLoadEnd);
 assert.ok(
-  desktopLoadSource.indexOf('loadData({ raw, legacyRaw') < desktopLoadSource.indexOf('initImagesIdb({ persistMigration: false })'),
+  desktopLoadSource.indexOf('loadData({ raw, legacyRaw') < desktopLoadSource.indexOf('initImagesIdb({ persistMigration: false, hydrateMetadata: false })'),
   '桌面升级必须先恢复旧主数据，再水合 IDB 图片元数据'
+);
+assert.match(
+  desktopLoadSource,
+  /if \(needsFullMigration \|\| needsIndexWrite\) \{[\s\S]*?await workdirWriteAllNow/,
+  '普通启动不应无条件全量写回笔记库'
 );
 assert.ok(
   desktopLoadSource.indexOf('await workdirWriteAllNow') < desktopLoadSource.indexOf('await verifyWorkdirMigration(fs)')
@@ -97,7 +102,19 @@ assert.match(desktopApp, /`remindIntervalMin: \$\{/, '待办独立文件必须�
 assert.doesNotMatch(desktopApp, /platform\.mainData|loadDesktopMainData/, '桌面版不得退回聚合主数据 JSON');
 const desktopCommands = fs.readFileSync('desktop/src-tauri/src/lib.rs', 'utf8');
 assert.match(desktopCommands, /workdir::cmd_workdir_ensure/, '桌面端必须能自动创建默认 Markdown 工作目录');
+assert.match(desktopCommands, /workdir::cmd_workdir_read_texts/, '大笔记库启动应在 Rust 侧批量读取文本，避免逐文件 IPC');
 assert.doesNotMatch(desktopCommands, /cmd_main_data_(?:get|set)/, '桌面端不得注册聚合主数据 JSON 命令');
+
+const cliDocs = fs.readFileSync('docs/cli.md', 'utf8');
+assert.doesNotMatch(cliDocs, /CLI 状态栏/, 'CLI 文档不应继续宣称已移除的底部状态栏');
+assert.match(cliDocs, /writable:false/, 'CLI 文档必须说明工作目录保护性只读状态');
+assert.match(cliDocs, /CLI 默认授权查找、读取/, 'CLI 文档必须明确普通读写无需逐次授权');
+assert.match(cliDocs, /不限制在 Marginote 工作目录内/, 'CLI 文档必须明确源文件不受工作目录限制');
+assert.match(cliDocs, /note update <NOTE_ID> --content-file/, 'CLI 文档必须覆盖从文件更新笔记');
+assert.match(cliDocs, /todo get <TODO_ID>/, 'CLI 文档必须覆盖待办详情读取');
+assert.match(cliDocs, /notebook delete .* --yes/, 'CLI 文档必须覆盖笔记本删除确认');
+assert.match(cliDocs, /--remind-count <次数>/, 'CLI 文档必须解释重复提醒次数');
+assert.match(cliDocs, /batch_delete_todos/, 'CLI 文档必须覆盖 schema 暴露的高级批处理删除能力');
 
 const tauriConfig = JSON.parse(fs.readFileSync('desktop/src-tauri/tauri.conf.json', 'utf8'));
 assert.equal(tauriConfig.app.windows[0].decorations, false, '桌面窗口应取消独立原生标题栏');

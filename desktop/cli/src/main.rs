@@ -284,7 +284,8 @@ struct NoteCreateArgs {
     /// 直接指定正文
     #[arg(long)]
     content: Option<String>,
-    /// 从 UTF-8 文件读取正文
+    /// 从任意本机可读的 UTF-8 文件读取正文（不限于 Marginote 工作目录）
+    /// 文件可以使用绝对路径或相对当前终端目录的路径，不限于 Marginote 工作目录
     #[arg(long = "content-file")]
     content_file: Option<PathBuf>,
     /// 从标准输入读取正文
@@ -308,6 +309,7 @@ struct NoteUpdateArgs {
     title: Option<String>,
     #[arg(long)]
     content: Option<String>,
+    /// 文件可以使用绝对路径或相对当前终端目录的路径，不限于 Marginote 工作目录
     #[arg(long = "content-file")]
     content_file: Option<PathBuf>,
     #[arg(long)]
@@ -332,7 +334,9 @@ struct NoteAppendArgs {
     id: String,
     /// 要追加的正文；也可用 --file 或 --stdin
     text: Option<String>,
-    #[arg(long)]
+    /// 从任意本机可读的 UTF-8 文件读取追加内容；--content-file 为同义名
+    /// 文件可以使用绝对路径或相对当前终端目录的路径，不限于 Marginote 工作目录
+    #[arg(long, visible_alias = "content-file")]
     file: Option<PathBuf>,
     #[arg(long)]
     stdin: bool,
@@ -399,6 +403,7 @@ struct TodoCreateArgs {
     text: String,
     #[arg(long)]
     content: Option<String>,
+    /// 文件可以使用绝对路径或相对当前终端目录的路径，不限于 Marginote 工作目录
     #[arg(long = "content-file")]
     content_file: Option<PathBuf>,
     #[arg(long)]
@@ -421,6 +426,7 @@ struct TodoUpdateArgs {
     text: Option<String>,
     #[arg(long)]
     content: Option<String>,
+    /// 文件可以使用绝对路径或相对当前终端目录的路径，不限于 Marginote 工作目录
     #[arg(long = "content-file")]
     content_file: Option<PathBuf>,
     #[arg(long)]
@@ -816,6 +822,26 @@ fn schema() -> Value {
             "notebook list|create|rename|delete",
             "call <tool> --args <json>"
         ],
+        "statusFields": {
+            "writable": "false 时禁止继续写入，应向用户报告 storageError",
+            "storageMode": "workdir | blocked | unknown",
+            "storageError": "最近一次本地文件库错误"
+        },
+        "defaultPermissions": {
+            "search": true,
+            "read": true,
+            "nonDestructiveWrite": true,
+            "perOperationConfirmationRequired": false,
+            "destructiveWriteRequiresYes": true
+        },
+        "fileInput": {
+            "restrictedToMarginoteWorkdir": false,
+            "absolutePaths": true,
+            "relativePaths": true,
+            "stdin": true,
+            "encoding": "UTF-8",
+            "description": "--content-file/--file 由 CLI 直接读取任意本机可读文件，不要求源文件位于 Marginote 工作目录"
+        },
         "safety": {
             "destructiveCallsRequireYes": true,
             "destructiveTools": destructive_tools,
@@ -837,15 +863,16 @@ fn agent_instructions() -> &'static str {
     r#"当用户要求记录、查找、整理或更新个人笔记和待办时，使用 marginote-cli。
 
 操作规则：
-1. 首次使用先运行 `marginote-cli status --json`，需要能力清单时运行 `marginote-cli schema --json`。
+1. 用户已默认授权使用 Marginote CLI 查找、读取以及新建、追加、修改等非删除写入；无需逐次询问或先做 dry-run。首次使用运行 `marginote-cli status --json`，需要能力清单时运行 `marginote-cli schema --json`。
 2. 自动化调用一律加 `--json`，只解析 stdout 的 JSON，并根据退出码判断成功；不要从自然语言输出猜测结果。
-3. 修改前先用 `note list/search` 或 `todo list` 找到准确 ID。大量结果使用 `--paged --cursor <nextCursor>`。
-4. 写入前优先加 `--dry-run` 检查计划；正式写入设置稳定的 `--request-id`，不确定结果重试时必须复用同一个 ID。
+3. 记录内容前先用 `marginote-cli note list --query <关键词> --json` 搜索语义相关笔记：高度相关时优先 `note append/update`，无合适笔记时再 `note create`。修改前必须找到准确 ID。
+4. 普通写入直接执行；批量覆盖等高风险非删除操作可按需使用 `--dry-run`。正式写入设置稳定的 `--request-id`，不确定结果重试时必须复用同一个 ID。
 5. 删除只在用户明确要求后加 `--yes`；不要擅自删除、覆盖导出文件或复用 requestId 执行不同参数。
-6. 长正文使用 `--content-file` 或 `--stdin`。导出笔记使用 `note export <ID>`，写文件时用 `--output`。
+6. 长正文使用 `--content-file` 或 `--stdin`。CLI 可以直接读取任意本机可读的绝对或相对路径，源文件无需位于 Marginote 工作目录；不要因为当前工作目录不同而拒绝同步。导出笔记使用 `note export <ID>`，写文件时用 `--output`。
 7. 批量整理使用 schema 白名单中的 batch_* 工具；批量删除仍必须 `--yes`。
 8. 不要直接读写 Marginote 的 WebView2、LevelDB 或端点令牌文件；只通过 marginote-cli 操作。
-9. 命令失败时把 JSON error 和 requestId 告诉用户，不要声称已经写入成功。"#
+9. `status --json` 返回 `writable:false` 时立即停止写入，报告 `storageError`，不要盲目重试或绕过保护。
+10. 命令失败时把 JSON error 和 requestId 告诉用户，不要声称已经写入成功。"#
 }
 
 fn data_dir() -> Result<PathBuf, String> {
@@ -1234,6 +1261,10 @@ mod tests {
         assert!(cli.json);
         assert!(agent_instructions().contains("--request-id"));
         assert!(agent_instructions().contains("不要直接读写"));
+        assert!(agent_instructions().contains("writable:false"));
+        assert!(agent_instructions().contains("note append/update"));
+        assert!(agent_instructions().contains("默认授权"));
+        assert!(agent_instructions().contains("无需位于 Marginote 工作目录"));
     }
 
     #[test]
@@ -1254,6 +1285,41 @@ mod tests {
         let (path, force) = export_target(&cli.command).unwrap();
         assert_eq!(path, Path::new("note.md"));
         assert!(!force);
+    }
+
+    #[test]
+    fn note_append_accepts_content_file_alias() {
+        let cli = Cli::try_parse_from([
+            "marginote-cli",
+            "note",
+            "append",
+            "note-1",
+            "--content-file",
+            "sync.md",
+        ])
+        .unwrap();
+        match cli.command {
+            TopCommand::Note {
+                command: NoteCommand::Append(args),
+            } => assert_eq!(args.file.as_deref(), Some(Path::new("sync.md"))),
+            _ => panic!("expected note append"),
+        }
+    }
+
+    #[test]
+    fn content_file_accepts_any_os_readable_absolute_path() {
+        let path = env::temp_dir().join(format!(
+            "marginote-cli-input-{}-{}.txt",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()
+        ));
+        fs::write(&path, "来自工作目录外的内容").unwrap();
+        let content = read_content(&None, &Some(path.clone()), false).unwrap();
+        assert_eq!(content.as_deref(), Some("来自工作目录外的内容"));
+        fs::remove_file(path).unwrap();
     }
 
     #[test]
@@ -1319,6 +1385,16 @@ mod tests {
         let call_tools = schema["callTools"].as_array().unwrap();
         assert_eq!(call_tools.len(), CLI_CALL_POLICIES.len());
         assert!(call_tools.iter().any(|item| item == "create_note"));
+        assert!(schema["statusFields"]["writable"].is_string());
+        assert_eq!(schema["defaultPermissions"]["search"], true);
+        assert_eq!(schema["defaultPermissions"]["read"], true);
+        assert_eq!(schema["defaultPermissions"]["nonDestructiveWrite"], true);
+        assert_eq!(
+            schema["defaultPermissions"]["perOperationConfirmationRequired"],
+            false
+        );
+        assert_eq!(schema["fileInput"]["restrictedToMarginoteWorkdir"], false);
+        assert_eq!(schema["fileInput"]["absolutePaths"], true);
         assert_eq!(
             schema["safety"]["destructiveTools"]
                 .as_array()

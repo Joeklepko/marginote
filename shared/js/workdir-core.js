@@ -91,6 +91,11 @@
         if (!path) issues.push(`${label} ${id} 缺少文件映射`);
         else if (!presentPaths.has(path)) issues.push(`${label} ${id} 的文件不存在：${path}`);
       }
+      if (input.checkMappedPaths) {
+        for (const [id, path] of Object.entries(mapping)) {
+          if (path && !presentPaths.has(path)) issues.push(`${label} ${id} 的旧映射已失效：${path}`);
+        }
+      }
     }
     for (const path of input.requiredAssetPaths || []) {
       if (!presentPaths.has(path)) issues.push(`图片资产不存在：${path}`);

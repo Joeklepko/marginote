@@ -54,6 +54,7 @@ pub fn run() {
             workdir::cmd_workdir_forget,
             workdir::cmd_workdir_list,
             workdir::cmd_workdir_read_text,
+            workdir::cmd_workdir_read_texts,
             workdir::cmd_workdir_write_text,
             workdir::cmd_workdir_read_binary,
             workdir::cmd_workdir_write_binary,

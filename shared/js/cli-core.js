@@ -170,6 +170,7 @@
 
       if (command === 'status') {
         const activeNotes = (snapshot.notes || []).filter(note => !note.deleted);
+        const writable = snapshot.storageMode !== 'blocked';
         return {
           connected: true,
           version: snapshot.version || 'unknown',
@@ -177,7 +178,19 @@
           todos: (snapshot.todos || []).length,
           activeTodos: (snapshot.todos || []).filter(todo => !todo.done).length,
           notebooks: (snapshot.notebooks || []).length,
-          workdir: snapshot.workdir || null
+          workdir: snapshot.workdir || null,
+          writable,
+          storageMode: snapshot.storageMode || 'unknown',
+          storageError: snapshot.storageError || null,
+          permissions: {
+            search: true,
+            read: true,
+            nonDestructiveWrite: writable,
+            perOperationConfirmationRequired: false,
+            localFileInput: true,
+            fileInputRestrictedToWorkdir: false,
+            destructiveWriteRequiresYes: true
+          }
         };
       }
 

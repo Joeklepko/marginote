@@ -233,6 +233,9 @@
     async readText(relPath) {
       return await invoke('cmd_workdir_read_text', { rel: relPath });
     },
+    async readTexts(relPaths) {
+      return (await invoke('cmd_workdir_read_texts', { rels: relPaths })) || [];
+    },
     async writeText(relPath, text) {
       await invoke('cmd_workdir_write_text', { rel: relPath, text });
       return true;

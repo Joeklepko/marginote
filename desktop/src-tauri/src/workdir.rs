@@ -23,6 +23,12 @@ pub struct FsEntry {
     pub mtime: i64,
 }
 
+#[derive(Debug, Serialize)]
+pub struct TextFile {
+    pub path: String,
+    pub text: String,
+}
+
 // 读取已持久化的工作目录根路径
 fn workdir_root(app: &AppHandle) -> Option<PathBuf> {
     match storage::get(app, WORKDIR_KEY) {
@@ -43,8 +49,12 @@ fn resolve_rel(root: &Path, rel: &str) -> Result<PathBuf, String> {
     let canonical_root = root
         .canonicalize()
         .map_err(|e| format!("工作目录不可访问 {}: {e}", root.display()))?;
+    resolve_rel_from_canonical(&canonical_root, rel)
+}
+
+fn resolve_rel_from_canonical(canonical_root: &Path, rel: &str) -> Result<PathBuf, String> {
     let relp = PathBuf::from(rel.replace('\\', "/"));
-    let mut out = canonical_root.clone();
+    let mut out = canonical_root.to_path_buf();
     for comp in relp.components() {
         match comp {
             Component::Normal(seg) => {
@@ -56,7 +66,7 @@ fn resolve_rel(root: &Path, rel: &str) -> Result<PathBuf, String> {
                     let resolved = out
                         .canonicalize()
                         .map_err(|e| format!("路径不可访问 {}: {e}", out.display()))?;
-                    if !resolved.starts_with(&canonical_root) {
+                    if !resolved.starts_with(canonical_root) {
                         return Err("路径通过符号链接逃逸出工作目录".into());
                     }
                 }
@@ -208,6 +218,41 @@ pub async fn cmd_workdir_read_text(app: AppHandle, rel: String) -> Result<Option
     }
 }
 
+fn read_texts_from_root(root: &Path, rels: Vec<String>) -> Result<Vec<TextFile>, String> {
+    if rels.len() > 20_000 {
+        return Err("一次读取的文本文件过多".into());
+    }
+    let canonical_root = root
+        .canonicalize()
+        .map_err(|e| format!("工作目录不可访问 {}: {e}", root.display()))?;
+    let mut files = Vec::with_capacity(rels.len());
+    for rel in rels {
+        let normalized = rel.replace('\\', "/");
+        let path = resolve_rel_from_canonical(&canonical_root, &normalized)?;
+        let text = fs::read_to_string(&path)
+            .map_err(|error| format!("read {}: {error}", path.display()))?;
+        files.push(TextFile {
+            path: normalized,
+            text,
+        });
+    }
+    Ok(files)
+}
+
+// 启动时在 Rust 侧批量读取 Markdown，避免数百篇笔记逐文件往返 WebView IPC。
+#[tauri::command]
+pub async fn cmd_workdir_read_texts(
+    app: AppHandle,
+    rels: Vec<String>,
+) -> Result<Vec<TextFile>, String> {
+    let Some(root) = workdir_root(&app) else {
+        return Ok(vec![]);
+    };
+    tauri::async_runtime::spawn_blocking(move || read_texts_from_root(&root, rels))
+        .await
+        .map_err(|error| format!("批量读取任务失败: {error}"))?
+}
+
 #[tauri::command]
 pub async fn cmd_workdir_write_text(
     app: AppHandle,
@@ -324,6 +369,23 @@ mod tests {
         assert!(resolve_rel(&root, "notes/inside.md")
             .expect("valid path")
             .starts_with(root.canonicalize().expect("canonical root")));
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn batch_reads_text_files_and_rejects_escape() {
+        let root = test_dir("batch-text");
+        fs::create_dir_all(root.join("notes")).expect("create notes");
+        fs::write(root.join("notes/a.md"), "A").expect("seed a");
+        fs::write(root.join("notes/b.md"), "B").expect("seed b");
+
+        let rows = read_texts_from_root(&root, vec!["notes/a.md".into(), "notes/b.md".into()])
+            .expect("batch read");
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].path, "notes/a.md");
+        assert_eq!(rows[0].text, "A");
+        assert!(read_texts_from_root(&root, vec!["../outside.md".into()]).is_err());
+
         fs::remove_dir_all(root).expect("cleanup");
     }
 

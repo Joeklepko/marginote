@@ -23,7 +23,9 @@
       notebooks,
       notes,
       todos,
-      workdir: (_workdirCfg && _workdirCfg.enabled) ? (_workdirCfg.name || null) : null
+      workdir: (_workdirCfg && _workdirCfg.enabled) ? (_workdirCfg.name || null) : null,
+      storageMode: _mainDataStorageMode,
+      storageError: (_workdirCfg && _workdirCfg.lastError) ? _workdirCfg.lastError : null
     })
   });
 

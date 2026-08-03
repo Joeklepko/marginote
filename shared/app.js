@@ -115,7 +115,7 @@ async function initImagesIdb(options = {}) {
       _idb = await openIdb();
     } catch (e) {
       logError(e, 'idb-open');
-      return;
+      return [];
     }
   }
   // localStorage 容量不足时，损坏主数据可能无法在同一存储区复制备份。
@@ -155,16 +155,26 @@ async function initImagesIdb(options = {}) {
     // 任意一张失败都保留原快照，等待下次重试。
     if (allMigrated && options.persistMigration !== false) saveData();
   }
-  // 启动只加载图片【元数据】(name/ext/createdAt),【不把任何 base64 载入内存】。图片体积大,若把全部图片
+  let keys = [];
+  try { keys = await idbGetAllKeys('images'); }
+  catch (e) { logError(e, 'idb-keys'); }
+  if (options.hydrateMetadata === false) return keys;
+  await hydrateImageMetadataFromIdb(keys);
+  return keys;
+}
+
+async function hydrateImageMetadataFromIdb(keys) {
+  // 仅在旧数据迁移/恢复时遍历 IDB 完整记录。桌面版普通启动直接从
+  // _marginote/meta.json 取元数据，避免为了 name/ext 而把每张图的 base64 读入内存。
+  // 启动只加载图片【元数据】(name/ext/createdAt),【不把任何 base64 常驻内存】。图片体积大,若把全部图片
   // 常驻内存(无论 base64 还是 blob),图片一多就把 WebView2 渲染进程撑爆(out of memory);且 blob: 对象 URL
   // 在本应用的 Tauri/WebView2 自定义协议源下 <img> 无法加载(试过 CSP+DOMPurify 放行仍不显示)。
   // 因此改为真·懒加载:渲染某条笔记时,才按需从 IDB 取该图 base64、以 data: URL 填入 <img src>(data: 在本
   // 环境验证可正常显示)。切走笔记后其 <img> 随 DOM 释放 → 内存只驻留【当前视图可见的图】,根治 OOM。
   // 逐张读 key(极小),记录元数据即可;base64 留在 IDB 供渲染/导出按需取回。
   try {
-    const keys = await idbGetAllKeys('images');
     let i = 0;
-    for (const id of keys) {
+    for (const id of keys || []) {
       let rec = null;
       try { rec = await idbGet('images', id); } catch (e) { continue; }
       if (!rec) continue;
@@ -221,6 +231,24 @@ async function getImageBase64(id) {
   const img = images[id];
   if (img && typeof img.dataUrl === 'string' && img.dataUrl.startsWith('data:')) return img.dataUrl;
   try { const rec = await idbGet('images', id); if (rec && rec.dataUrl) return rec.dataUrl; } catch (e) {}
+  // 桌面版以 _assets/ 为图片的持久化真实来源。新安装、IDB 被清理或换机时，
+  // 只在图片真正进入视口/导出时读对应文件，不在启动时全量解码。
+  if (img) {
+    try {
+      const fs = fsApi();
+      if (fs && typeof fs.readBinary === 'function') {
+        const ext = img.ext || '.png';
+        const raw = await fs.readBinary(`_assets/${id}${ext}`);
+        if (raw) {
+          const dataUrl = `data:${mimeFromExt(ext)};base64,${raw}`;
+          _cacheImgB64(id, dataUrl);
+          try { await idbPut('images', { id, name: img.name, ext, createdAt: img.createdAt, dataUrl }); }
+          catch (error) { logError(error, 'idb-cache-workdir-image'); }
+          return dataUrl;
+        }
+      }
+    } catch (error) { logError(error, 'workdir-image-read:' + id); }
+  }
   return null;
 }
 
@@ -797,7 +825,10 @@ async function persistMainDataDurably(state) {
     _lastWorkdirWriteError = '';
     return true;
   }
-  if (_mainDataStorageMode === 'blocked') throw new Error('本地工作目录不可写，已阻止覆盖');
+  if (_mainDataStorageMode === 'blocked') {
+    const detail = _workdirCfg && _workdirCfg.lastError && _workdirCfg.lastError.message;
+    throw new Error(`本地工作目录处于保护性只读状态${detail ? `：${detail}` : ''}`);
+  }
   if (!persistMainDataNow()) throw new Error('主数据提交失败');
   return true;
 }
@@ -843,7 +874,6 @@ async function loadDesktopWorkdirData() {
     _mainDataStorageMode = 'blocked';
     return false;
   }
-  await initImagesIdb({ persistMigration: false });
   try {
     const fs = fsApi();
     if (!fs || typeof fs.ensureDir !== 'function') throw new Error('桌面文件存储接口不可用');
@@ -854,9 +884,18 @@ async function loadDesktopWorkdirData() {
     saveWorkdirCfg();
 
     const entries = await fs.list();
+    const presentPaths = new Set(entries.filter(entry => !entry.dir).map(entry => entry.path));
     const hasDiskLibrary = entries.some(entry => !entry.dir && (
       entry.path === WORKDIR_META || /\.(md|markdown|excalidraw)$/i.test(entry.path)
     ));
+    let diskMeta = {};
+    const metaText = await fs.readText(WORKDIR_META);
+    if (metaText) {
+      try { diskMeta = JSON.parse(metaText); }
+      catch { throw new Error('工作目录元数据已损坏；请先备份并修复 _marginote/meta.json'); }
+    }
+    let needsFullMigration = hasLegacyData || !hasDiskLibrary || diskMeta.version !== WORKDIR_FORMAT_VERSION;
+    const idbImageKeys = new Set(await initImagesIdb({ persistMigration: false, hydrateMetadata: false }));
     if (!hasDiskLibrary && !hasLegacyData) {
       loadData({ raw: null, legacyRaw: null, persist: false, initializeDefaults: true });
     }
@@ -864,18 +903,89 @@ async function loadDesktopWorkdirData() {
     _mainDataStorageMode = 'workdir';
     await workdirImportAllNow(true, { reconcile: false, throwOnError: true });
     if (!notebooks.length) ensureNotebookByName('随笔');
-    // 迁移提交成功前绝不删除旧 WebView 数据。writeAll 的单文件原子写可让
-    // 300+ 条 CLI 批量记录不再受 localStorage 配额限制。
-    await workdirWriteAllNow(true, { throwOnError: true });
-    await verifyWorkdirMigration(fs);
-    try { localStorage.removeItem(STORAGE_KEY); localStorage.removeItem(LEGACY_KEY); } catch {}
+
+    // 兼容极少数已写 v1.4 元数据、但升级中断在图片资产落盘之前的版本。
+    // 只读 IDB key（不读 base64）判断是否需要一次性恢复。
+    const diskAssetIds = new Set(entries.filter(entry => !entry.dir && /^_assets\//i.test(entry.path))
+      .map(entry => entry.path.split('/').pop().replace(/\.[^.]+$/, '')));
+    const recoverableImageIds = [...collectReferencedImageIds()]
+      .filter(id => !diskAssetIds.has(id) && idbImageKeys.has(id));
+    if (recoverableImageIds.length) {
+      await hydrateImageMetadataFromIdb(recoverableImageIds);
+      needsFullMigration = true;
+    }
+
+    const indexIssues = currentWorkdirIndexIssues(diskMeta, presentPaths);
+    const needsIndexWrite = indexIssues.length > 0;
+    if (needsFullMigration || needsIndexWrite) {
+      // 仅首次迁移、格式升级或发现外部新增/移动文件时写回索引。
+      await workdirWriteAllNow(true, { throwOnError: true });
+      if (needsFullMigration) await verifyWorkdirMigration(fs);
+      else await verifyWorkdirIndex(fs);
+    }
+    // 迁移提交成功前绝不删除旧 WebView 数据。普通启动不再触发该流程。
+    if (hasLegacyData) {
+      try { localStorage.removeItem(STORAGE_KEY); localStorage.removeItem(LEGACY_KEY); } catch {}
+    }
     return true;
   } catch (error) {
     _mainDataStorageMode = 'blocked';
-    showToast('本地文件库初始化失败，已停止写入：' + (error.message || error));
+    const message = error && error.message ? error.message : String(error);
+    _workdirCfg.lastError = { operation: '启动', message, at: Date.now() };
+    saveWorkdirCfg();
+    showToast('本地文件库初始化失败，已停止写入：' + message);
     logError(error, 'desktop-workdir-startup');
     return false;
   }
+}
+
+function collectReferencedImageIds() {
+  const ids = new Set();
+  const collect = value => {
+    const re = /!\[[^\]]*\]\(img:([a-z0-9]+)\)/gi;
+    let match;
+    while ((match = re.exec(value || '')) !== null) ids.add(match[1]);
+  };
+  notes.forEach(note => collect(note.content));
+  todos.forEach(todo => collect(todo.content));
+  return ids;
+}
+
+function currentWorkdirIndexIssues(meta, presentPaths) {
+  const paths = presentPaths instanceof Set ? presentPaths : new Set(presentPaths || []);
+  const result = window.MarginoteWorkdirCore.verifySnapshot({
+    meta,
+    presentPaths: [...paths],
+    activeNoteIds: notes.filter(note => note && note.id && !note.deleted).map(note => note.id),
+    deletedNoteIds: notes.filter(note => note && note.id && note.deleted).map(note => note.id),
+    todoIds: todos.filter(todo => todo && todo.id).map(todo => todo.id),
+    checkMappedPaths: true
+  });
+  const issues = [...result.issues];
+  const metaNotebookIds = new Set((Array.isArray(meta.notebooks) ? meta.notebooks : []).map(item => item && item.id));
+  const metaFolderIds = new Set((Array.isArray(meta.folders) ? meta.folders : []).map(item => item && item.id));
+  for (const notebook of notebooks) {
+    if (notebook && notebook.id && !metaNotebookIds.has(notebook.id)) issues.push(`笔记本 ${notebook.id} 缺少元数据`);
+  }
+  for (const folder of folders) {
+    if (folder && folder.id && !metaFolderIds.has(folder.id)) issues.push(`文件夹 ${folder.id} 缺少元数据`);
+  }
+  const imageMeta = meta.imagesMeta && typeof meta.imagesMeta === 'object' ? meta.imagesMeta : {};
+  for (const id of collectReferencedImageIds()) {
+    if (images[id] && !imageMeta[id]) issues.push(`图片 ${id} 缺少元数据`);
+  }
+  return issues;
+}
+
+async function verifyWorkdirIndex(fs) {
+  const metaText = await fs.readText(WORKDIR_META);
+  if (!metaText) throw new Error('工作目录元数据未成功落盘');
+  let meta;
+  try { meta = JSON.parse(metaText); }
+  catch { throw new Error('工作目录元数据写入后无法读回'); }
+  const entries = await fs.list();
+  const issues = currentWorkdirIndexIssues(meta, entries.filter(entry => !entry.dir).map(entry => entry.path));
+  if (issues.length) throw new Error(`工作目录索引校验失败：${issues.slice(0, 3).join('；')}`);
 }
 
 async function verifyWorkdirMigration(fs) {
@@ -886,16 +996,8 @@ async function verifyWorkdirMigration(fs) {
   catch { throw new Error('工作目录元数据写入后无法读回'); }
   const entries = await fs.list();
   const presentPaths = entries.filter(entry => !entry.dir).map(entry => entry.path);
-  const referencedImageIds = new Set();
-  const collectImageIds = value => {
-    const re = /!\[[^\]]*\]\(img:([a-z0-9]+)\)/gi;
-    let match;
-    while ((match = re.exec(value || '')) !== null) referencedImageIds.add(match[1]);
-  };
-  notes.forEach(note => collectImageIds(note.content));
-  todos.forEach(todo => collectImageIds(todo.content));
   const requiredAssets = [];
-  for (const id of referencedImageIds) {
+  for (const id of collectReferencedImageIds()) {
     const image = images[id];
     if (!image) continue;
     // 历史上已经损坏的引用不应让整个笔记库永久只读；
@@ -4412,7 +4514,7 @@ async function init() {
   // 桌面/Windows 把 Mac 的 ⌘ 改成 Ctrl（需先知道平台，故放在 bridge 就绪后）
   try { applyShortcutLabels(); } catch (error) { logError(error, 'startup-shortcuts'); }
   try { await initDesktopReminderActions(); } catch (error) { logError(error, 'startup-reminder-actions'); }
-  try { await initImagesIdb(); } catch (error) { logError(error, 'startup-images'); }
+  try { await initImagesIdb({ hydrateMetadata: !isDesktopContext() }); } catch (error) { logError(error, 'startup-images'); }
   try { migrateInlineImages(); } catch (error) { logError(error, 'startup-inline-images'); }
   try { migrateLegacyRestoreLabel(); } catch (error) { logError(error, 'startup-restore-label'); }
   try { renderNotesList(); } catch (error) { logError(error, 'startup-note-images'); }
@@ -5499,6 +5601,7 @@ let _workdirQueue = Promise.resolve();
 let _workdirSyncDepth = 0;
 const TODO_DIR = '待办';
 const WORKDIR_META = '_marginote/meta.json';
+const WORKDIR_FORMAT_VERSION = 'v1.4';
 
 function queueWorkdirOperation(task) {
   const result = _workdirQueue.then(task, task);
@@ -5825,7 +5928,7 @@ async function workdirWriteAllNow(silent, options = {}) {
     }
     // 元数据只保存结构、颜色、索引和校验信息；笔记/待办正文全部在独立文件中。
     await writeTextReversible(WORKDIR_META, JSON.stringify({
-      version: 'v1.4',
+      version: WORKDIR_FORMAT_VERSION,
       exportedAt: Date.now(),
       notebooks, folders,
       memories: (typeof loadMemories === 'function' ? loadMemories() : []),   // AI 记忆随库持久化/跨设备同步
@@ -5891,6 +5994,26 @@ function workdirImportAll(silent) {
   return queueWorkdirOperation(() => workdirImportAllNow(silent));
 }
 
+async function readWorkdirTexts(fs, paths) {
+  const uniquePaths = [...new Set((paths || []).filter(Boolean))];
+  const result = new Map();
+  if (!uniquePaths.length) return result;
+  if (typeof fs.readTexts === 'function') {
+    const rows = await fs.readTexts(uniquePaths);
+    for (const row of rows || []) {
+      if (row && row.path && typeof row.text === 'string') result.set(row.path, row.text);
+    }
+  } else {
+    for (const path of uniquePaths) {
+      const text = await fs.readText(path);
+      if (text != null) result.set(path, text);
+    }
+  }
+  const missing = uniquePaths.filter(path => !result.has(path));
+  if (missing.length) throw new Error(`工作目录文件无法读取：${missing.slice(0, 3).join('；')}`);
+  return result;
+}
+
 async function workdirImportAllNow(silent, options = {}) {
   const fs = fsApi();
   if (!fs) { if (!silent) showToast('当前环境不支持工作目录'); return 0; }
@@ -5932,6 +6055,11 @@ async function workdirImportAllNow(silent, options = {}) {
       if (mc) mc.textContent = byKey.size;
     }
     const imagesMeta = (meta.imagesMeta && typeof meta.imagesMeta === 'object') ? meta.imagesMeta : {};
+    for (const [id, value] of Object.entries(imagesMeta)) {
+      if (!id || images[id]) continue;
+      const info = value && typeof value === 'object' ? value : {};
+      images[id] = { name: info.name || (`image-${id}${info.ext || '.png'}`), ext: info.ext || '.png', createdAt: info.createdAt || 0 };
+    }
 
     // Application-originated tombstones remain authoritative. A tombstone that
     // came from an external workdir deletion may be reversed by putting the file
@@ -5950,6 +6078,9 @@ async function workdirImportAllNow(silent, options = {}) {
         loadedByPath[n._srcPath] = { mtime: n._srcMtime || 0 };
       }
     }
+    for (const todo of todos) {
+      if (todo && todo._srcPath) loadedByPath[todo._srcPath] = { mtime: todo._srcMtime || 0 };
+    }
     const { toRead } = importPlan.planImport({ entries, loadedByPath });
     // 元数据映射优先于目录名。这样用户把笔记本命名为“待办”“回收站”或
     // “_marginote”时，文件仍按真实实体类型读取，不会被特殊目录规则误伤。
@@ -5958,7 +6089,8 @@ async function workdirImportAllNow(silent, options = {}) {
     const readByPath = new Map(toRead.map(entry => [entry.path, entry]));
     for (const entry of entries) {
       if (!entry.dir && (mappedNotePaths.has(entry.path) || mappedTodoPaths.has(entry.path))) {
-        readByPath.set(entry.path, entry);
+        const loaded = loadedByPath[entry.path];
+        if (!loaded || (entry.mtime || 0) !== (loaded.mtime || 0)) readByPath.set(entry.path, entry);
       }
     }
     const filesToRead = [...readByPath.values()];
@@ -5969,11 +6101,16 @@ async function workdirImportAllNow(silent, options = {}) {
     // 新格式回收站笔记也逐文件读取。它们不参与普通目录扫描，避免在主列表复活。
     const entryByPath = new Map(entries.filter(entry => !entry.dir).map(entry => [entry.path, entry]));
     const deletedNoteFiles = (meta.deletedNoteFiles && typeof meta.deletedNoteFiles === 'object') ? meta.deletedNoteFiles : {};
+    const deletedPaths = Object.values(deletedNoteFiles).filter(path => entryByPath.has(path));
+    const textByPath = await readWorkdirTexts(fs, [
+      ...deletedPaths,
+      ...mdFiles.map(file => file.path),
+      ...drawFiles.map(file => file.path)
+    ]);
     for (const [mappedId, path] of Object.entries(deletedNoteFiles)) {
       const entry = entryByPath.get(path);
       if (!entry) continue;
-      const text = await fs.readText(path);
-      if (text == null) throw new Error(`回收站笔记无法读取：${path}`);
+      const text = textByPath.get(path);
       if (/\.excalidraw$/i.test(path)) {
         let scene = {}; try { scene = JSON.parse(text); } catch {}
         const mn = scene._mn || {};
@@ -6010,23 +6147,19 @@ async function workdirImportAllNow(silent, options = {}) {
       if (existing) Object.assign(existing, note); else notes.push(note);
     }
 
-    // 资产先读入 images 映射（供 _assets 路径引用解析）
+    // 启动只建立资产元数据映射，不读任何图片体。真正显示/导出时
+    // getImageBase64 再从 IDB 或 _assets/ 按需读取，避免大图库冷启动全量 base64 解码。
     for (const a of assetFiles) {
-      try {
-        const fname = a.path.split('/').pop();
-        const id = fname.replace(/\.[^.]+$/, '');
-        const ext = '.' + (fname.split('.').pop() || 'png');
-        if (images[id]) continue;
-        const b64 = await fs.readBinary(a.path);
-        if (!b64) continue;
-        const mi = imagesMeta[id] || {};
-        await addImageRecordPersisted(id, `data:${mimeFromExt(ext)};base64,${b64}`, { name: mi.name || fname, ext: mi.ext || ext, createdAt: mi.createdAt || Date.now() });
-      } catch (e) { logError(e, 'workdir-asset:' + a.path); }
+      const fname = a.path.split('/').pop();
+      const id = fname.replace(/\.[^.]+$/, '');
+      const ext = '.' + (fname.split('.').pop() || 'png');
+      if (images[id]) continue;
+      const info = imagesMeta[id] || {};
+      images[id] = { name: info.name || fname, ext: info.ext || ext, createdAt: info.createdAt || a.mtime || Date.now() };
     }
 
     for (const f of mdFiles) {
-      const text = await fs.readText(f.path);
-      if (text == null) throw new Error(`工作目录中的文件无法读取：${f.path}`);
+      const text = textByPath.get(f.path);
       const segs = f.path.split('/').filter(Boolean);
       const { meta: fm, content } = parseMarkdownFile(text);
       const isTodo = mappedTodoPaths.has(f.path)
@@ -6095,8 +6228,7 @@ async function workdirImportAllNow(silent, options = {}) {
 
     // 画板 .excalidraw → type:'drawing' 笔记
     for (const f of drawFiles) {
-      const text = await fs.readText(f.path);
-      if (text == null) throw new Error(`工作目录中的画板无法读取：${f.path}`);
+      const text = textByPath.get(f.path);
       let scene = {};
       try { scene = JSON.parse(text); } catch { scene = {}; }
       const mn = (scene && scene._mn) || {};

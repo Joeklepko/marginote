@@ -59,6 +59,7 @@
       forget: () => Promise.resolve(),          // () → Promise<void>：解绑（不删磁盘文件）
       list: () => Promise.resolve([]),          // () → Promise<{path, mtime, dir}[]>：递归列出全部条目
       readText: () => Promise.resolve(null),    // (relPath) → Promise<string|null>
+      readTexts: () => Promise.resolve([]),     // (relPaths[]) → Promise<{path,text}[]>
       writeText: () => Promise.resolve(false),  // (relPath, text) → Promise<bool>
       readBinary: () => Promise.resolve(null),  // (relPath) → Promise<base64|null>
       writeBinary: () => Promise.resolve(false),// (relPath, base64) → Promise<bool>

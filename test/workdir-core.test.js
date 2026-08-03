@@ -91,3 +91,10 @@ const incompleteSnapshot = verifySnapshot({
 assert.equal(incompleteSnapshot.ok, false);
 assert.ok(incompleteSnapshot.issues.some(issue => issue.includes('n2')));
 assert.ok(incompleteSnapshot.issues.some(issue => issue.includes('_assets/img1.png')));
+
+const staleMappingSnapshot = verifySnapshot({
+  meta: { noteFiles: { removed: '工作/已删除.md' } },
+  presentPaths: [],
+  checkMappedPaths: true
+});
+assert.equal(staleMappingSnapshot.ok, false, '普通启动应识别外部删除后的过期索引');

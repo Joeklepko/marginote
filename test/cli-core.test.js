@@ -27,11 +27,23 @@ function check(name, condition) {
   const handler = core.createHandler({
     tools,
     runTransaction: async (label, task) => { transactions.push(label); return await task(); },
-    snapshot: () => ({ version: '1.2.4', notes: [{ id: 'n1' }], todos: [{ id: 't1', done: false }], notebooks: [{ id: 'work' }], workdir: 'D:/Notes' })
+    snapshot: () => ({ version: '1.2.4', notes: [{ id: 'n1' }], todos: [{ id: 't1', done: false }], notebooks: [{ id: 'work' }], workdir: 'D:/Notes', storageMode: 'workdir' })
   });
 
   const status = await handler('status', {});
-  check('status 返回共享数据统计', status.notes === 1 && status.activeTodos === 1 && status.workdir === 'D:/Notes');
+  check('status 返回共享数据统计与默认 CLI 权限', status.notes === 1 && status.activeTodos === 1 && status.workdir === 'D:/Notes' && status.writable === true
+    && status.permissions.search === true && status.permissions.read === true
+    && status.permissions.nonDestructiveWrite === true && status.permissions.localFileInput === true
+    && status.permissions.fileInputRestrictedToWorkdir === false);
+
+  const blockedHandler = core.createHandler({
+    tools: {},
+    snapshot: () => ({ notes: [], todos: [], notebooks: [], storageMode: 'blocked', storageError: { operation: '启动', message: '无法写入' } })
+  });
+  const blockedStatus = await blockedHandler('status', {});
+  check('status 会向 CodeAgent 暴露保护性只读原因', blockedStatus.writable === false && blockedStatus.storageError.message === '无法写入'
+    && blockedStatus.permissions.search === true && blockedStatus.permissions.read === true
+    && blockedStatus.permissions.nonDestructiveWrite === false);
 
   const filtered = await handler('list_notes', { notebookName: '工作', tags: ['发布'], starred: true });
   check('list_notes 支持笔记本、标签和收藏过滤', filtered.length === 1 && filtered[0].id === 'n1');
