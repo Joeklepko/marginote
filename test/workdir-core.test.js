@@ -55,6 +55,16 @@ paths = allocateStablePaths(
 );
 assert.deepEqual(paths, { renamed: '阅读/新标题.md' });
 
+paths = allocateStablePaths(
+  [{ id: 'adopted', preferredPath: '工作/front-matter-标题.md', preservePrevious: true }],
+  { adopted: '中控新架构对接/untitled.md' }
+);
+assert.deepEqual(
+  paths,
+  { adopted: '中控新架构对接/untitled.md' },
+  '首次接管已有文件库时必须原样保留磁盘路径'
+);
+
 const bulkItems = Array.from({ length: 350 }, (_, index) => ({
   id: `issue-${index}`,
   preferredPath: '问题分析/未命名问题.md',

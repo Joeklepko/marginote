@@ -50,7 +50,28 @@ fn replace(temp: &Path, destination: &Path) -> io::Result<()> {
         )
     };
     if ok == 0 {
-        Err(io::Error::last_os_error())
+        let replace_error = io::Error::last_os_error();
+        // Windows 上某些编辑器、杀毒软件和同步盘会允许写入已打开文件，
+        // 但不授予 MoveFileEx 替换所需的 delete-sharing，从而返回 os error 5。
+        // 仅在目标确实存在且替换被拒绝时退回原位写入；真正的只读文件仍会
+        // 在 OpenOptions::open 处失败，不会绕过文件系统权限。
+        if replace_error.kind() == io::ErrorKind::PermissionDenied && destination.is_file() {
+            let fallback = (|| {
+                let mut source = fs::File::open(temp)?;
+                let mut target = OpenOptions::new()
+                    .write(true)
+                    .truncate(true)
+                    .open(destination)?;
+                io::copy(&mut source, &mut target)?;
+                target.sync_all()?;
+                drop(target);
+                fs::remove_file(temp)
+            })();
+            if fallback.is_ok() {
+                return Ok(());
+            }
+        }
+        Err(replace_error)
     } else {
         Ok(())
     }

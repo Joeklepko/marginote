@@ -93,6 +93,7 @@ function applyTheme(name) {
   Object.entries(preset.vars).forEach(([k, v]) => document.body.style.setProperty(k, v));
   currentThemePreset = name;
   localStorage.setItem(THEME_KEY, name);
+  if (typeof scheduleDesktopPreferenceSave === 'function') scheduleDesktopPreferenceSave();
   let custom = null;
   try { custom = JSON.parse(localStorage.getItem(CUSTOM_KEY) || 'null'); } catch {}
   applyCustomOverrides(custom);
@@ -128,6 +129,7 @@ function getCustomTheme() {
 function saveCustomTheme(c) {
   if (!c || !Object.keys(c).length) localStorage.removeItem(CUSTOM_KEY);
   else localStorage.setItem(CUSTOM_KEY, JSON.stringify(c));
+  if (typeof scheduleDesktopPreferenceSave === 'function') scheduleDesktopPreferenceSave();
   applyCustomOverrides(Object.keys(c || {}).length ? c : null);
 }
 
@@ -293,6 +295,7 @@ function applyFont(name) {
   _currentFontStack = stack;
   paintFontStyles(document);
   localStorage.setItem(FONT_KEY, name);
+  if (typeof scheduleDesktopPreferenceSave === 'function') scheduleDesktopPreferenceSave();
 }
 
 function applyFontSize(px) {
@@ -301,6 +304,7 @@ function applyFontSize(px) {
   document.body.style.fontSize = n + 'px';
   paintFontStyles(document);
   localStorage.setItem(FONT_SIZE_KEY, String(n));
+  if (typeof scheduleDesktopPreferenceSave === 'function') scheduleDesktopPreferenceSave();
   const v = document.getElementById('fontSizeValue');
   if (v) v.textContent = n + 'px';
 }

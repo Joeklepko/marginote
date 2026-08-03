@@ -78,13 +78,26 @@ assert.ok(
 );
 assert.match(
   desktopLoadSource,
-  /if \(needsFullMigration \|\| needsIndexWrite\) \{[\s\S]*?await workdirWriteAllNow/,
-  '普通启动不应无条件全量写回笔记库'
+  /if \(needsMigrationCommit \|\| needsIndexWrite\) \{[\s\S]*?adoptExistingFiles: hasDiskLibrary/,
+  '启动接管已有文件库时只能补缺和更新索引，不能重写现有文件'
 );
 assert.ok(
   desktopLoadSource.indexOf('await workdirWriteAllNow') < desktopLoadSource.indexOf('await verifyWorkdirMigration(fs)')
     && desktopLoadSource.indexOf('await verifyWorkdirMigration(fs)') < desktopLoadSource.indexOf('localStorage.removeItem(STORAGE_KEY)'),
   '只有笔记、待办和图片通过落盘校验后才能清理旧数据'
+);
+assert.ok(
+  desktopLoadSource.indexOf('notebooks = [];') < desktopLoadSource.indexOf('await workdirImportAllNow')
+    && desktopLoadSource.indexOf('await workdirImportAllNow') < desktopLoadSource.indexOf('mergeLegacyEntitiesMissingFromDisk'),
+  '已有独立文件库必须先以磁盘为准读取，再仅合并旧快照缺项'
+);
+const workdirWriteStart = desktopApp.indexOf('async function workdirWriteAllNow');
+const workdirWriteEnd = desktopApp.indexOf('// 从工作目录读入并合并', workdirWriteStart);
+const workdirWriteSource = desktopApp.slice(workdirWriteStart, workdirWriteEnd);
+assert.match(
+  workdirWriteSource,
+  /const adopted = !!\(options\.adoptExistingFiles[\s\S]*?if \(unchanged \|\| adopted\)/,
+  '接管模式必须跳过已经存在的笔记与待办文件'
 );
 assert.doesNotMatch(
   desktopApp.slice(desktopApp.indexOf('async function initImagesIdb'), desktopApp.indexOf('// 新增图片统一入口')),
@@ -92,9 +105,11 @@ assert.doesNotMatch(
   '图片仓已打开时仍需要可重入地恢复元数据'
 );
 assert.ok(
-  desktopApp.indexOf('bindEssentialSettingsEvents();') < desktopApp.indexOf('await initDesktopReminderActions()'),
-  '设置入口必须在可选异步服务之前可用'
+  desktopApp.indexOf('await restoreDesktopPreferences();') < desktopApp.indexOf('await loadDesktopWorkdirData()')
+    && desktopApp.indexOf('bindEssentialSettingsEvents();') < desktopApp.indexOf('await loadDesktopWorkdirData()'),
+  '原生配置、主题和设置入口必须在扫描笔记库之前恢复'
 );
+assert.match(desktopApp, /DESKTOP_PREFERENCES_STORAGE_KEY = 'desktopPreferencesV1'/, '桌面设置必须镜像到原生持久化存储');
 assert.match(desktopApp, /await persistMainDataDurably\(state\)/, 'AI\/CLI 事务必须等待独立文件真正落盘');
 assert.match(desktopApp, /deletedNoteFiles: deletedNoteIdToPath/, '回收站笔记正文也必须保存为独立文件');
 assert.match(desktopApp, /`remindBeforeMin: \$\{/, '待办独立文件必须包含提醒提前量');
@@ -104,6 +119,8 @@ const desktopCommands = fs.readFileSync('desktop/src-tauri/src/lib.rs', 'utf8');
 assert.match(desktopCommands, /workdir::cmd_workdir_ensure/, '桌面端必须能自动创建默认 Markdown 工作目录');
 assert.match(desktopCommands, /workdir::cmd_workdir_read_texts/, '大笔记库启动应在 Rust 侧批量读取文本，避免逐文件 IPC');
 assert.doesNotMatch(desktopCommands, /cmd_main_data_(?:get|set)/, '桌面端不得注册聚合主数据 JSON 命令');
+const atomicFileSource = fs.readFileSync('desktop/src-tauri/src/atomic_file.rs', 'utf8');
+assert.match(atomicFileSource, /replace_error\.kind\(\) == io::ErrorKind::PermissionDenied/, 'Windows 原子替换拒绝时应兼容允许原位写入的占用文件');
 
 const cliDocs = fs.readFileSync('docs/cli.md', 'utf8');
 assert.doesNotMatch(cliDocs, /CLI 状态栏/, 'CLI 文档不应继续宣称已移除的底部状态栏');

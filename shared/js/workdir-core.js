@@ -113,7 +113,10 @@
 
     for (const item of rows) {
       const prior = old[item.id];
-      if (!isCompatiblePath(prior, item.preferredPath) || used.has(prior)) continue;
+      // 首次接管一个已经存在的 Markdown 文件库时，磁盘路径本身就是用户
+      // 认可的结构。即使 front matter 标题与文件名不同，也必须保留原路径，
+      // 只建立索引，不能为了“规范化”在启动阶段重命名或覆盖文件。
+      if ((!item.preservePrevious && !isCompatiblePath(prior, item.preferredPath)) || used.has(prior)) continue;
       result[item.id] = prior;
       used.add(prior);
     }

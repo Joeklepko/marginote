@@ -592,6 +592,89 @@ let _lastWorkdirWrite = Promise.resolve();
 let _lastWorkdirWriteError = '';
 let _resolveDesktopDataReady;
 window.MarginoteDesktopDataReady = new Promise(resolve => { _resolveDesktopDataReady = resolve; });
+const DESKTOP_PREFERENCES_STORAGE_KEY = 'desktopPreferencesV1';
+const DESKTOP_PREFERENCE_KEYS = [
+  'marginote.theme',
+  'marginote.themeCustom',
+  'marginote.font',
+  'marginote.fontSize',
+  'marginote.ai',
+  'marginote.aiActions',
+  'marginote.autoBackup',
+  'marginote.notesView',
+  'marginote.aiCustomHistory',
+  'marginote.desktop.hotkey',
+  'marginote.editorZoom',
+  'marginote.collapsed',
+  'marginote.rail-collapsed'
+];
+let _desktopPreferenceSaveTimer = null;
+let _desktopPreferencePersistenceStarted = false;
+
+function localDesktopPreferenceSnapshot() {
+  const snapshot = {};
+  for (const key of DESKTOP_PREFERENCE_KEYS) {
+    try {
+      const value = localStorage.getItem(key);
+      if (value !== null) snapshot[key] = value;
+    } catch {}
+  }
+  return snapshot;
+}
+
+async function restoreDesktopPreferences() {
+  if (!window.mn?.platform?.storage) return;
+  let stored = null;
+  try { stored = await mn.platform.storage.get(DESKTOP_PREFERENCES_STORAGE_KEY); } catch {}
+  if (stored && typeof stored === 'object' && !Array.isArray(stored)) {
+    for (const key of DESKTOP_PREFERENCE_KEYS) {
+      if (typeof stored[key] !== 'string') continue;
+      try {
+        // 当前 WebView 中存在的值更新，原生副本只负责补回缺失项。
+        if (localStorage.getItem(key) === null) localStorage.setItem(key, stored[key]);
+      } catch {}
+    }
+  }
+  try {
+    await mn.platform.storage.set(DESKTOP_PREFERENCES_STORAGE_KEY, {
+      ...(stored && typeof stored === 'object' && !Array.isArray(stored) ? stored : {}),
+      ...localDesktopPreferenceSnapshot(),
+      updatedAt: Date.now()
+    });
+  } catch {}
+}
+
+async function persistDesktopPreferences() {
+  if (!isDesktopContext() || !window.mn?.platform?.storage) return;
+  try {
+    await mn.platform.storage.set(DESKTOP_PREFERENCES_STORAGE_KEY, {
+      ...localDesktopPreferenceSnapshot(),
+      updatedAt: Date.now()
+    });
+  } catch (error) { logError(error, 'desktop-preferences-save'); }
+}
+
+function scheduleDesktopPreferenceSave() {
+  if (!isDesktopContext()) return;
+  clearTimeout(_desktopPreferenceSaveTimer);
+  _desktopPreferenceSaveTimer = setTimeout(() => persistDesktopPreferences(), 800);
+}
+
+function startDesktopPreferencePersistence() {
+  if (_desktopPreferencePersistenceStarted || !isDesktopContext()) return;
+  _desktopPreferencePersistenceStarted = true;
+  const settings = document.getElementById('settingsModalBg');
+  if (settings) {
+    settings.addEventListener('input', scheduleDesktopPreferenceSave, true);
+    settings.addEventListener('change', scheduleDesktopPreferenceSave, true);
+    settings.addEventListener('click', scheduleDesktopPreferenceSave, true);
+  }
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') persistDesktopPreferences();
+  });
+  window.setInterval(persistDesktopPreferences, 30000);
+  scheduleDesktopPreferenceSave();
+}
 
 function preserveInvalidMainData(raw, reason) {
   if (!raw || _dataRecoveryInfo) return _dataRecoveryInfo;
@@ -874,6 +957,12 @@ async function loadDesktopWorkdirData() {
     _mainDataStorageMode = 'blocked';
     return false;
   }
+  const legacySnapshot = hasLegacyData ? {
+    notebooks: notebooks.slice(),
+    folders: folders.slice(),
+    notes: notes.slice(),
+    todos: todos.slice()
+  } : null;
   try {
     const fs = fsApi();
     if (!fs || typeof fs.ensureDir !== 'function') throw new Error('桌面文件存储接口不可用');
@@ -894,14 +983,24 @@ async function loadDesktopWorkdirData() {
       try { diskMeta = JSON.parse(metaText); }
       catch { throw new Error('工作目录元数据已损坏；请先备份并修复 _marginote/meta.json'); }
     }
-    let needsFullMigration = hasLegacyData || !hasDiskLibrary || diskMeta.version !== WORKDIR_FORMAT_VERSION;
+    let needsMigrationCommit = hasLegacyData || !hasDiskLibrary || diskMeta.version !== WORKDIR_FORMAT_VERSION;
     const idbImageKeys = new Set(await initImagesIdb({ persistMigration: false, hydrateMetadata: false }));
     if (!hasDiskLibrary && !hasLegacyData) {
       loadData({ raw: null, legacyRaw: null, persist: false, initializeDefaults: true });
     }
 
+    // 已经存在独立 Markdown 的目录以磁盘为准。旧 WebView 快照只作为一次性
+    // 缺项兜底：先从零读取磁盘，再合并磁盘中确实不存在的旧实体。这样不会
+    // 因旧快照残留而在每次启动时重写几百个已经正确存在的文件。
+    if (hasDiskLibrary) {
+      notebooks = [];
+      folders = [];
+      notes = [];
+      todos = [];
+    }
     _mainDataStorageMode = 'workdir';
     await workdirImportAllNow(true, { reconcile: false, throwOnError: true });
+    if (hasDiskLibrary && legacySnapshot) mergeLegacyEntitiesMissingFromDisk(legacySnapshot);
     if (!notebooks.length) ensureNotebookByName('随笔');
 
     // 兼容极少数已写 v1.4 元数据、但升级中断在图片资产落盘之前的版本。
@@ -912,15 +1011,16 @@ async function loadDesktopWorkdirData() {
       .filter(id => !diskAssetIds.has(id) && idbImageKeys.has(id));
     if (recoverableImageIds.length) {
       await hydrateImageMetadataFromIdb(recoverableImageIds);
-      needsFullMigration = true;
+      needsMigrationCommit = true;
     }
 
     const indexIssues = currentWorkdirIndexIssues(diskMeta, presentPaths);
     const needsIndexWrite = indexIssues.length > 0;
-    if (needsFullMigration || needsIndexWrite) {
-      // 仅首次迁移、格式升级或发现外部新增/移动文件时写回索引。
-      await workdirWriteAllNow(true, { throwOnError: true });
-      if (needsFullMigration) await verifyWorkdirMigration(fs);
+    if (needsMigrationCommit || needsIndexWrite) {
+      // 启动接管只补写磁盘缺少的旧实体、图片和 meta 索引；任何已经存在的
+      // 笔记/待办文件都原样保留，避免只读属性或外部编辑器占用导致迁移死循环。
+      await workdirWriteAllNow(true, { throwOnError: true, adoptExistingFiles: hasDiskLibrary });
+      if (needsMigrationCommit) await verifyWorkdirMigration(fs);
       else await verifyWorkdirIndex(fs);
     }
     // 迁移提交成功前绝不删除旧 WebView 数据。普通启动不再触发该流程。
@@ -936,6 +1036,56 @@ async function loadDesktopWorkdirData() {
     showToast('本地文件库初始化失败，已停止写入：' + message);
     logError(error, 'desktop-workdir-startup');
     return false;
+  }
+}
+
+function mergeLegacyEntitiesMissingFromDisk(snapshot) {
+  if (!snapshot) return;
+  const notebookIds = new Map();
+  for (const legacy of snapshot.notebooks || []) {
+    if (!legacy || !legacy.id) continue;
+    let target = notebooks.find(item => item.id === legacy.id)
+      || notebooks.find(item => item.name === legacy.name);
+    if (!target) {
+      target = { ...legacy };
+      notebooks.push(target);
+    }
+    notebookIds.set(legacy.id, target.id);
+  }
+
+  const folderIds = new Map();
+  for (const legacy of snapshot.folders || []) {
+    if (!legacy || !legacy.id) continue;
+    const notebookId = notebookIds.get(legacy.notebookId) || legacy.notebookId;
+    let target = folders.find(item => item.id === legacy.id)
+      || folders.find(item => item.notebookId === notebookId && item.name === legacy.name);
+    if (!target) {
+      target = { ...legacy, notebookId };
+      folders.push(target);
+    }
+    folderIds.set(legacy.id, target.id);
+  }
+
+  const diskNoteIds = new Set(notes.map(item => item && item.id).filter(Boolean));
+  const diskNotePaths = new Set(notes.map(item => item && item._srcPath).filter(Boolean));
+  for (const legacy of snapshot.notes || []) {
+    if (!legacy || !legacy.id || diskNoteIds.has(legacy.id)
+      || (legacy._srcPath && diskNotePaths.has(legacy._srcPath))) continue;
+    notes.push({
+      ...legacy,
+      notebookId: notebookIds.get(legacy.notebookId) || legacy.notebookId || notebooks[0]?.id || null,
+      folderId: folderIds.get(legacy.folderId) || null,
+      _srcPath: null,
+      _srcMtime: 0
+    });
+  }
+
+  const diskTodoIds = new Set(todos.map(item => item && item.id).filter(Boolean));
+  const diskTodoPaths = new Set(todos.map(item => item && item._srcPath).filter(Boolean));
+  for (const legacy of snapshot.todos || []) {
+    if (!legacy || !legacy.id || diskTodoIds.has(legacy.id)
+      || (legacy._srcPath && diskTodoPaths.has(legacy._srcPath))) continue;
+    todos.push({ ...legacy, _srcPath: null, _srcMtime: 0 });
   }
 }
 
@@ -3470,11 +3620,13 @@ function saveAiActionOverrides() {
   });
   try {
     localStorage.setItem(AI_ACTIONS_KEY, JSON.stringify({ overrides, custom: customList, disabled }));
+    scheduleDesktopPreferenceSave();
   } catch {}
 }
 
 function resetAiActionOverrides() {
   try { localStorage.removeItem(AI_ACTIONS_KEY); } catch {}
+  scheduleDesktopPreferenceSave();
   loadAiActionOverrides();
 }
 
@@ -3492,6 +3644,7 @@ function loadAiConfig() {
 
 function saveAiConfig() {
   localStorage.setItem(AI_STORAGE_KEY, JSON.stringify(aiConfig));
+  scheduleDesktopPreferenceSave();
 }
 
 function saveAiUndo() {
@@ -4258,6 +4411,7 @@ function getAutoBackup() {
 
 function saveAutoBackup(c) {
   localStorage.setItem(AUTO_BACKUP_KEY, JSON.stringify(c));
+  scheduleDesktopPreferenceSave();
 }
 
 function estimateLocalStorageBytes() {
@@ -4450,14 +4604,32 @@ function bindEssentialSettingsEvents() {
 }
 
 async function init() {
-  // 桌面版先加载真实 Markdown 工作目录并完成一次安全迁移；扩展/网页仍
-  // 使用各自的浏览器存储。CLI 必须等待该阶段结束，避免写入空内存快照。
   loadErrorLog();
   const desktopBootstrap = typeof window.__TAURI__ !== 'undefined'
     || typeof window.__TAURI_INTERNALS__ !== 'undefined';
+  if (desktopBootstrap && window.mn && window.mn.ready) {
+    await window.mn.ready;
+    await restoreDesktopPreferences();
+  }
+
+  // 配置与设置入口必须先于笔记库扫描恢复。即使磁盘上有数百篇笔记或
+  // 某个文件暂时不可写，主题、字体和 AI 模型也不能显示为默认/空白。
+  try { loadAiActionOverrides(); } catch {}
+  loadAiConfig();
+  viewPrefs = loadViewPreferences();
+  _editorZoom = loadEditorZoomPreference();
+  let savedTheme = localStorage.getItem(THEME_KEY) || 'light';
+  if (savedTheme === 'mono') savedTheme = 'light';
+  applyTheme(THEMES[savedTheme] ? savedTheme : 'light');
+  loadFontSettings();
+  applyEditorZoom();
+  bindEssentialSettingsEvents();
+  if (desktopBootstrap) startDesktopPreferencePersistence();
+
+  // 桌面版随后加载真实 Markdown 工作目录并完成一次安全接管；CLI 必须
+  // 等该阶段结束，避免写入尚未加载完整的内存快照。
   try {
     if (desktopBootstrap) {
-      if (window.mn && window.mn.ready) await window.mn.ready;
       await loadDesktopWorkdirData();
     } else {
       loadData();
@@ -4471,14 +4643,6 @@ async function init() {
   }
   // 清理历史版本注入的「功能说明书」笔记（含 marginote 旧 ID）
   purgeLegacyManualNotes();
-  loadAiConfig();
-
-  // 主题尽早应用，避免先白后切的主题闪烁（默认 · 黑白；旧 'mono' 已迁移到 'light'）
-  let savedTheme = localStorage.getItem(THEME_KEY) || 'light';
-  if (savedTheme === 'mono') savedTheme = 'light';
-  applyTheme(THEMES[savedTheme] ? savedTheme : 'light');
-  // 设置是恢复配置的基础入口，不应被提醒、图片或工作目录的异步初始化阻塞。
-  bindEssentialSettingsEvents();
 
   renderNotebooks();
   renderTagFilters();
@@ -4544,8 +4708,7 @@ async function init() {
     });
   });
 
-  // 字体设置
-  loadFontSettings();
+  // 字体设置（配置已在扫描笔记库之前应用，这里只绑定控件）
   const fontSel = document.getElementById('fontSelect');
   if (fontSel) fontSel.addEventListener('change', () => applyFont(fontSel.value));
   const fontRange = document.getElementById('fontSizeRange');
@@ -4960,9 +5123,21 @@ window.addEventListener('storage', (e) => {
 
 // ---------- 排序 + 紧凑模式 持久化 ----------
 const VIEW_KEY = 'marginote.notesView';
-let viewPrefs = { sortBy: 'updated', compact: false };
-try { const r = localStorage.getItem(VIEW_KEY); if (r) viewPrefs = Object.assign(viewPrefs, JSON.parse(r)); } catch {}
-function saveViewPrefs() { try { localStorage.setItem(VIEW_KEY, JSON.stringify(viewPrefs)); } catch {} }
+function loadViewPreferences() {
+  const result = { sortBy: 'updated', compact: false };
+  try {
+    const raw = localStorage.getItem(VIEW_KEY);
+    if (raw) Object.assign(result, JSON.parse(raw));
+  } catch {}
+  return result;
+}
+let viewPrefs = loadViewPreferences();
+function saveViewPrefs() {
+  try {
+    localStorage.setItem(VIEW_KEY, JSON.stringify(viewPrefs));
+    scheduleDesktopPreferenceSave();
+  } catch {}
+}
 
 // ---------- 搜索语法解析 + 高亮 ----------
 function parseSearchQuery(q) {
@@ -5232,7 +5407,10 @@ function pushAiHistory(text) {
   let h = getAiHistory().filter(x => x !== text);
   h.unshift(text);
   if (h.length > 10) h = h.slice(0, 10);
-  try { localStorage.setItem(AI_HISTORY_KEY, JSON.stringify(h)); } catch {}
+  try {
+    localStorage.setItem(AI_HISTORY_KEY, JSON.stringify(h));
+    scheduleDesktopPreferenceSave();
+  } catch {}
 }
 
 function openAiCustomModal() {
@@ -5808,32 +5986,54 @@ async function workdirWriteAllNow(silent, options = {}) {
     const deletedNotes = notes.filter(note => note.deleted);
     const previousNoteCandidates = { ...prevNoteFiles };
     for (const note of activeNotes) {
-      if (!previousNoteCandidates[note.id] && note._srcPath) previousNoteCandidates[note.id] = note._srcPath;
+      if (options.adoptExistingFiles && note._srcPath && presentPaths.has(note._srcPath)) {
+        previousNoteCandidates[note.id] = note._srcPath;
+      } else if (!previousNoteCandidates[note.id] && note._srcPath) {
+        previousNoteCandidates[note.id] = note._srcPath;
+      }
     }
     const idToPath = window.MarginoteWorkdirCore.allocateStablePaths(
       activeNotes.map(note => ({
         id: note.id,
-        preferredPath: note.type === 'drawing' ? drawingRelPath(note) : noteRelPath(note)
+        preferredPath: note.type === 'drawing' ? drawingRelPath(note) : noteRelPath(note),
+        preservePrevious: !!(options.adoptExistingFiles && note._srcPath && presentPaths.has(note._srcPath))
       })),
       previousNoteCandidates,
       reservedPaths
     );
     const occupiedAfterActive = new Set([...reservedPaths, ...Object.values(idToPath)]);
+    const previousDeletedNoteCandidates = { ...prevDeletedNoteFiles };
+    for (const note of deletedNotes) {
+      if (options.adoptExistingFiles && note._srcPath && presentPaths.has(note._srcPath)) {
+        previousDeletedNoteCandidates[note.id] = note._srcPath;
+      } else if (!previousDeletedNoteCandidates[note.id] && note._srcPath) {
+        previousDeletedNoteCandidates[note.id] = note._srcPath;
+      }
+    }
     const deletedNoteIdToPath = window.MarginoteWorkdirCore.allocateStablePaths(
       deletedNotes.map(note => ({
         id: note.id,
-        preferredPath: `回收站/${safeName(note.title || '无题')}${note.type === 'drawing' ? '.excalidraw' : '.md'}`
+        preferredPath: `回收站/${safeName(note.title || '无题')}${note.type === 'drawing' ? '.excalidraw' : '.md'}`,
+        preservePrevious: !!(options.adoptExistingFiles && note._srcPath && presentPaths.has(note._srcPath))
       })),
-      prevDeletedNoteFiles,
+      previousDeletedNoteCandidates,
       occupiedAfterActive
     );
     const usedTodo = new Set([...occupiedAfterActive, ...Object.values(deletedNoteIdToPath)]);
     const previousTodoCandidates = { ...prevTodoFiles };
     for (const todo of todos) {
-      if (todo && todo.id && !previousTodoCandidates[todo.id] && todo._srcPath) previousTodoCandidates[todo.id] = todo._srcPath;
+      if (todo && todo.id && options.adoptExistingFiles && todo._srcPath && presentPaths.has(todo._srcPath)) {
+        previousTodoCandidates[todo.id] = todo._srcPath;
+      } else if (todo && todo.id && !previousTodoCandidates[todo.id] && todo._srcPath) {
+        previousTodoCandidates[todo.id] = todo._srcPath;
+      }
     }
     const todoIdToPath = window.MarginoteWorkdirCore.allocateStablePaths(
-      todos.filter(todo => todo && todo.id).map(todo => ({ id: todo.id, preferredPath: `${TODO_DIR}/${safeName(todo.text || 'todo')}.md` })),
+      todos.filter(todo => todo && todo.id).map(todo => ({
+        id: todo.id,
+        preferredPath: `${TODO_DIR}/${safeName(todo.text || 'todo')}.md`,
+        preservePrevious: !!(options.adoptExistingFiles && todo._srcPath && presentPaths.has(todo._srcPath))
+      })),
       previousTodoCandidates,
       usedTodo
     );
@@ -5857,8 +6057,9 @@ async function workdirWriteAllNow(silent, options = {}) {
       const unchanged = prevNoteFiles[n.id] === rel
         && previousNoteRevisions[n.id] === revision
         && presentPaths.has(rel);
+      const adopted = !!(options.adoptExistingFiles && n._srcPath === rel && presentPaths.has(rel));
       n._srcPath = rel;
-      if (unchanged) { collectIds(n.content); continue; }
+      if (unchanged || adopted) { collectIds(n.content); continue; }
       if (n.type === 'drawing') {
         await writeTextReversible(rel, drawingToFile(n), `写入画板 ${rel}`);
         continue;
@@ -5878,8 +6079,9 @@ async function workdirWriteAllNow(silent, options = {}) {
       const unchanged = prevDeletedNoteFiles[n.id] === rel
         && previousNoteRevisions[n.id] === revision
         && presentPaths.has(rel);
+      const adopted = !!(options.adoptExistingFiles && n._srcPath === rel && presentPaths.has(rel));
       n._srcPath = rel;
-      if (unchanged) { collectIds(n.content); continue; }
+      if (unchanged || adopted) { collectIds(n.content); continue; }
       const text = n.type === 'drawing' ? drawingToFile(n) : noteToMarkdown(n, { mode: 'zip', prefix: '../' });
       await writeTextReversible(rel, text, `写入回收站笔记 ${rel}`);
       collectIds(n.content);
@@ -5895,8 +6097,9 @@ async function workdirWriteAllNow(silent, options = {}) {
       const unchanged = prevTodoFiles[t.id] === rel
         && previousTodoRevisions[t.id] === revision
         && presentPaths.has(rel);
+      const adopted = !!(options.adoptExistingFiles && t._srcPath === rel && presentPaths.has(rel));
       t._srcPath = rel;
-      if (unchanged) continue;
+      if (unchanged || adopted) continue;
       // 待办在 待办/ 下(深度1),图片用 ../_assets/ 相对路径
       await writeTextReversible(rel, todoToMarkdown(t, { mode: 'zip', prefix: '../' }), `写入待办 ${rel}`);
     }
@@ -6726,7 +6929,10 @@ async function initDesktopSettings() {
       if (!newCombo) { hotkeyStatus.textContent = '请输入有效快捷键'; return; }
       try {
         await mn.platform.desktop.registerHotkey(newCombo);
-        try { localStorage.setItem(HOTKEY_PREF_KEY, newCombo); } catch {}
+        try {
+          localStorage.setItem(HOTKEY_PREF_KEY, newCombo);
+          scheduleDesktopPreferenceSave();
+        } catch {}
         hotkeyStatus.textContent = '✓ 已应用：' + newCombo;
         showToast('快捷键已更新');
       } catch (e) {
@@ -6869,13 +7075,14 @@ if (_origRenderTodos_v121) {
 
 // ---------- 编辑区 Ctrl+滚轮 缩放 ----------
 const EDITOR_ZOOM_KEY = 'marginote.editorZoom';
-let _editorZoom = (function() {
+function loadEditorZoomPreference() {
   const n = parseFloat(localStorage.getItem(EDITOR_ZOOM_KEY));
   const core = window.MarginoteEditorUiCore;
   return core && typeof core.normalizeEditorZoom === 'function'
     ? core.normalizeEditorZoom(n)
     : (isFinite(n) && n > 0 ? Math.max(0.5, Math.min(3, n)) : 1.0);
-})();
+}
+let _editorZoom = loadEditorZoomPreference();
 function applyEditorZoom() {
   document.documentElement.style.setProperty('--editor-zoom', _editorZoom.toFixed(2));
   if (typeof setEditorContentZoom === 'function') {
@@ -6924,7 +7131,10 @@ function setEditorZoom(value) {
   }
   _editorZoom = next;
   applyEditorZoom();
-  try { localStorage.setItem(EDITOR_ZOOM_KEY, String(_editorZoom)); } catch {}
+  try {
+    localStorage.setItem(EDITOR_ZOOM_KEY, String(_editorZoom));
+    scheduleDesktopPreferenceSave();
+  } catch {}
   if (typeof showToast === 'function') {
     const reading = document.getElementById('app')?.classList.contains('reading-mode');
     showToast(`${reading ? '阅读' : '编辑区'}缩放 ${Math.round(_editorZoom * 100)}%`);
