@@ -254,8 +254,11 @@ function buildAssistantTurnAttachments() {
   const merged = getAutomaticAssistantContext();
   for (const attachment of pendingAttachments) {
     const duplicate = attachment.type !== 'image'
-      && merged.some(item => item.type === attachment.type && item.id === attachment.id);
-    if (!duplicate) merged.push(attachment);
+      ? merged.find(item => item.type === attachment.type && item.id === attachment.id)
+      : null;
+    // 用户手动附加当前笔记时，它不再只是“自动上下文”，记录请求可以明确写入它。
+    if (duplicate) duplicate.automatic = false;
+    else merged.push(attachment);
   }
   return merged;
 }
@@ -1707,11 +1710,15 @@ async function runAssistantTurn(userInput) {
   const ctxK = (provider && provider.contextSize > 0) ? provider.contextSize : 10;
   const mm = !!(provider && provider.multimodal);
   const requestText = String(userInput || '').trim();
-  const turnAttachments = buildAssistantTurnAttachments();
-  const turnPlan = AssistantCore.planAssistantTurn(requestText, turnAttachments, ctxK);
+  const planningRequest = AssistantCore.resolvePlanningRequest(requestText, s?.messages || []);
+  const initialIntent = AssistantCore.classifyIntent(planningRequest.text);
+  const turnAttachments = AssistantCore.filterAutomaticAttachments(requestText, buildAssistantTurnAttachments(), initialIntent);
+  const turnPlan = AssistantCore.planAssistantTurn(planningRequest.text, turnAttachments, ctxK);
   const intent = turnPlan.intent;
-  // 同一份集合同时用于 Prompt 展示和运行时授权；模型输出未列出的真实工具名也不能执行。
+  const previousNoteTargetId = AssistantCore.lastSuccessfulWriteTarget(s?.messages || [], 'note');
+  // 运行时使用默认完整授权；Prompt 保持聚焦，避免 64K 小模型在 50+ 工具中选错。
   const allowedToolNames = new Set(turnPlan.allowedToolNames);
+  const promptToolNames = turnPlan.promptToolNames;
 
   // 从本地预检索开始即锁定本轮，避免用户连续点击产生两条并发模型请求。
   assistantBusy = true;
@@ -1728,7 +1735,7 @@ async function runAssistantTurn(userInput) {
     catch (e) { if (typeof logError === 'function') logError(e, 'assistant-prefetch'); }
     finally { setAssistantTyping(false); }
   }
-  const prompt = buildAssistantSystemPrompt({ userInput: requestText, intent, prefetchedNotes, allowedToolNames: [...allowedToolNames], attachments: turnAttachments });
+  const prompt = buildAssistantSystemPrompt({ userInput: requestText, intent, prefetchedNotes, allowedToolNames: promptToolNames, attachments: turnAttachments });
   const ctx = [
     { role: 'system', content: prompt.system },
     { role: 'user', content: prompt.context }
@@ -1791,6 +1798,7 @@ async function runAssistantTurn(userInput) {
   const allSearchResults = AssistantCore.searchResultsForTool('search_notes', prefetchedNotes);
   let finalReply = '';
   let forcedSearch = false;            // 兜底：是否已对「未检索就回答」强制纠正过一次
+  let forcedWrite = false;             // 兜底：明确写入请求必须至少强制模型重试调用一次工具
   const callSigs = new Set();          // 已发起过的工具调用签名,用于防打转(重复调用即停)
   const MAX_TOOL_STEPS = turnPlan.maxToolSteps;
   let thrash = false;
@@ -1839,6 +1847,21 @@ async function runAssistantTurn(userInput) {
         callSigs.add(sig);
         hasActions = true;
         try {
+          if (name === 'append_to_note' || name === 'update_note') {
+            const targetId = String(args?.id || turnAttachments.find(item => item?.type === 'note')?.id || '');
+            const targetDecision = AssistantCore.captureTargetDecision({
+              value: requestText,
+              intent,
+              targetId,
+              attachments: turnAttachments,
+              prefetchedNotes,
+              previousTargetId: previousNoteTargetId,
+              inherited: planningRequest.inherited
+            });
+            if (!targetDecision.allowed) {
+              throw new Error('目标笔记与本次记录主题相关性不足；不要追加或覆盖它，请改用 create_note 新建到合适的笔记本');
+            }
+          }
           if (ASSISTANT_DESTRUCTIVE_TOOLS.has(name)) {
             setAssistantTyping(true, '等待确认删除操作…');
             const confirmed = await confirmAssistantDestructiveTool(name, args);
@@ -1877,6 +1900,19 @@ async function runAssistantTurn(userInput) {
         break;
       }
       if (!hasActions) {
+        const wroteAlready = toolLog.some(item => item.ok && ASSISTANT_WRITE_TOOLS.has(item.tool));
+        const writeCancelled = toolLog.some(item => item.cancelled);
+        if (!forcedWrite && intent.isWrite && !wroteAlready && !writeCancelled) {
+          forcedWrite = true;
+          const requiredTools = intent.kind === 'todo_write'
+            ? 'create_todo、update_todo、complete_todo 或对应批量工具'
+            : intent.kind === 'memory'
+              ? 'save_memory 或 delete_memory'
+              : 'create_note、append_to_note、update_note 或对应批量工具';
+          ctx.push({ role: 'user', content: `【系统纠正】这是明确的写入请求，但你尚未真正调用工具。必须立即调用 ${requiredTools} 完成操作；普通记录若没有高相关旧笔记，直接 create_note，不要只回复说明、不要要求用户重说、不要声称权限不足。` });
+          finalReply = '';
+          continue;
+        }
         // 检索兜底：模型一次笔记检索都没做，却给出「无法找到/不知道」之类回答时，
         // 不直接采信——强制要求它先用关键词搜索再作答。只纠正一次，避免死循环。
         const QUERY_TOOLS = ['search_notes','find_note','research','search_todos','list_notebooks','get_note','count_notes'];
@@ -1913,12 +1949,13 @@ async function runAssistantTurn(userInput) {
     // 防"幻觉式成功"：模型在 reply 里声称已创建/保存了笔记/待办/记忆，但本轮没有任何写工具
     // 真正成功执行（模型只是描述结果没调用工具，或工具执行失败）——不能让用户误以为成功了。
     const claimsWrite = AssistantCore.claimsSuccessfulWrite(finalReply);
-    if (claimsWrite && !wroteSomething) {
+    const writeCancelled = toolLog.some(item => item.cancelled);
+    if ((claimsWrite || intent.isWrite) && !wroteSomething && !writeCancelled) {
       const failed = toolLog.filter(t => !t.ok).map(t => t.tool + (t.summary ? '（' + t.summary + '）' : ''));
       finalReply = '⚠️ 实际并未创建/保存成功——' + (failed.length
         ? '工具执行失败：' + failed.join('；') + '。'
-        : '模型只描述了结果，但没有真正调用工具（未产生任何写入）。')
-        + '\n\n请再说一次你的需求（例如「记录：<内容>」），或到「设置 → AI」换一个更稳的模型重试。';
+        : '模型在系统自动重试后仍未调用写入工具（未产生任何写入）。')
+        + '\n\n请点击重试；若仍失败，可到「设置 → AI」更换指令遵循更稳定的模型。';
     }
 
     pushAssistantMessage('assistant', finalReply, {

@@ -44,11 +44,15 @@ check('“写个笔记”和“记一笔”都会开放创建笔记能力', (() 
 })());
 check('写进指定笔记会走编辑而不是误建新笔记', (() => {
   const plan = core.planAssistantTurn('把这段话写进项目复盘笔记', [], 64);
-  return plan.intent.kind === 'note_write' && plan.allowedToolNames.includes('append_to_note') && !plan.allowedToolNames.includes('create_note');
+  return plan.intent.kind === 'note_write' && plan.promptToolNames.includes('append_to_note') && plan.allowedToolNames.includes('create_note');
 })());
 check('新建待办不触发笔记预检索', core.classifyIntent('新建待办：明天交周报').prefetchNotes === false);
 check('64K 上下文仅保留最近 16 条消息', core.selectRecentHistory(Array.from({ length: 40 }, (_, i) => ({ role: i % 2 ? 'assistant' : 'user', content: String(i) })), 64).length === 16);
-check('查询意图不暴露删除工具', !core.selectToolNames(core.classifyIntent('查一下用药计划')).includes('delete_note'));
+check('查询意图也默认拥有完整业务授权', (() => {
+  const plan = core.planAssistantTurn('查一下用药计划', [], 64);
+  return ['search_notes', 'create_note', 'update_note', 'delete_note', 'batch_delete_notes']
+    .every(name => plan.allowedToolNames.includes(name));
+})());
 check('翻译笔记会暴露真实写入工具', core.selectToolNames(core.classifyIntent('把这篇笔记翻译成英文')).includes('translate_note'));
 check('新建笔记也允许按语义复用高相关旧笔记', (() => {
   const plan = core.planAssistantTurn('新建一篇会议笔记', [], 64);
@@ -56,14 +60,14 @@ check('新建笔记也允许按语义复用高相关旧笔记', (() => {
     && plan.intent.prefetchNotes
     && plan.intent.query.includes('会议笔记')
     && !plan.intent.query.includes('新建')
-    && plan.allowedToolNames.includes('create_note')
-    && plan.allowedToolNames.includes('append_to_note')
-    && plan.allowedToolNames.includes('update_note')
-    && !plan.allowedToolNames.includes('delete_note');
+    && plan.promptToolNames.includes('create_note')
+    && plan.promptToolNames.includes('append_to_note')
+    && plan.promptToolNames.includes('update_note')
+    && plan.allowedToolNames.includes('delete_note');
 })());
-check('删除单篇笔记不开放批量删除或笔记本删除', (() => {
+check('删除单篇笔记默认也保留批量和笔记本操作授权', (() => {
   const tools = core.planAssistantTurn('删除这篇笔记', [], 64).allowedToolNames;
-  return tools.includes('delete_note') && !tools.includes('batch_delete_notes') && !tools.includes('delete_notebook');
+  return tools.includes('delete_note') && tools.includes('batch_delete_notes') && tools.includes('delete_notebook');
 })());
 check('复杂条件批量删除不会因动作和对象距离较远而丢失删除权限', (() => {
   const plan = core.planAssistantTurn('帮我删除所有标题为空或者内容为空的笔记', [], 64);
@@ -72,22 +76,29 @@ check('复杂条件批量删除不会因动作和对象距离较远而丢失删�
     && plan.allowedToolNames.includes('query_notes')
     && plan.allowedToolNames.includes('delete_notes_by_query');
 })());
-check('批量移动笔记不会获得删除能力', (() => {
-  const tools = core.planAssistantTurn('把这些笔记移动到工作笔记本', [], 64).allowedToolNames;
-  return tools.includes('batch_move_notes') && !tools.includes('batch_delete_notes') && !tools.includes('delete_note');
+check('批量移动笔记保持默认删除授权但优先展示移动工具', (() => {
+  const plan = core.planAssistantTurn('把这些笔记移动到工作笔记本', [], 64);
+  const tools = plan.allowedToolNames;
+  return plan.promptToolNames.includes('batch_move_notes') && tools.includes('batch_delete_notes') && tools.includes('delete_note');
 })());
-check('自然语言提醒被识别为创建待办', (() => {
+check('自然语言提醒被识别为创建待办且默认授权待办操作', (() => {
   const plan = core.planAssistantTurn('明天九点提醒我交周报', [], 64);
-  return plan.intent.kind === 'todo_write' && plan.allowedToolNames.includes('create_todo') && !plan.allowedToolNames.includes('delete_todo');
+  return plan.intent.kind === 'todo_write' && plan.promptToolNames.includes('create_todo') && plan.allowedToolNames.includes('delete_todo');
 })());
-check('批量完成待办只开放完成能力', (() => {
+check('批量完成待办优先展示完成工具且保留默认批量权限', (() => {
   const plan = core.planAssistantTurn('批量完成这些待办', [], 64);
-  return plan.intent.kind === 'todo_write' && plan.allowedToolNames.includes('batch_complete_todos') && !plan.allowedToolNames.includes('batch_delete_todos');
+  return plan.intent.kind === 'todo_write' && plan.promptToolNames.includes('batch_complete_todos') && plan.allowedToolNames.includes('batch_delete_todos');
+})());
+/* 默认完整授权由运行时危险操作确认兜底，不再按当前动词删减权限。 */
+check('默认授权包含全部核心操作', (() => {
+  const tools = core.planAssistantTurn('把这些笔记移动到工作笔记本', [], 64).allowedToolNames;
+  return ['search_notes', 'create_note', 'update_note', 'delete_note', 'batch_update_notes', 'batch_delete_notes']
+    .every(name => tools.includes(name));
 })());
 check('查看已完成待办仍是只读查询', core.classifyIntent('查看已完成待办').kind === 'todo_query');
 check('待办附件会在共享规划器中修正写入领域', (() => {
   const plan = core.planAssistantTurn('把标题修改为交付周报', [{ type: 'todo', id: 't1' }], 64);
-  return plan.intent.kind === 'todo_write' && plan.allowedToolNames.includes('update_todo') && !plan.allowedToolNames.includes('update_note');
+  return plan.intent.kind === 'todo_write' && plan.promptToolNames.includes('update_todo');
 })());
 check('自动当前待办可理解不带对象的修改请求', (() => {
   const plan = core.planAssistantTurn('把标题修改为交付周报', [{ type: 'todo', id: 't1', automatic: true }], 64);
@@ -95,7 +106,7 @@ check('自动当前待办可理解不带对象的修改请求', (() => {
 })());
 check('当前待办不会把显式新建笔记错误路由成待办', (() => {
   const plan = core.planAssistantTurn('新建一篇会议笔记', [{ type: 'todo', id: 't1', automatic: true }], 64);
-  return plan.intent.kind === 'note_write' && plan.allowedToolNames.includes('create_note') && !plan.allowedToolNames.includes('create_todo');
+  return plan.intent.kind === 'note_write' && plan.promptToolNames.includes('create_note');
 })());
 check('番茄钟在通用意图中可用', core.selectToolNames(core.classifyIntent('开始专注二十五分钟')).includes('pomodoro'));
 check('笔记标题含待办二字仍识别为新建笔记', core.classifyIntent('新建笔记：待办事项设计方案').kind === 'note_write');
@@ -105,7 +116,7 @@ check('明确要求记住时才开放记忆写入', core.selectToolNames(core.cl
 check('保存到记忆中的自然表达会开放记忆写入', core.selectToolNames(core.classifyIntent('把我的项目代号保存到记忆中')).includes('save_memory'));
 check('明确约定以后称呼也会写入记忆而非笔记', (() => {
   const plan = core.planAssistantTurn('以后叫我小余', [], 64);
-  return plan.intent.kind === 'memory' && plan.allowedToolNames.includes('save_memory') && !plan.allowedToolNames.includes('create_note');
+  return plan.intent.kind === 'memory' && plan.promptToolNames.includes('save_memory') && !plan.promptToolNames.includes('create_note');
 })());
 check('查询记忆不会开放记忆写入', !core.selectToolNames(core.classifyIntent('你记得我的偏好吗')).includes('save_memory'));
 check('明确删除记忆时开放查询和删除', ['recall_memory', 'delete_memory'].every(name => core.selectToolNames(core.classifyIntent('删除你记住的语言偏好')).includes(name)));
@@ -114,6 +125,36 @@ check('未列入本轮集合的工具在运行时判定为禁止', !core.isToolA
 check('连续对话历史保留上一轮写入目标 ID', core.summarizeToolLogForHistory([
   { tool: 'create_note', ok: true, targetType: 'note', targetId: 'note-123' }
 ]) === 'create_note✓(note id:note-123)');
+check('“需要”继承上一轮明确的新建笔记建议', (() => {
+  const messages = [
+    { role: 'assistant', content: '是否需要我为您创建一个名为《手机控制PC开发参考》的新笔记？' },
+    { role: 'user', content: '需要' }
+  ];
+  const resolved = core.resolvePlanningRequest('需要', messages);
+  const plan = core.planAssistantTurn(resolved.text, [], 64);
+  return resolved.inherited && plan.intent.kind === 'note_write' && plan.promptToolNames.includes('create_note');
+})());
+check('通用记录不会自动写入当前不相关笔记', (() => {
+  const value = '帮我记录一下：手机如何控制pc，陈忠富 00574578 有开发经验';
+  const intent = core.classifyIntent(value);
+  const attachments = [{ type: 'note', id: 'cache-note', title: '清理小艺软件缓存命令', automatic: true }];
+  const filtered = core.filterAutomaticAttachments(value, attachments, intent);
+  const decision = core.captureTargetDecision({ value, intent, targetId: 'cache-note', attachments: filtered, prefetchedNotes: [] });
+  return filtered.length === 0 && !decision.allowed && decision.reason === 'low-relevance';
+})());
+check('高相关检索结果仍可复用旧笔记', (() => {
+  const value = '帮我记录一下：陈忠富有手机控制PC开发经验';
+  const intent = core.classifyIntent(value);
+  return core.captureTargetDecision({
+    value, intent, targetId: 'phone-note', attachments: [],
+    prefetchedNotes: [{ id: 'phone-note', relevance: 42 }]
+  }).allowed;
+})());
+check('明确连续补充可复用上一轮写入目标', (() => {
+  const value = '再补充一下：工号是00574578';
+  const intent = { kind: 'note_write', capabilities: ['capture'] };
+  return core.captureTargetDecision({ value, intent, targetId: 'phone-note', previousTargetId: 'phone-note' }).allowed;
+})());
 check('普通请求只带入偏好和相关记忆', (() => {
   const memories = [
     { category: 'preference', key: '语言', value: '中文' },

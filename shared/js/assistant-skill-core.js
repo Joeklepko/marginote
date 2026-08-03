@@ -9,7 +9,7 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function (ToolPolicy) {
   if (!ToolPolicy) throw new Error('MarginoteToolPolicyCore 未加载');
 
-  const VERSION = 2;
+  const VERSION = 3;
 
   const GROUPS = Object.freeze({
     note_query: Object.freeze([
@@ -21,6 +21,19 @@
     todo_query: Object.freeze(['search_todos', 'get_todo']),
     efficiency: Object.freeze(['daily_briefing', 'pomodoro'])
   });
+
+  // 内置助手默认拥有完整业务授权，但不要把全部 50+ 个工具都塞给模型选择。
+  // 这组核心原子工具在每轮都可见，覆盖用户最常用的查询、写入、修改、删除和批量操作；
+  // 其余工具仍按意图追加。运行时授权集合见 authorizedToolNames()。
+  const DEFAULT_OPERATION_TOOLS = Object.freeze([
+    'list_notebooks', 'search_notes', 'query_notes', 'get_note', 'list_recent_notes', 'count_notes',
+    'search_todos', 'get_todo',
+    'create_note', 'update_note', 'append_to_note', 'move_note', 'delete_note',
+    'create_notebook', 'rename_notebook', 'delete_notebook',
+    'batch_move_notes', 'batch_update_notes', 'batch_delete_notes', 'delete_notes_by_query',
+    'create_todo', 'update_todo', 'complete_todo', 'delete_todo',
+    'batch_complete_todos', 'batch_delete_todos'
+  ]);
 
   const CAPABILITIES = Object.freeze({
     note_write: Object.freeze({
@@ -176,6 +189,13 @@
     return [];
   }
 
+  function authorizedToolNames(memoryAction) {
+    // 记忆写入/删除仍要求用户明确表达，避免普通笔记内容被静默保存为用户画像。
+    const nonMemoryTools = ToolPolicy.assistantPromptToolNames()
+      .filter(name => name !== 'save_memory' && name !== 'delete_memory');
+    return uniqueTools(nonMemoryTools, memoryTools(memoryAction));
+  }
+
   function selectedCapabilities(intent) {
     const definitions = CAPABILITIES[intent?.kind];
     if (!definitions) return [];
@@ -201,7 +221,11 @@
           conditionalTools
         )
       : profile.tools;
-    const tools = Object.freeze(uniqueTools(scopedTools, memoryTools(intent?.memoryAction)));
+    const visibleTools = profile.id === 'memory'
+      ? uniqueTools(scopedTools, memoryTools(intent?.memoryAction))
+      : uniqueTools(scopedTools, DEFAULT_OPERATION_TOOLS, memoryTools(intent?.memoryAction));
+    const tools = Object.freeze(visibleTools);
+    const authorizedTools = Object.freeze(authorizedToolNames(intent?.memoryAction));
     const promptRules = Object.freeze(uniqueTools(
       profile.promptRules,
       capabilities.map(name => capabilityDefinitions[name].promptRule)
@@ -210,10 +234,11 @@
       id: profile.id,
       label: profile.label,
       version: profile.version,
-      mutationPolicy: profile.mutationPolicy,
+      mutationPolicy: 'default-full-access-confirm-destructive',
       maxSteps: profile.maxSteps,
       capabilities: Object.freeze(capabilities),
       tools,
+      authorizedTools,
       promptRules
     });
   }
@@ -229,10 +254,7 @@
   }
 
   function unreachableToolNames() {
-    const reachable = new Set([
-      ...Object.values(PROFILES).flatMap(profile => profile.tools),
-      ...memoryTools('save'), ...memoryTools('read'), ...memoryTools('delete')
-    ]);
+    const reachable = new Set(authorizedToolNames('save').concat(authorizedToolNames('delete')));
     return ToolPolicy.assistantToolNames().filter(name => !ToolPolicy.getPolicy(name)?.deprecated && !reachable.has(name));
   }
 
@@ -242,12 +264,14 @@
   return {
     VERSION,
     GROUPS,
+    DEFAULT_OPERATION_TOOLS,
     CAPABILITIES,
     CONDITIONAL_CAPABILITIES,
     PROFILES,
     profileForIntent,
     selectionForIntent,
     selectToolNames,
+    authorizedToolNames,
     maxSteps,
     unreachableToolNames
   };

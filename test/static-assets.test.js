@@ -208,7 +208,12 @@ for (const assistantPath of ['shared/js/assistant.js', 'extension/js/assistant.j
   assert.match(source, /本轮未授权工具/, `${assistantPath} 必须在运行时拒绝未授权工具`);
   assert.match(source, /等待确认删除操作/, `${assistantPath} 的危险 AI 操作必须等待用户确认`);
   assert.match(source, /role: 'user', content: prompt\.context/, `${assistantPath} 必须把本地数据放在非 system 消息中`);
-  assert.match(source, /AssistantCore\.planAssistantTurn\(requestText, turnAttachments, ctxK\)/, `${assistantPath} 必须使用含自动上下文的本轮规划器`);
+  assert.match(source, /AssistantCore\.resolvePlanningRequest\(requestText, s\?\.messages \|\| \[\]\)/, `${assistantPath} 必须继承连续确认对应的上一轮动作`);
+  assert.match(source, /AssistantCore\.filterAutomaticAttachments\(requestText, buildAssistantTurnAttachments\(\), initialIntent\)/, `${assistantPath} 通用记录不得默认写入当前笔记`);
+  assert.match(source, /AssistantCore\.planAssistantTurn\(planningRequest\.text, turnAttachments, ctxK\)/, `${assistantPath} 必须使用修正后的连续对话意图规划本轮`);
+  assert.match(source, /turnPlan\.promptToolNames/, `${assistantPath} 必须分离默认授权面与模型工具提示面`);
+  assert.match(source, /AssistantCore\.captureTargetDecision/, `${assistantPath} 必须阻止低相关旧笔记被误追加`);
+  assert.match(source, /这是明确的写入请求，但你尚未真正调用工具/, `${assistantPath} 必须对只描述不执行的写入请求自动重试`);
   assert.match(source, /function getAutomaticAssistantContext\(/, `${assistantPath} 必须自动注入当前笔记或待办上下文`);
   assert.match(source, /turnPlan\.maxToolSteps/, `${assistantPath} 必须使用 Skill 的步骤上限`);
   assert.match(source, /AssistantCore\.selectRecentHistory/, `${assistantPath} 必须使用统一且有界的历史窗口`);

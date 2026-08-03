@@ -51,7 +51,7 @@ const prompt = prompts.buildAssistantPrompt({
   contextK: 16
 });
 
-assert.equal(prompt.promptId, 'marginote-assistant-v3');
+assert.equal(prompt.promptId, 'marginote-assistant-v4');
 assert.match(prompt.system, /Skill:笔记检索/);
 assert.match(prompt.system, /search_notes:搜索笔记/);
 assert.match(prompt.system, /get_note:读取笔记/);
@@ -109,7 +109,7 @@ const capturePrompt = prompts.buildAssistantPrompt({
     search_notes: { desc: '搜索笔记' }, get_note: { desc: '读取笔记' }, list_recent_notes: { desc: '最近笔记' }, list_notebooks: { desc: '笔记本' },
     create_note: { desc: '新建笔记' }, create_from_template: { desc: '模板新建' }, append_to_note: { desc: '追加笔记' }, update_note: { desc: '修改笔记' }, query_notes: { desc: '结构化查询' }
   },
-  prefetchedNotes: [{ id: 'existing', title: '发布流程', snippet: '旧的发布步骤' }],
+  prefetchedNotes: [{ id: 'existing', title: '发布流程', snippet: '旧的发布步骤', relevance: 27.1 }],
   notes, notebooks, todos: [], memories: [], contextK: 64
 });
 assert.match(capturePrompt.system, /高置信同主题时优先追加或安全修改/);
@@ -118,6 +118,9 @@ assert.match(capturePrompt.system, /常见词重合不等于相关/);
 assert.match(capturePrompt.system, /必须生成具体、可检索的 title/);
 assert.match(capturePrompt.system, /显式传 notebookName/);
 assert.match(capturePrompt.system, /由 create_note 自动创建/);
+assert.match(capturePrompt.system, /禁止先污染不相关笔记再建议新建/);
+assert.match(capturePrompt.system, /声称权限不足/);
+assert.match(capturePrompt.context, /相关度:27\.1/);
 assert.doesNotMatch(capturePrompt.system, /新建、创建一篇笔记”时必须 create_note/);
 
 const longLiveContent = '实时'.repeat(3500) + '末尾仍在上下文';

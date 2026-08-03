@@ -122,6 +122,85 @@
     return SkillCore.selectToolNames(intent);
   }
 
+  const AFFIRMATIVE_FOLLOW_UP_RE = /^(?:需要|要|好的?|好呀|可以|行|没问题|是的?|对|确定|确认|请继续|继续|就这么做|麻烦了)[。.!！?？\s]*$/;
+  const PROPOSED_ACTION_RE = /(?:是否|要不要|需要我|可以(?:帮你|为你)?|是否要我).{0,180}(?:创建|新建|记录|追加|修改|更新|删除|移动|重命名|完成).{0,180}/;
+
+  // “需要 / 可以 / 好的”必须继承上一轮助手刚提出的业务动作，否则会被当成普通查询，
+  // 进而丢失创建意图。只继承明确的问询句，不从任意历史回复猜动作。
+  function resolvePlanningRequest(value, messages) {
+    const current = String(value || '').trim();
+    if (!AFFIRMATIVE_FOLLOW_UP_RE.test(current)) return { text: current, inherited: false, proposal: '' };
+    const source = Array.isArray(messages) ? messages : [];
+    let previous = '';
+    for (let index = source.length - 1; index >= 0; index--) {
+      const message = source[index];
+      if (message?.role === 'assistant' && message.content) {
+        previous = String(message.content);
+        break;
+      }
+    }
+    if (!previous) return { text: current, inherited: false, proposal: '' };
+    const candidates = previous.split(/\n+|(?<=[。！？?])/).map(item => item.trim()).filter(Boolean);
+    const proposal = candidates.reverse().find(item => PROPOSED_ACTION_RE.test(item)) || '';
+    if (!proposal) return { text: current, inherited: false, proposal: '' };
+    return { text: `${proposal}\n用户确认：${current}`, inherited: true, proposal };
+  }
+
+  function explicitlyTargetsCurrent(value) {
+    const text = normalizeText(value);
+    return /(?:当前|这篇|本篇|这条|这里|正在编辑|打开的).{0,10}(?:笔记|待办|内容|记录)?|(?:追加|写进|存到|修改|更新|补充).{0,12}(?:当前|这篇|本篇|这条|这里)/.test(text);
+  }
+
+  // 通用“帮我记录一下”不等于“写进当前笔记”。自动上下文仍用于问答和明确编辑，
+  // 但在捕获新信息时移除自动当前条目，避免它压过真正的语义检索结果。
+  function filterAutomaticAttachments(value, attachments, intent) {
+    const source = Array.isArray(attachments) ? attachments : [];
+    if (!intent?.isWrite || explicitlyTargetsCurrent(value)) return source.slice();
+    const capabilities = Array.isArray(intent.capabilities) ? intent.capabilities : [];
+    if (!capabilities.includes('capture')) return source.slice();
+    const automaticType = intent.kind === 'todo_write' ? 'todo' : intent.kind === 'note_write' ? 'note' : '';
+    if (!automaticType) return source.slice();
+    return source.filter(item => !(item?.automatic === true && item.type === automaticType));
+  }
+
+  function lastSuccessfulWriteTarget(messages, targetType) {
+    const source = Array.isArray(messages) ? messages : [];
+    for (let index = source.length - 1; index >= 0; index--) {
+      const log = Array.isArray(source[index]?.toolLog) ? source[index].toolLog : [];
+      for (let itemIndex = log.length - 1; itemIndex >= 0; itemIndex--) {
+        const item = log[itemIndex];
+        if (item?.ok && item.targetType === targetType && item.targetId) return String(item.targetId);
+      }
+    }
+    return '';
+  }
+
+  function isContinuationCapture(value) {
+    return /^(?:再|另外|还有|补充|同时|顺便|接着|继续)/.test(normalizeText(value));
+  }
+
+  // 捕获型写入只有在“明确指定 / 高相关检索 / 明确连续补充”三种情况下才能复用旧笔记。
+  // 其余情况拒绝 append/update，让模型回退到 create_note，而不是先污染旧笔记再建议新建。
+  function captureTargetDecision(options = {}) {
+    const intent = options.intent || {};
+    const capabilities = Array.isArray(intent.capabilities) ? intent.capabilities : [];
+    if (intent.kind !== 'note_write' || !capabilities.includes('capture')) return { allowed: true, reason: 'not-capture' };
+    const targetId = String(options.targetId || '');
+    if (!targetId) return { allowed: false, reason: 'missing-target' };
+    const attachments = Array.isArray(options.attachments) ? options.attachments : [];
+    const explicitlyAttached = attachments.some(item => item?.type === 'note' && item.id === targetId && item.automatic !== true);
+    const currentTarget = explicitlyTargetsCurrent(options.value)
+      && attachments.some(item => item?.type === 'note' && item.id === targetId);
+    if (explicitlyAttached || currentTarget) return { allowed: true, reason: 'explicit-target' };
+    const relevant = (Array.isArray(options.prefetchedNotes) ? options.prefetchedNotes : [])
+      .some(note => String(note?.id || '') === targetId && Number(note?.relevance) >= 8);
+    if (relevant) return { allowed: true, reason: 'relevant-search' };
+    const followsPrevious = targetId === String(options.previousTargetId || '')
+      && (options.inherited === true || isContinuationCapture(options.value));
+    if (followsPrevious) return { allowed: true, reason: 'conversation-continuation' };
+    return { allowed: false, reason: 'low-relevance' };
+  }
+
   function planAssistantTurn(value, attachments, contextK) {
     let intent = classifyIntent(value);
     const text = normalizeText(value);
@@ -142,7 +221,9 @@
     return Object.freeze({
       intent: Object.freeze(intent),
       skill,
-      allowedToolNames: skill.tools,
+      // 授权面与提示面分离：默认权限充足，但不让小模型每轮都在 50+ 工具中盲选。
+      allowedToolNames: skill.authorizedTools,
+      promptToolNames: skill.tools,
       maxToolSteps: SkillCore.maxSteps(intent, contextK)
     });
   }
@@ -712,6 +793,12 @@
     classifyTodoCapabilities,
     classifyIntent,
     selectToolNames,
+    resolvePlanningRequest,
+    explicitlyTargetsCurrent,
+    filterAutomaticAttachments,
+    lastSuccessfulWriteTarget,
+    isContinuationCapture,
+    captureTargetDecision,
     planAssistantTurn,
     isToolAllowed,
     resolveNoteAttachmentImages,
