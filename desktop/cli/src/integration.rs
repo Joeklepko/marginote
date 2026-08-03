@@ -1150,9 +1150,10 @@ mod tests {
             serde_json::from_str(&fs::read_to_string(&installed_path).unwrap()).unwrap();
         let record = &installed["plugins"][CODEAGENT_PLUGIN_KEY][0];
         assert_eq!(record["version"], env!("CARGO_PKG_VERSION"));
+        let registered_plugin_dir = PathBuf::from(record["installPath"].as_str().unwrap());
         assert_eq!(
-            record["installPath"],
-            codeagent_plugin_dir(&root).to_string_lossy().as_ref()
+            registered_plugin_dir.canonicalize().unwrap(),
+            codeagent_plugin_dir(&root).canonicalize().unwrap()
         );
         let after = codeagent_status_at(&root);
         assert_eq!(after["configured"], true);
