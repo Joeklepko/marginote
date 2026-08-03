@@ -6963,9 +6963,7 @@ async function runAgentIntegration(action, client) {
 
 function renderAgentClientStatus(client) {
   const statusIds = {
-    codeagent: 'agentCodeAgentStatus',
-    codex: 'agentCodexStatus',
-    claude: 'agentClaudeStatus'
+    codeagent: 'agentCodeAgentStatus'
   };
   const id = statusIds[client?.id];
   if (!id) return;
@@ -7155,14 +7153,8 @@ function bindAgentIntegrationSettings() {
     catch (error) { agentIntegrationOutput(error.message || String(error)); }
   });
   document.getElementById('agentInstallCodeAgentBtn')?.addEventListener('click', () => installAgentIntegration('codeagent', 'CodeAgent'));
-  document.getElementById('agentInstallCodexBtn')?.addEventListener('click', () => installAgentIntegration('codex', 'Codex'));
-  document.getElementById('agentInstallClaudeBtn')?.addEventListener('click', () => installAgentIntegration('claude', 'Claude Code'));
   document.getElementById('agentRemoveCodeAgentBtn')?.addEventListener('click', () => removeAgentIntegration('codeagent', 'CodeAgent'));
-  document.getElementById('agentRemoveCodexBtn')?.addEventListener('click', () => removeAgentIntegration('codex', 'Codex'));
-  document.getElementById('agentRemoveClaudeBtn')?.addEventListener('click', () => removeAgentIntegration('claude', 'Claude Code'));
   document.getElementById('agentCopyCodeAgentBtn')?.addEventListener('click', () => copyAgentConfig('codeagent'));
-  document.getElementById('agentCopyCodexBtn')?.addEventListener('click', () => copyAgentConfig('codex'));
-  document.getElementById('agentCopyClaudeBtn')?.addEventListener('click', () => copyAgentConfig('claude'));
   document.getElementById('agentCopyGenericBtn')?.addEventListener('click', () => copyAgentConfig('generic'));
 }
 

@@ -1913,7 +1913,7 @@
   }
   .agent-client-grid {
     display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 10px;
   }
   .agent-client-card { padding: 14px; }
@@ -4663,7 +4663,7 @@
 
       <!-- Agent 集成（仅桌面版） -->
       <div class="settings-pane desktop-only" data-pane="agent">
-        <p>让 CodeAgent、Codex、Claude Code 或其他支持 MCP 的 Agent 直接搜索、读取和更新 Marginote。CodeAgent 会安装为当前用户的 <code>marginote@local</code> 插件；所有操作仍通过本机 CLI 与同一份 Markdown 数据执行。</p>
+        <p>让 CodeAgent 直接搜索、读取和更新 Marginote。CodeAgent 会安装为当前用户的 <code>marginote@local</code> 插件，并自动获得配套 Skill；所有操作仍通过本机 CLI 与同一份 Markdown 数据执行。其他 MCP 客户端可复制标准配置手动接入。</p>
         <div class="agent-integration-summary">
           <div class="agent-status-item">
             <span class="agent-status-label">MARGINOTE CLI</span>
@@ -4696,24 +4696,6 @@
               <button class="modal-btn primary" id="agentInstallCodeAgentBtn">一键安装</button>
               <button class="modal-btn" id="agentCopyCodeAgentBtn">复制 MCP 配置</button>
               <button class="modal-btn" id="agentRemoveCodeAgentBtn">移除</button>
-            </div>
-          </div>
-          <div class="agent-client-card">
-            <h4>Codex</h4>
-            <div class="agent-client-state" id="agentCodexStatus">等待检查</div>
-            <div class="agent-client-actions">
-              <button class="modal-btn primary" id="agentInstallCodexBtn">一键安装</button>
-              <button class="modal-btn" id="agentCopyCodexBtn">复制配置</button>
-              <button class="modal-btn" id="agentRemoveCodexBtn">移除</button>
-            </div>
-          </div>
-          <div class="agent-client-card">
-            <h4>Claude Code</h4>
-            <div class="agent-client-state" id="agentClaudeStatus">等待检查</div>
-            <div class="agent-client-actions">
-              <button class="modal-btn primary" id="agentInstallClaudeBtn">一键安装</button>
-              <button class="modal-btn" id="agentCopyClaudeBtn">复制配置</button>
-              <button class="modal-btn" id="agentRemoveClaudeBtn">移除</button>
             </div>
           </div>
           <div class="agent-client-card">

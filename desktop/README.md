@@ -2,7 +2,7 @@
 
 把 Marginote 打成 Windows `.exe` 安装包的 Tauri 工程。前端复用 `../shared/`。
 
-Windows 安装包还包含独立的 `marginote-cli.exe`（源码在 `cli/`）。安装器会把安装目录加入当前用户 PATH；CLI 通过本机认证桥调用 WebView 内的共享业务工具，并内置默认 12 个核心工具、可选 23 个完整工具的 `stdio` MCP Server，以及 CodeAgent/Codex/Claude Code 集成命令，详见 [`../docs/cli.md`](../docs/cli.md)。
+Windows 安装包还包含独立的 `marginote-cli.exe`（源码在 `cli/`）。安装器会把安装目录加入当前用户 PATH；CLI 通过本机认证桥调用 WebView 内的共享业务工具，并内置默认 12 个核心工具、可选 23 个完整工具的 `stdio` MCP Server。桌面设置以 CodeAgent 本地插件集成为主，其他客户端可使用标准 MCP 兼容入口，详见 [`../docs/cli.md`](../docs/cli.md)。
 
 ## 构建
 

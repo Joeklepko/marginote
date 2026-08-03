@@ -66,8 +66,11 @@ for (const controlId of ['windowMinimizeBtn', 'windowMaximizeBtn', 'windowCloseB
 }
 assert.doesNotMatch(desktopHtml, /id=["']cliStatusBar["']/, '桌面版不应继续占用底部空间展示 CLI 状态栏');
 assert.match(desktopHtml, /data-tab=["']agent["']/, '桌面设置必须提供 Agent 集成入口');
-for (const controlId of ['agentCodeAgentDir', 'agentPickCodeAgentDirBtn', 'agentInstallCodeAgentBtn', 'agentCopyCodeAgentBtn', 'agentRemoveCodeAgentBtn', 'agentInstallCodexBtn', 'agentInstallClaudeBtn', 'agentRemoveCodexBtn', 'agentRemoveClaudeBtn', 'agentCopyGenericBtn', 'agentDoctorBtn']) {
+for (const controlId of ['agentCodeAgentDir', 'agentPickCodeAgentDirBtn', 'agentInstallCodeAgentBtn', 'agentCopyCodeAgentBtn', 'agentRemoveCodeAgentBtn', 'agentCopyGenericBtn', 'agentDoctorBtn']) {
   assert.match(desktopHtml, new RegExp(`id=["']${controlId}["']`), `Agent 集成页缺少 ${controlId}`);
+}
+for (const removedControlId of ['agentInstallCodexBtn', 'agentCopyCodexBtn', 'agentRemoveCodexBtn', 'agentInstallClaudeBtn', 'agentCopyClaudeBtn', 'agentRemoveClaudeBtn']) {
+  assert.doesNotMatch(desktopHtml, new RegExp(`id=["']${removedControlId}["']`), `Agent 集成页不应继续展示 ${removedControlId}`);
 }
 
 const desktopApp = fs.readFileSync('shared/app.js', 'utf8');
@@ -141,7 +144,6 @@ assert.match(cliDocs, /batch_delete_todos/, 'CLI 文档必须覆盖 schema 暴�
 assert.match(cliDocs, /marginote-cli mcp/, 'CLI 文档必须说明内置 MCP Server');
 assert.match(cliDocs, /mcp --profile full/, 'CLI 文档必须说明完整 MCP profile');
 assert.match(cliDocs, /12 个工具/, 'CLI 文档必须说明默认精简工具集');
-assert.match(cliDocs, /integrate install codex/, 'CLI 文档必须说明 Codex 一键集成');
 assert.match(cliDocs, /integrate install codeagent/, 'CLI 文档必须说明 CodeAgent 一键集成');
 assert.doesNotMatch(cliDocs, /^codeagent mcp add/m, 'CodeAgent 不应再按不存在的 mcp add 命令接入');
 assert.match(cliDocs, /marginote@local/, 'CLI 文档必须说明 CodeAgent 本地插件标识');

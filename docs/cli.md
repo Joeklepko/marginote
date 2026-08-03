@@ -1,6 +1,6 @@
 # Marginote CLI
 
-Marginote 1.2.4 起，Windows 安装包自带 `marginote-cli.exe`。它适合日常终端操作，也为 CodeAgent、Claude Code、Codex 等 code agent 提供稳定的笔记/待办接口。
+Marginote 1.2.4 起，Windows 安装包自带 `marginote-cli.exe`。它适合日常终端操作，并以 CodeAgent 本地插件为主要 Agent 入口；其他支持 MCP 的客户端仍可通过标准 stdio 配置接入稳定的笔记/待办接口。
 
 ## 开始使用
 
@@ -165,7 +165,7 @@ marginote-cli mcp --profile full
 
 - 查看 CLI、Marginote 本地连接和存储可写状态。
 - 把 Marginote 安装为 CodeAgent 的 `marginote@local` 用户级插件。
-- 一键为 Codex 或 Claude Code 添加用户级 MCP 配置，并可复制标准 MCP 配置。
+- 为其他 MCP 客户端复制标准 stdio 配置。
 - 运行诊断并查看具体失败位置。
 
 也可以完全通过终端配置：
@@ -179,25 +179,16 @@ marginote-cli integrate status --codeagent-dir "D:\Tools\CodeAgent\.cac" --json
 
 # 查看配置，不修改任何第三方文件
 marginote-cli integrate show codeagent
-marginote-cli integrate show codex
-marginote-cli integrate show claude
 marginote-cli integrate show generic
 
-# 安装用户级集成（CodeAgent 使用 .cac 本地插件，其他客户端调用自身命令）
+# 安装 CodeAgent 用户级 .cac 本地插件
 marginote-cli integrate install codeagent --codeagent-dir "D:\Tools\CodeAgent\.cac"
-marginote-cli integrate install codex
-marginote-cli integrate install claude
 
-# 移除用户级集成；CodeAgent 保留插件缓存，均不卸载 Marginote 或 CLI
+# 移除 CodeAgent 集成；保留插件缓存，不卸载 Marginote 或 CLI
 marginote-cli integrate remove codeagent --codeagent-dir "D:\Tools\CodeAgent\.cac"
-marginote-cli integrate remove codex
-marginote-cli integrate remove claude
-
-# 等价的直接命令
-marginote-cli integrate install codeagent --codeagent-dir "D:\Tools\CodeAgent\.cac"
-codex mcp add marginote -- marginote-cli mcp
-claude mcp add --scope user marginote -- marginote-cli mcp
 ```
+
+为了兼容已有自动化，CLI 仍保留 `integrate show/install/remove codex|claude` 命令，但桌面设置页不再展示这些专用入口；新用户优先使用 CodeAgent，其他客户端建议复制 `integrate show generic` 返回的标准 MCP 配置。
 
 ### CodeAgent `.cac` 插件安装
 
@@ -268,7 +259,7 @@ agent 可先运行 `marginote-cli schema --json` 自发现能力。高级场景�
 marginote-cli call create_note --args '{"title":"来自 agent","content":"已完成接口联调","notebookName":"工作","tags":["agent"]}' --json
 ```
 
-如果要把完整规则直接交给 CodeAgent/Claude Code/Codex，无需复制本文，运行：
+如果要把完整规则直接交给 CodeAgent 或其他 Agent，无需复制本文，运行：
 
 ```powershell
 marginote-cli instructions
