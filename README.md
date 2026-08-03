@@ -27,7 +27,7 @@
 | ✅ **待办** | 优先级、截止时间、**系统级提醒**（提前 N 分 × 重复 K 次 × 间隔 M 分） |
 | 🎨 **主题** | 10+ 内置主题（浅色 / 深色 / 护眼 / 莫兰迪 / 高对比），可自定义 |
 | 🤖 **AI 优化** | 一键润色 / 翻译 / 摘要 / 续写，多 Provider（DeepSeek / Kimi / OpenAI / Ollama / 自建反代） |
-| 🧰 **CLI / Agent** | Windows 安装包内置 `marginote-cli`，Claude Code 等 agent 可直接查询/更新笔记与待办 |
+| 🧰 **CLI / Agent** | Windows 安装包内置 `marginote-cli`，CodeAgent、Claude Code 等 agent 可直接查询/更新笔记与待办 |
 | 🖼️ **图片** | 拖拽 / 粘贴直接入笔，base64 内嵌或 `_assets/` 目录 |
 | 💾 **备份** | 一键导出 zip（笔记 + 图片 + 待办 + 配置），定期自动备份到下载目录 |
 | 🔍 **搜索** | 全文 + 标题 + 标签 + 笔记本范围过滤 |
@@ -57,13 +57,24 @@
 
 ```powershell
 marginote-cli status
+marginote-cli doctor
 marginote-cli instructions
 marginote-cli note list --query "项目" --json
 marginote-cli note create "来自 agent" --content "接口已联调完成" --notebook 工作 --tag agent --json
 marginote-cli note create "发布记录" --content "1.2.4" --dry-run --json
 ```
 
-完整命令、Claude Code 配置建议与安全模型见 [Marginote CLI 文档](docs/cli.md)。
+支持 MCP 的 Agent 可在 Marginote「设置 → Agent」中一键安装集成，也可以直接运行：
+
+```powershell
+marginote-cli integrate install codeagent --codeagent-dir "C:\Users\你的用户名\.cac"
+codex mcp add marginote -- marginote-cli mcp
+claude mcp add --scope user marginote -- marginote-cli mcp
+```
+
+CodeAgent 集成会安装为 `marginote@local` 本地插件。不同用户和发行版的配置位置可能不同，因此设置页支持填写或选择 CodeAgent 配置根目录；CLI 可使用 `--codeagent-dir` 或 `MARGINOTE_CODEAGENT_DIR`。安装器只会安全合并该目录内的 `plugins\installed_plugins.json` 与 `settings.json`，不会修改已有插件配置，也不会创建猜测的根目录。
+
+MCP Server 由安装包内同一个 `marginote-cli.exe` 提供，不需要 Node.js、Python、独立后台服务或第二份数据。默认只加载 12 个高频核心工具以减少本地模型上下文占用；`marginote-cli mcp --profile full` 可启用原有 23 个细粒度工具。完整命令、Agent 配置与安全模型见 [Marginote CLI / Agent 集成](docs/cli.md)。
 
 ### 方式 B · Chrome 扩展（推荐开发者 / Linux/macOS）
 

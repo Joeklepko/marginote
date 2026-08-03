@@ -1,6 +1,6 @@
 # Marginote CLI
 
-Marginote 1.2.4 起，Windows 安装包自带 `marginote-cli.exe`。它适合日常终端操作，也为 Claude Code、Codex 等 code agent 提供稳定的笔记/待办接口。
+Marginote 1.2.4 起，Windows 安装包自带 `marginote-cli.exe`。它适合日常终端操作，也为 CodeAgent、Claude Code、Codex 等 code agent 提供稳定的笔记/待办接口。
 
 ## 开始使用
 
@@ -8,6 +8,7 @@ Marginote 1.2.4 起，Windows 安装包自带 `marginote-cli.exe`。它适合日
 
 ```powershell
 marginote-cli status
+marginote-cli doctor
 marginote-cli --help
 marginote-cli schema --json
 ```
@@ -15,6 +16,8 @@ marginote-cli schema --json
 安装器会把 CLI 所在目录加入当前用户的 `PATH`。如果旧终端暂时找不到命令，重开终端即可。CLI 会连接正在运行的 Marginote；软件未运行时会自动在后台启动，无需手动打开窗口。
 
 `status --json` 会同时返回工作目录和可写状态。`writable:false` 表示 Marginote 为保护本地文件而暂停了写入，agent 应停止并把 `storageError` 告诉用户。
+
+普通用户只需安装 Marginote 的 Windows 安装包，不需要再单独安装 CLI。`marginote-cli.exe`、本地 MCP Server 和 Agent 集成命令都包含在同一个安装包中。
 
 CLI 默认授权查找、读取以及新建、追加、修改等非删除写入，不需要逐次确认，也不要求先执行 `--dry-run`。删除仍需 `--yes`。`status --json` 的 `permissions` 字段可供 agent 直接识别这些能力。
 
@@ -131,6 +134,124 @@ marginote-cli search "验收结果"
 
 ## 给 code agent 使用
 
+### 推荐：MCP 集成
+
+Marginote CLI 内置本地 `stdio` MCP Server：
+
+```powershell
+# 默认：12 个高频核心工具
+marginote-cli mcp
+
+# 高级管理：原有 23 个细粒度工具
+marginote-cli mcp --profile full
+```
+
+该命令供 MCP 客户端启动，不是交互式终端。它只通过标准输入输出交换 JSON-RPC，复用现有 Marginote 本地认证桥和同一套笔记/待办事务，不会启动第二个数据服务，也不需要 Node.js 或 Python。
+
+默认 `core` profile 面向 64K 上下文和本地模型，只公开 12 个工具：`status`、`search_all`、`get_note`、`create_note`、`update_note`、`delete_note`、`search_todos`、`get_todo`、`create_todo`、`update_todo`、`delete_todo` 和 `batch_manage`。其中：
+
+- 追加笔记使用 `update_note` 的 `append:true`，不再重复公开 `append_to_note`。
+- 完成待办使用 `update_todo` 的 `done:true`，不再重复公开 `complete_todo`。
+- `batch_manage` 通过 `action` 支持 `move_notes`、`update_notes`、`complete_todos`、`delete_notes`、`delete_todos`；两个删除动作仍必须传 `confirmed:true`。
+- 创建笔记时传入合适的 `notebookName`，不存在的笔记本会自动创建，因此核心 profile 无需额外暴露笔记本管理工具。
+
+`full` profile 原样保留 23 个细粒度工具，适合重命名/删除笔记本或需要独立批处理工具名的高级自动化。它不会改变 CLI 命令、数据格式或权限模型。要让某个 Agent 使用完整 profile，把 MCP 配置中的参数改为：
+
+```json
+"args": ["mcp", "--profile", "full"]
+```
+
+最简单的安装方式是在 Marginote 中打开「设置 → Agent」：
+
+- 查看 CLI、Marginote 本地连接和存储可写状态。
+- 把 Marginote 安装为 CodeAgent 的 `marginote@local` 用户级插件。
+- 一键为 Codex 或 Claude Code 添加用户级 MCP 配置，并可复制标准 MCP 配置。
+- 运行诊断并查看具体失败位置。
+
+也可以完全通过终端配置：
+
+```powershell
+# 查看本机 Agent 和已检测到的配置
+marginote-cli integrate status --json
+
+# CodeAgent 不在默认位置时显式指定其配置根目录
+marginote-cli integrate status --codeagent-dir "D:\Tools\CodeAgent\.cac" --json
+
+# 查看配置，不修改任何第三方文件
+marginote-cli integrate show codeagent
+marginote-cli integrate show codex
+marginote-cli integrate show claude
+marginote-cli integrate show generic
+
+# 安装用户级集成（CodeAgent 使用 .cac 本地插件，其他客户端调用自身命令）
+marginote-cli integrate install codeagent --codeagent-dir "D:\Tools\CodeAgent\.cac"
+marginote-cli integrate install codex
+marginote-cli integrate install claude
+
+# 移除用户级集成；CodeAgent 保留插件缓存，均不卸载 Marginote 或 CLI
+marginote-cli integrate remove codeagent --codeagent-dir "D:\Tools\CodeAgent\.cac"
+marginote-cli integrate remove codex
+marginote-cli integrate remove claude
+
+# 等价的直接命令
+marginote-cli integrate install codeagent --codeagent-dir "D:\Tools\CodeAgent\.cac"
+codex mcp add marginote -- marginote-cli mcp
+claude mcp add --scope user marginote -- marginote-cli mcp
+```
+
+### CodeAgent `.cac` 插件安装
+
+CodeAgent 不使用 `codeagent mcp add`。不同安装包、用户名和便携版的配置位置可能不同，Marginote 不把某个用户的绝对路径写死。桌面端「设置 → Agent 集成」支持直接填写或通过原生目录选择器选择 CodeAgent 配置根目录，选择结果会随其他桌面设置持久化。
+
+路径解析顺序如下：
+
+1. 页面选择的路径或 CLI 的 `--codeagent-dir <PATH>`。
+2. 环境变量 `MARGINOTE_CODEAGENT_DIR`。
+3. 当前用户目录下已经存在且结构可识别的 `.cac`。
+
+如果都不可用，安装器会要求用户选择，不会新建一个猜测路径。所选根目录必须已经存在，并包含 `settings.json` 或 `plugins` 目录；不要选择 `plugins\cache` 等子目录。例如选定 `<CODEAGENT_DIR>` 后，一键安装会创建用户级本地插件 `marginote@local`：
+
+```text
+<CODEAGENT_DIR>\
+├── settings.json
+└── plugins\
+    ├── installed_plugins.json
+    └── cache\local\marginote\1.2.4\
+        ├── codeagent-extension.json
+        ├── .mcp.json
+        └── skills\marginote\SKILL.md
+```
+
+安装器执行以下操作：
+
+1. 校验 `installed_plugins.json` 和 `settings.json` 是合法且结构可识别的 JSON；异常时停止，不覆盖原文件。
+2. 向 `installed_plugins.json` 注册 `marginote@local` 的 `user` scope 安装记录，保留所有已有插件。
+3. 向 `settings.json.enabledPlugins` 合并 `"marginote@local": true`，保留权限、模型和其他设置。
+4. 写入 `.mcp.json`，以 `stdio` 启动安装包内的绝对路径 `marginote-cli.exe mcp`。
+5. 同时安装轻量 `SKILL.md`，告诉 CodeAgent 主动搜索、相关时追加、无相关笔记时再创建；具体读写仍由 MCP 的类型化工具完成。
+
+插件缓存目录保留版本号以符合 CodeAgent 的缓存组织方式。状态检查会同时返回 `installedVersion`、`currentVersion` 和 `updateAvailable`：发现旧版本时，设置页会显示“更新至当前版本”，再次执行安装命令会写入新的版本目录并把注册表切换到新目录。旧版本缓存不会立即删除，可用于回滚；相同版本重复安装则保持幂等，不重复修改配置。
+
+修改已有 JSON 前会在同目录生成 `*.marginote.bak` 备份。`integrate remove codeagent --codeagent-dir <PATH>` 只移除注册与启用项，保留插件缓存、Marginote 数据及其他 CodeAgent 设置，方便恢复。底层 `.mcp.json` 等价于：
+
+```json
+{
+  "mcpServers": {
+    "marginote": {
+      "type": "stdio",
+      "command": "C:\\...\\marginote-cli.exe",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+
+安装后重启对应 Agent。Agent 将通过 MCP `tools/list` 自动发现当前 profile 的搜索、读取、写入、待办和批处理工具。MCP 初始化信息内置以下工作流规则：直接询问可能来自笔记的事实时主动搜索；记录前先搜索相似笔记；高度相关时优先追加或更新；没有合适笔记时再新建并选择合适笔记本。
+
+删除工具会标记为破坏性操作，并且即使客户端已批准调用，仍必须在参数中传入 `confirmed:true`；没有用户明确删除意图时不得传入。普通读取和非删除写入不需要该字段。
+
+### CLI / Shell 调用
+
 所有命令都支持全局 `--json`，成功和失败使用固定信封：
 
 ```json
@@ -147,13 +268,15 @@ agent 可先运行 `marginote-cli schema --json` 自发现能力。高级场景�
 marginote-cli call create_note --args '{"title":"来自 agent","content":"已完成接口联调","notebookName":"工作","tags":["agent"]}' --json
 ```
 
-如果要把完整规则直接交给 Claude Code/Codex，无需复制本文，运行：
+如果要把完整规则直接交给 CodeAgent/Claude Code/Codex，无需复制本文，运行：
 
 ```powershell
 marginote-cli instructions
 ```
 
 该命令完全离线，不要求 Marginote 已启动；`--json` 会把说明放在 `data.text` 中。
+
+不支持 MCP、但允许执行本机命令的 Agent，可以继续使用 `marginote-cli instructions` 加普通 CLI 命令；MCP 和 Shell 两种入口最终调用同一套业务工具。
 
 `call` 同样遵守删除保护；调用 `delete_note`、`delete_todo`、`delete_notebook` 等删除工具时必须额外传入 `--yes`，否则退出码为 `2`，不会向 Marginote 发出请求。
 
@@ -234,7 +357,10 @@ Marginote CLI 已默认授权查找、读取和非删除写入，无需逐次询
 
 ```powershell
 marginote-cli status --json
+marginote-cli doctor --json
 ```
+
+`doctor` 会检查 CLI 路径与版本、Marginote 主程序、本地应用数据目录、认证端点、实时 CLI 桥以及 MCP 命令。诊断只返回状态，不会修改笔记或 Agent 配置。
 
 - `data.writable: true`：CLI 已具备普通写入权限，继续根据返回的业务错误排查参数或目标 ID。
 - `data.writable: false`：Marginote 因真实的本地存储错误进入保护状态；查看 `data.storageError`，不要通过直接修改 WebView2 数据绕过。

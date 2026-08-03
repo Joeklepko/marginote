@@ -1,15 +1,17 @@
 # Marginote 架构边界
 
 状态：active
-最后核验：2026-08-02（v1.2.4）
+最后核验：2026-08-03（v1.2.4）
 
 ## 产品边界
 
 Windows/Tauri 是主产品，浏览器扩展是兼容运行形态。二者共享数据模型、AI Prompt/Skill/Provider 纯逻辑和工具策略；平台存储、系统提醒、工作目录与 CLI 桥由各端适配。
 
 ```text
-用户 / 内置 AI / marginote-cli
-              │
+用户 / 内置 AI / marginote-cli / 本地 MCP 客户端
+                         │
+                CLI / MCP adapter
+                         │
        ToolPolicy + Skill
               │
      Assistant / CLI dispatcher
@@ -32,7 +34,8 @@ Windows/Tauri 是主产品，浏览器扩展是兼容运行形态。二者共享
 | AI Prompt | `assistant-prompt-core.js` | system 规则与不可信本地上下文的唯一构建入口 |
 | Provider | `ai-provider-core.js` | 请求、Header、SSE、工具调用、token 与重试 |
 | 端侧编排 | `assistant.js`, `app.js` | DOM、模型调用、确认、收据与业务工具实现 |
-| CLI | `cli-core.js`, Rust `desktop/cli` | 稳定命令、JSON 信封、退出码和本机令牌桥 |
+| CLI / MCP | `cli-core.js`, Rust `desktop/cli` | 稳定命令、JSON 信封、stdio MCP、Agent 配置和本机令牌桥；不得复制业务实现 |
+| Agent 设置 | `agent_integration.rs`, `platform-desktop.js`, `app.js` | 只允许 status/show/install/remove/doctor 固定动作；用户选择的 CodeAgent 根目录作为单个进程参数传给 CLI，适配器只合并插件注册与启用字段，不开放任意 Shell |
 
 依赖只能从端侧编排指向纯逻辑核心。核心模块不得依赖 DOM、WebView 存储或 Tauri API。
 
@@ -47,6 +50,7 @@ Windows/Tauri 是主产品，浏览器扩展是兼容运行形态。二者共享
 7. 批量文件导入以用户本次选择为事务边界；任一输入失败时恢复集合快照并清理本批新增图片。
 8. 对话中的选中文本默认只读；原位写回必须走编辑器 AI 文本事务，不能用整篇更新工具替代选区 patch。
 9. Windows 桌面主数据必须按实体写入工作目录：目录对应笔记本/文件夹，每篇笔记和每条待办对应独立文件。`_marginote/meta.json` 只能保存结构、索引和轻量元信息，不能聚合正文。迁移必须先成功写盘，再清理旧主数据键。
+10. MCP 只能作为 CLI 的协议适配层，必须复用同一本机认证桥、工具策略、事务和删除确认；stdio 的 stdout 只能输出 JSON-RPC，诊断写入 stderr。默认 `core` profile 应保持少量高频原子工具，完整细粒度能力通过 `--profile full` 显式启用。
 
 ## 共享与生成
 

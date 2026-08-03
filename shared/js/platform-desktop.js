@@ -199,6 +199,16 @@
       try { await invoke('cmd_set_window_theme', { mode: mode || 'system' }); }
       catch (e) { /* 旧版本无此命令时静默失败 */ }
     },
+    async agentIntegration(action, client, configDir) {
+      return await invoke('cmd_agent_integration', {
+        action: String(action || ''),
+        client: client ? String(client) : null,
+        configDir: configDir ? String(configDir) : null
+      });
+    },
+    async pickAgentConfigDir() {
+      return await invoke('cmd_agent_pick_config_dir');
+    },
   };
 
   // ===== fs（工作目录：Tauri 原生文件系统）=====

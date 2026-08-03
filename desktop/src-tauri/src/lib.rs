@@ -3,6 +3,7 @@
 
 use tauri::{Manager, WindowEvent};
 
+mod agent_integration;
 mod atomic_file;
 mod cli_bridge;
 mod commands;
@@ -46,6 +47,8 @@ pub fn run() {
             commands::cmd_unregister_hotkey,
             commands::cmd_get_app_paths,
             commands::cmd_set_window_theme,
+            agent_integration::cmd_agent_integration,
+            agent_integration::cmd_agent_pick_config_dir,
             cli_bridge::cmd_cli_take_requests,
             cli_bridge::cmd_cli_complete,
             workdir::cmd_workdir_pick,

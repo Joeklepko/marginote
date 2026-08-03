@@ -1,4 +1,4 @@
-use clap::{Args, Parser, Subcommand};
+use clap::{Args, Parser, Subcommand, ValueEnum};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 use std::env;
@@ -9,6 +9,11 @@ use std::path::{Path, PathBuf};
 use std::process::{Command as ProcessCommand, Stdio};
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+mod integration;
+mod mcp;
+
+use integration::{AgentClient, InstallableAgentClient};
 
 // Must match tauri.conf.json's identifier so both processes find the endpoint.
 const APP_ID: &str = "com.marginote.app";
@@ -175,7 +180,7 @@ const CLI_CALL_POLICIES: &[CliCallPolicy] = &[
     after_help = "示例:\n  marginote-cli note create \"会议记录\" --stdin --notebook 工作\n  marginote-cli note list --query 项目 --json\n  marginote-cli todo create \"明天提交周报\" --due 2026-08-02T09:00:00+08:00\n  marginote-cli todo complete <ID>"
 )]
 struct Cli {
-    /// 输出稳定的 JSON 信封，适合 Claude Code 等 agent 解析
+    /// 输出稳定的 JSON 信封，适合 CodeAgent、Claude Code 等 agent 解析
     #[arg(long, global = true)]
     json: bool,
 
@@ -220,8 +225,70 @@ enum TopCommand {
     Call(CallArgs),
     /// 输出机器可读的命令能力说明，不需要启动 Marginote
     Schema,
-    /// 输出可直接粘贴给 Claude Code/Codex 的使用说明
+    /// 输出可直接粘贴给 CodeAgent/Claude Code/Codex 的使用说明
     Instructions,
+    /// 以标准输入输出运行本地 MCP Server
+    Mcp(McpArgs),
+    /// 诊断主程序、CLI 桥、工作目录和 MCP 能力
+    Doctor(DoctorArgs),
+    /// 配置 CodeAgent、Codex、Claude Code 或其他 MCP 客户端
+    Integrate {
+        #[command(subcommand)]
+        command: IntegrateCommand,
+    },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
+enum McpProfile {
+    /// 默认核心工具集，减少模型上下文占用和工具选择歧义
+    Core,
+    /// 完整细粒度工具集，适合笔记本管理和高级自动化
+    Full,
+}
+
+#[derive(Args, Debug)]
+struct McpArgs {
+    /// MCP 工具集；默认 core，兼容旧的 `marginote-cli mcp` 配置
+    #[arg(long, value_enum, default_value_t = McpProfile::Core)]
+    profile: McpProfile,
+}
+
+#[derive(Args, Debug)]
+struct DoctorArgs {
+    /// CodeAgent 配置根目录；不指定时读取环境变量或检测已存在的当前用户 .cac
+    #[arg(long, value_name = "PATH")]
+    codeagent_dir: Option<PathBuf>,
+}
+
+#[derive(Subcommand, Debug)]
+enum IntegrateCommand {
+    /// 检查本机 Agent 命令和现有 Marginote 配置
+    Status {
+        /// CodeAgent 配置根目录；不指定时读取环境变量或检测已存在的当前用户 .cac
+        #[arg(long, value_name = "PATH")]
+        codeagent_dir: Option<PathBuf>,
+    },
+    /// 输出指定客户端的安装命令与配置片段
+    Show {
+        #[arg(value_enum)]
+        client: AgentClient,
+    },
+    /// 安装用户级 Marginote MCP 集成；CodeAgent 使用 .cac 本地插件
+    Install {
+        #[arg(value_enum)]
+        client: InstallableAgentClient,
+        /// CodeAgent 配置根目录（包含 settings.json 或 plugins 目录）
+        #[arg(long, value_name = "PATH")]
+        codeagent_dir: Option<PathBuf>,
+    },
+    /// 移除用户级 Marginote MCP 集成；不删除 Marginote 数据
+    Remove {
+        #[arg(value_enum)]
+        client: InstallableAgentClient,
+        /// CodeAgent 配置根目录（包含 settings.json 或 plugins 目录）
+        #[arg(long, value_name = "PATH")]
+        codeagent_dir: Option<PathBuf>,
+    },
 }
 
 #[derive(Args, Debug)]
@@ -595,7 +662,11 @@ fn request_for(
             json!({ "query": args.query, "limit": args.limit }),
             "search",
         )),
-        TopCommand::Schema | TopCommand::Instructions => unreachable!("local command"),
+        TopCommand::Schema
+        | TopCommand::Instructions
+        | TopCommand::Mcp(_)
+        | TopCommand::Doctor(_)
+        | TopCommand::Integrate { .. } => unreachable!("local command"),
         TopCommand::Call(args) => {
             let policy = cli_call_policy(&args.tool)
                 .ok_or_else(|| format!("CLI 工具不在白名单中：{}", args.tool))?;
@@ -816,7 +887,8 @@ fn schema() -> Value {
         },
         "commands": [
             "status", "search <query>",
-            "instructions",
+            "instructions", "mcp [--profile core|full]", "doctor",
+            "integrate status|show <codeagent|codex|claude|generic>|install|remove <codeagent|codex|claude>",
             "note list [--paged --cursor <cursor>]|get|create|update|append|delete|export",
             "todo list [--paged --cursor <cursor>]|get|create|update|complete|delete",
             "notebook list|create|rename|delete",
@@ -848,6 +920,15 @@ fn schema() -> Value {
             "dryRun": "全局 --dry-run 只返回计划，不修改数据",
             "idempotency": "全局 --request-id；重试同一写入时复用，保留 24 小时"
         },
+        "mcp": {
+            "transport": "stdio",
+            "command": "marginote-cli mcp",
+            "defaultProfile": "core",
+            "fullCommand": "marginote-cli mcp --profile full",
+            "toolDiscovery": "MCP tools/list",
+            "serverInstructions": true,
+            "destructiveConfirmation": "删除工具必须传 confirmed=true"
+        },
         "callTools": call_tools,
         "examples": [
             "marginote-cli --json note list --query 项目",
@@ -857,6 +938,20 @@ fn schema() -> Value {
             "marginote-cli call create_note --args '{\"title\":\"来自 agent\",\"content\":\"正文\"}' --json"
         ]
     })
+}
+
+fn print_local_data(data: Value, json_output: bool) {
+    if json_output {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&json!({ "ok": true, "requestId": null, "data": data }))
+                .unwrap()
+        );
+    } else if let Some(text) = data.as_str() {
+        println!("{text}");
+    } else {
+        println!("{}", serde_json::to_string_pretty(&data).unwrap());
+    }
 }
 
 fn agent_instructions() -> &'static str {
@@ -1144,17 +1239,41 @@ fn main() {
         return;
     }
     if matches!(cli.command, TopCommand::Instructions) {
-        let text = agent_instructions();
-        if cli.json {
-            println!(
-                "{}",
-                serde_json::to_string_pretty(
-                    &json!({ "ok": true, "requestId": null, "data": { "text": text } })
-                )
-                .unwrap()
-            );
-        } else {
-            println!("{text}");
+        print_local_data(json!({ "text": agent_instructions() }), cli.json);
+        return;
+    }
+    if let TopCommand::Mcp(args) = &cli.command {
+        if let Err(error) = mcp::run(cli.no_start, args.profile) {
+            eprintln!("Marginote MCP Server 退出：{error}");
+            std::process::exit(3);
+        }
+        return;
+    }
+    if let TopCommand::Doctor(args) = &cli.command {
+        print_local_data(
+            integration::doctor(cli.no_start, args.codeagent_dir.as_deref()),
+            cli.json,
+        );
+        return;
+    }
+    if let TopCommand::Integrate { command } = &cli.command {
+        let result = match command {
+            IntegrateCommand::Status { codeagent_dir } => {
+                Ok(integration::status(codeagent_dir.as_deref()))
+            }
+            IntegrateCommand::Show { client } => Ok(integration::show(*client)),
+            IntegrateCommand::Install {
+                client,
+                codeagent_dir,
+            } => integration::install(*client, codeagent_dir.as_deref()),
+            IntegrateCommand::Remove {
+                client,
+                codeagent_dir,
+            } => integration::remove(*client, codeagent_dir.as_deref()),
+        };
+        match result {
+            Ok(data) => print_local_data(data, cli.json),
+            Err(error) => fail(error, 3, cli.json, None),
         }
         return;
     }
@@ -1395,6 +1514,13 @@ mod tests {
         );
         assert_eq!(schema["fileInput"]["restrictedToMarginoteWorkdir"], false);
         assert_eq!(schema["fileInput"]["absolutePaths"], true);
+        assert_eq!(schema["mcp"]["transport"], "stdio");
+        assert_eq!(schema["mcp"]["defaultProfile"], "core");
+        assert_eq!(
+            schema["mcp"]["fullCommand"],
+            "marginote-cli mcp --profile full"
+        );
+        assert_eq!(schema["mcp"]["serverInstructions"], true);
         assert_eq!(
             schema["safety"]["destructiveTools"]
                 .as_array()
@@ -1459,5 +1585,74 @@ mod tests {
         assert_eq!(command, "list_notes");
         assert_eq!(args["paged"], true);
         assert_eq!(args["cursor"], "mn1:20");
+    }
+
+    #[test]
+    fn agent_integration_commands_parse_without_starting_marginote() {
+        let mcp = Cli::try_parse_from(["marginote-cli", "mcp"]).unwrap();
+        assert!(matches!(
+            mcp.command,
+            TopCommand::Mcp(McpArgs {
+                profile: McpProfile::Core
+            })
+        ));
+        let full = Cli::try_parse_from(["marginote-cli", "mcp", "--profile", "full"]).unwrap();
+        assert!(matches!(
+            full.command,
+            TopCommand::Mcp(McpArgs {
+                profile: McpProfile::Full
+            })
+        ));
+
+        let install =
+            Cli::try_parse_from(["marginote-cli", "integrate", "install", "codex", "--json"])
+                .unwrap();
+        assert!(matches!(
+            install.command,
+            TopCommand::Integrate {
+                command: IntegrateCommand::Install {
+                    client: InstallableAgentClient::Codex,
+                    codeagent_dir: None
+                }
+            }
+        ));
+        assert!(install.json);
+
+        let codeagent = Cli::try_parse_from([
+            "marginote-cli",
+            "integrate",
+            "install",
+            "codeagent",
+            "--json",
+        ])
+        .unwrap();
+        assert!(matches!(
+            codeagent.command,
+            TopCommand::Integrate {
+                command: IntegrateCommand::Install {
+                    client: InstallableAgentClient::CodeAgent,
+                    codeagent_dir: None
+                }
+            }
+        ));
+
+        let configured_codeagent = Cli::try_parse_from([
+            "marginote-cli",
+            "integrate",
+            "install",
+            "codeagent",
+            "--codeagent-dir",
+            "C:\\Users\\demo\\.cac",
+        ])
+        .unwrap();
+        assert!(matches!(
+            configured_codeagent.command,
+            TopCommand::Integrate {
+                command: IntegrateCommand::Install {
+                    client: InstallableAgentClient::CodeAgent,
+                    codeagent_dir: Some(_)
+                }
+            }
+        ));
     }
 }

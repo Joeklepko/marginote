@@ -339,6 +339,8 @@ function setSettingsTab(name) {
     if (typeof renderAiPresetSelect === 'function') renderAiPresetSelect();
     if (typeof renderAiProviderList === 'function') renderAiProviderList();
     if (typeof closeAiProviderForm === 'function') closeAiProviderForm();
+  } else if (name === 'agent') {
+    if (typeof refreshAgentIntegrationStatus === 'function') refreshAgentIntegrationStatus();
   } else if (name === 'data') {
     if (typeof refreshStorageTab === 'function') refreshStorageTab();
     if (typeof renderLocalSyncInfo === 'function') renderLocalSyncInfo();

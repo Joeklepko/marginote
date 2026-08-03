@@ -604,6 +604,7 @@ const DESKTOP_PREFERENCE_KEYS = [
   'marginote.notesView',
   'marginote.aiCustomHistory',
   'marginote.desktop.hotkey',
+  'marginote.agent.codeagentDir',
   'marginote.editorZoom',
   'marginote.collapsed',
   'marginote.rail-collapsed'
@@ -6916,9 +6917,259 @@ function purgeLegacyManualNotes() {
 // ===================== 桌面专属设置 =====================
 const HOTKEY_PREF_KEY = 'marginote.desktop.hotkey';
 const HOTKEY_DEFAULT = 'Ctrl+Shift+M';
+const CODEAGENT_DIR_PREF_KEY = 'marginote.agent.codeagentDir';
+let _agentIntegrationBound = false;
+let _agentIntegrationLoading = false;
+
+function getCodeAgentConfigDir() {
+  const input = document.getElementById('agentCodeAgentDir');
+  const inputValue = String(input?.value || '').trim();
+  if (inputValue) return inputValue;
+  try { return String(localStorage.getItem(CODEAGENT_DIR_PREF_KEY) || '').trim(); }
+  catch { return ''; }
+}
+
+function saveCodeAgentConfigDir(value) {
+  const path = String(value || '').trim();
+  try {
+    if (path) localStorage.setItem(CODEAGENT_DIR_PREF_KEY, path);
+    else localStorage.removeItem(CODEAGENT_DIR_PREF_KEY);
+  } catch {}
+  scheduleDesktopPreferenceSave();
+}
+
+function agentIntegrationOutput(value) {
+  const output = document.getElementById('agentIntegrationOutput');
+  if (!output) return;
+  output.textContent = typeof value === 'string' ? value : JSON.stringify(value, null, 2);
+}
+
+function agentIntegrationData(result) {
+  if (!result || result.ok === false) {
+    throw new Error(result?.error || result?.stderr || 'Agent 集成命令执行失败');
+  }
+  return result.data ?? result;
+}
+
+async function runAgentIntegration(action, client) {
+  const api = mn?.platform?.desktop?.agentIntegration;
+  if (typeof api !== 'function') throw new Error('当前桌面版本不支持 Agent 集成');
+  const needsCodeAgentDir = action === 'status'
+    || action === 'doctor'
+    || (client === 'codeagent' && (action === 'install' || action === 'remove'));
+  const configDir = needsCodeAgentDir ? getCodeAgentConfigDir() : '';
+  return agentIntegrationData(await api(action, client || null, configDir || null));
+}
+
+function renderAgentClientStatus(client) {
+  const statusIds = {
+    codeagent: 'agentCodeAgentStatus',
+    codex: 'agentCodexStatus',
+    claude: 'agentClaudeStatus'
+  };
+  const id = statusIds[client?.id];
+  if (!id) return;
+  const element = document.getElementById(id);
+  if (!element) return;
+  if (client?.id === 'codeagent' && client?.rootPath) {
+    const input = document.getElementById('agentCodeAgentDir');
+    if (input && !String(input.value || '').trim()) {
+      input.value = client.rootPath;
+      saveCodeAgentConfigDir(client.rootPath);
+    }
+  }
+  const installButton = client?.id === 'codeagent'
+    ? document.getElementById('agentInstallCodeAgentBtn')
+    : null;
+  if (installButton) installButton.textContent = client?.updateAvailable
+    ? `更新至 ${client.currentVersion || '当前版本'}`
+    : '一键安装';
+  if (client?.id === 'codeagent' && client?.updateAvailable) {
+    element.textContent = `↻ 已安装 ${client.installedVersion || '旧版本'}，可更新至 ${client.currentVersion}`;
+  } else if (client?.configured) element.textContent = client.id === 'codeagent'
+    ? '✓ marginote@local 已安装并启用'
+    : '✓ 已配置 Marginote MCP';
+  else if (client?.id === 'codeagent' && client?.rootRequired) element.textContent = '请选择 CodeAgent 配置根目录';
+  else if (client?.id === 'codeagent' && client?.registryError) element.textContent = '⚠ .cac 配置异常，未修改';
+  else if (client?.id === 'codeagent' && client?.registered && !client?.enabled) element.textContent = '已注册但未启用，可重新安装修复';
+  else if (client?.detected) element.textContent = '已检测到客户端，可一键安装';
+  else element.textContent = '未检测到客户端命令，可复制配置手动添加';
+  element.title = client?.registryError
+    || (client?.updateAvailable ? `当前缓存：${client.pluginPath}\n更新目标：${client.expectedPluginPath}` : '')
+    || client?.configPath || client?.pluginPath || client?.executable || '';
+}
+
+async function refreshAgentIntegrationStatus() {
+  if (!isDesktopContext() || _agentIntegrationLoading) return;
+  _agentIntegrationLoading = true;
+  const cliStatus = document.getElementById('agentCliStatus');
+  const bridgeStatus = document.getElementById('agentBridgeStatus');
+  try {
+    if (cliStatus) cliStatus.textContent = '检查中…';
+    const status = await runAgentIntegration('status');
+    if (cliStatus) {
+      const version = status?.cli?.version ? ` v${status.cli.version}` : '';
+      cliStatus.textContent = status?.cli?.available ? `✓ 已安装${version}` : '✗ 未找到 CLI';
+      cliStatus.title = status?.cli?.path || '';
+    }
+    for (const client of status?.clients || []) renderAgentClientStatus(client);
+
+    if (bridgeStatus) bridgeStatus.textContent = '检查中…';
+    const doctor = await runAgentIntegration('doctor');
+    const bridge = doctor?.checks?.bridge;
+    if (bridgeStatus) {
+      const writable = bridge?.data?.writable;
+      bridgeStatus.textContent = bridge?.ok
+        ? (writable === false ? '⚠ 已连接，但存储只读' : '✓ 已连接且可用')
+        : '✗ 连接异常';
+      bridgeStatus.title = bridge?.error || bridge?.data?.storageError || '';
+    }
+  } catch (error) {
+    if (cliStatus && cliStatus.textContent === '检查中…') cliStatus.textContent = '✗ 检查失败';
+    if (bridgeStatus) bridgeStatus.textContent = '✗ 检查失败';
+    agentIntegrationOutput(error.message || String(error));
+  } finally {
+    _agentIntegrationLoading = false;
+  }
+}
+
+async function copyText(text) {
+  const value = String(text || '');
+  if (!value) throw new Error('没有可复制的配置');
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(value);
+    return;
+  }
+  const textarea = document.createElement('textarea');
+  textarea.value = value;
+  textarea.style.position = 'fixed';
+  textarea.style.opacity = '0';
+  document.body.appendChild(textarea);
+  textarea.select();
+  const copied = document.execCommand('copy');
+  textarea.remove();
+  if (!copied) throw new Error('复制失败，请从结果区域手动复制');
+}
+
+async function copyAgentConfig(client) {
+  try {
+    const config = await runAgentIntegration('show', client);
+    await copyText(config.config);
+    agentIntegrationOutput(`${config.label || client} 配置已复制：\n\n${config.config}`);
+    showToast('MCP 配置已复制');
+  } catch (error) {
+    agentIntegrationOutput(error.message || String(error));
+    showToast('复制失败');
+  }
+}
+
+function installAgentIntegration(client, label) {
+  const installDescription = client === 'codeagent'
+    ? `将在所选 CodeAgent 配置根目录${getCodeAgentConfigDir() ? `（${getCodeAgentConfigDir()}）` : ''}安装 marginote@local 插件，并安全合并 installed_plugins.json 与 settings.json。现有插件和设置会保留，修改前生成 .marginote.bak 备份；未选择且无法自动检测目录时会停止。`
+    : `将调用 ${label} 自带的 MCP 配置命令，在当前用户范围新增名为 marginote 的服务器；不会覆盖同名配置，也不会修改其他服务器。`;
+  showModal(
+    `安装 ${label} 集成？`,
+    installDescription,
+    async () => {
+      agentIntegrationOutput(`正在安装 ${label} 集成…`);
+      try {
+        const result = await runAgentIntegration('install', client);
+        agentIntegrationOutput(result);
+        const message = result.updated
+          ? `${label} 已更新，请重启客户端`
+          : result.repaired
+            ? `${label} 集成已修复，请重启客户端`
+            : result.alreadyConfigured
+              ? `${label} 已配置`
+              : `${label} 集成安装完成，请重启客户端`;
+        showToast(message);
+        await refreshAgentIntegrationStatus();
+      } catch (error) {
+        if (client === 'codeagent') {
+          try {
+            const fallback = await runAgentIntegration('show', client);
+            agentIntegrationOutput(`CodeAgent 插件安装失败：${error.message || String(error)}\n\n用户配置没有被覆盖。可点击“复制 MCP 配置”查看底层 stdio 配置：\n\n${fallback.config}`);
+          } catch {
+            agentIntegrationOutput(error.message || String(error));
+          }
+        } else {
+          agentIntegrationOutput(error.message || String(error));
+        }
+        showToast(`${label} 集成安装失败`);
+      }
+    }
+  );
+}
+
+function removeAgentIntegration(client, label) {
+  const removeDescription = client === 'codeagent'
+    ? '将从 CodeAgent 的 installed_plugins.json 和 settings.json 中移除 marginote@local 注册与启用项。插件缓存会保留以便恢复，Marginote、CLI、笔记和其他 CodeAgent 插件不会删除。'
+    : `将调用 ${label} 自带的 MCP 配置命令，只移除名为 marginote 的服务器。Marginote、CLI 和笔记数据不会被删除。`;
+  showModal(
+    `移除 ${label} 集成？`,
+    removeDescription,
+    async () => {
+      agentIntegrationOutput(`正在移除 ${label} 集成…`);
+      try {
+        const result = await runAgentIntegration('remove', client);
+        agentIntegrationOutput(result);
+        showToast(`${label} 集成已移除，请重启客户端`);
+        await refreshAgentIntegrationStatus();
+      } catch (error) {
+        agentIntegrationOutput(error.message || String(error));
+        showToast(`${label} 集成移除失败`);
+      }
+    }
+  );
+}
+
+function bindAgentIntegrationSettings() {
+  if (_agentIntegrationBound || !isDesktopContext()) return;
+  _agentIntegrationBound = true;
+  const codeAgentDirInput = document.getElementById('agentCodeAgentDir');
+  try {
+    if (codeAgentDirInput) codeAgentDirInput.value = localStorage.getItem(CODEAGENT_DIR_PREF_KEY) || '';
+  } catch {}
+  codeAgentDirInput?.addEventListener('input', () => saveCodeAgentConfigDir(codeAgentDirInput.value));
+  codeAgentDirInput?.addEventListener('change', refreshAgentIntegrationStatus);
+  document.getElementById('agentPickCodeAgentDirBtn')?.addEventListener('click', async () => {
+    const picker = mn?.platform?.desktop?.pickAgentConfigDir;
+    if (typeof picker !== 'function') {
+      agentIntegrationOutput('当前桌面版本不支持目录选择，请直接填写 CodeAgent 配置根目录。');
+      return;
+    }
+    try {
+      const selected = await picker();
+      if (!selected) return;
+      if (codeAgentDirInput) codeAgentDirInput.value = selected;
+      saveCodeAgentConfigDir(selected);
+      await refreshAgentIntegrationStatus();
+    } catch (error) {
+      agentIntegrationOutput(error.message || String(error));
+    }
+  });
+  document.getElementById('agentRefreshBtn')?.addEventListener('click', refreshAgentIntegrationStatus);
+  document.getElementById('agentDoctorBtn')?.addEventListener('click', async () => {
+    agentIntegrationOutput('正在运行诊断…');
+    try { agentIntegrationOutput(await runAgentIntegration('doctor')); }
+    catch (error) { agentIntegrationOutput(error.message || String(error)); }
+  });
+  document.getElementById('agentInstallCodeAgentBtn')?.addEventListener('click', () => installAgentIntegration('codeagent', 'CodeAgent'));
+  document.getElementById('agentInstallCodexBtn')?.addEventListener('click', () => installAgentIntegration('codex', 'Codex'));
+  document.getElementById('agentInstallClaudeBtn')?.addEventListener('click', () => installAgentIntegration('claude', 'Claude Code'));
+  document.getElementById('agentRemoveCodeAgentBtn')?.addEventListener('click', () => removeAgentIntegration('codeagent', 'CodeAgent'));
+  document.getElementById('agentRemoveCodexBtn')?.addEventListener('click', () => removeAgentIntegration('codex', 'Codex'));
+  document.getElementById('agentRemoveClaudeBtn')?.addEventListener('click', () => removeAgentIntegration('claude', 'Claude Code'));
+  document.getElementById('agentCopyCodeAgentBtn')?.addEventListener('click', () => copyAgentConfig('codeagent'));
+  document.getElementById('agentCopyCodexBtn')?.addEventListener('click', () => copyAgentConfig('codex'));
+  document.getElementById('agentCopyClaudeBtn')?.addEventListener('click', () => copyAgentConfig('claude'));
+  document.getElementById('agentCopyGenericBtn')?.addEventListener('click', () => copyAgentConfig('generic'));
+}
 
 async function initDesktopSettings() {
   if (!isDesktopContext()) return;
+
+  bindAgentIntegrationSettings();
 
   // 注册（默认或用户保存的）全局快捷键
   let combo = HOTKEY_DEFAULT;

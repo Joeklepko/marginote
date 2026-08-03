@@ -65,6 +65,10 @@ for (const controlId of ['windowMinimizeBtn', 'windowMaximizeBtn', 'windowCloseB
   assert.match(desktopHtml, new RegExp(`id=["']${controlId}["']`), `桌面版缺少自绘窗口控制 ${controlId}`);
 }
 assert.doesNotMatch(desktopHtml, /id=["']cliStatusBar["']/, '桌面版不应继续占用底部空间展示 CLI 状态栏');
+assert.match(desktopHtml, /data-tab=["']agent["']/, '桌面设置必须提供 Agent 集成入口');
+for (const controlId of ['agentCodeAgentDir', 'agentPickCodeAgentDirBtn', 'agentInstallCodeAgentBtn', 'agentCopyCodeAgentBtn', 'agentRemoveCodeAgentBtn', 'agentInstallCodexBtn', 'agentInstallClaudeBtn', 'agentRemoveCodexBtn', 'agentRemoveClaudeBtn', 'agentCopyGenericBtn', 'agentDoctorBtn']) {
+  assert.match(desktopHtml, new RegExp(`id=["']${controlId}["']`), `Agent 集成页缺少 ${controlId}`);
+}
 
 const desktopApp = fs.readFileSync('shared/app.js', 'utf8');
 assert.match(desktopApp, /await loadDesktopWorkdirData\(\)/, '桌面启动必须先读取 Markdown 工作目录');
@@ -116,6 +120,8 @@ assert.match(desktopApp, /`remindBeforeMin: \$\{/, '待办独立文件必须包�
 assert.match(desktopApp, /`remindIntervalMin: \$\{/, '待办独立文件必须包含重复提醒间隔');
 assert.doesNotMatch(desktopApp, /platform\.mainData|loadDesktopMainData/, '桌面版不得退回聚合主数据 JSON');
 const desktopCommands = fs.readFileSync('desktop/src-tauri/src/lib.rs', 'utf8');
+assert.match(desktopCommands, /agent_integration::cmd_agent_integration/, '桌面端必须注册受限 Agent 集成命令');
+assert.match(desktopCommands, /agent_integration::cmd_agent_pick_config_dir/, '桌面端必须注册 CodeAgent 配置目录选择器');
 assert.match(desktopCommands, /workdir::cmd_workdir_ensure/, '桌面端必须能自动创建默认 Markdown 工作目录');
 assert.match(desktopCommands, /workdir::cmd_workdir_read_texts/, '大笔记库启动应在 Rust 侧批量读取文本，避免逐文件 IPC');
 assert.doesNotMatch(desktopCommands, /cmd_main_data_(?:get|set)/, '桌面端不得注册聚合主数据 JSON 命令');
@@ -132,6 +138,39 @@ assert.match(cliDocs, /todo get <TODO_ID>/, 'CLI 文档必须覆盖待办详情�
 assert.match(cliDocs, /notebook delete .* --yes/, 'CLI 文档必须覆盖笔记本删除确认');
 assert.match(cliDocs, /--remind-count <次数>/, 'CLI 文档必须解释重复提醒次数');
 assert.match(cliDocs, /batch_delete_todos/, 'CLI 文档必须覆盖 schema 暴露的高级批处理删除能力');
+assert.match(cliDocs, /marginote-cli mcp/, 'CLI 文档必须说明内置 MCP Server');
+assert.match(cliDocs, /mcp --profile full/, 'CLI 文档必须说明完整 MCP profile');
+assert.match(cliDocs, /12 个工具/, 'CLI 文档必须说明默认精简工具集');
+assert.match(cliDocs, /integrate install codex/, 'CLI 文档必须说明 Codex 一键集成');
+assert.match(cliDocs, /integrate install codeagent/, 'CLI 文档必须说明 CodeAgent 一键集成');
+assert.doesNotMatch(cliDocs, /^codeagent mcp add/m, 'CodeAgent 不应再按不存在的 mcp add 命令接入');
+assert.match(cliDocs, /marginote@local/, 'CLI 文档必须说明 CodeAgent 本地插件标识');
+assert.match(cliDocs, /installed_plugins\.json/, 'CLI 文档必须说明 CodeAgent 插件注册表');
+assert.match(cliDocs, /\.marginote\.bak/, 'CLI 文档必须说明 CodeAgent 配置备份');
+assert.match(cliDocs, /--codeagent-dir/, 'CLI 文档必须说明非默认 CodeAgent 配置目录');
+assert.match(cliDocs, /MARGINOTE_CODEAGENT_DIR/, 'CLI 文档必须说明 CodeAgent 配置目录环境变量');
+assert.match(cliDocs, /设置 → Agent/, 'CLI 文档必须说明桌面 Agent 集成页');
+
+const desktopPlatform = fs.readFileSync('shared/js/platform-desktop.js', 'utf8');
+assert.match(desktopPlatform, /cmd_agent_integration/, '桌面平台层必须通过受限原生命令管理 Agent 集成');
+assert.match(desktopPlatform, /cmd_agent_pick_config_dir/, '桌面平台层必须提供 CodeAgent 配置目录选择器');
+const cliMain = fs.readFileSync('desktop/cli/src/main.rs', 'utf8');
+assert.match(cliMain, /mod mcp;/, 'CLI 必须包含本地 MCP 协议模块');
+assert.match(cliMain, /TopCommand::Mcp/, 'CLI 必须公开 mcp 子命令');
+assert.match(cliMain, /default_value_t = McpProfile::Core/, 'MCP 必须默认使用核心工具集');
+const mcpSource = fs.readFileSync('desktop/cli/src/mcp.rs', 'utf8');
+assert.match(mcpSource, /"batch_manage"/, '核心 MCP 必须合并批处理入口');
+assert.match(mcpSource, /assert_eq!\(full_tools\.len\(\), 23\)/, '完整 MCP 必须保留原有 23 个工具');
+assert.match(cliMain, /IntegrateCommand::Install/, 'CLI 必须公开 Agent 一键安装命令');
+assert.match(cliMain, /IntegrateCommand::Remove/, 'CLI 必须公开 Agent 集成移除命令');
+const agentIntegrationSource = fs.readFileSync('desktop/cli/src/integration.rs', 'utf8');
+assert.match(agentIntegrationSource, /CODEAGENT_PLUGIN_KEY:\s*&str\s*=\s*"marginote@local"/, 'CodeAgent 必须使用独立本地插件键');
+assert.match(agentIntegrationSource, /codeagent_installed_path/, 'CodeAgent 必须维护 installed_plugins.json 注册');
+assert.match(agentIntegrationSource, /protected_write/, 'CodeAgent 配置写入必须先备份并受保护');
+assert.match(agentIntegrationSource, /MARGINOTE_CODEAGENT_DIR/, 'CodeAgent 配置目录必须支持显式环境变量覆盖');
+assert.match(agentIntegrationSource, /validate_codeagent_root/, 'CodeAgent 配置根目录必须在写入前校验');
+assert.match(agentIntegrationSource, /"updateAvailable"/, 'CodeAgent 状态必须报告插件版本更新');
+assert.match(agentIntegrationSource, /"previousCacheRetained"/, 'CodeAgent 升级必须明确保留旧版本缓存');
 
 const tauriConfig = JSON.parse(fs.readFileSync('desktop/src-tauri/tauri.conf.json', 'utf8'));
 assert.equal(tauriConfig.app.windows[0].decorations, false, '桌面窗口应取消独立原生标题栏');

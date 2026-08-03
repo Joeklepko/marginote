@@ -2,7 +2,7 @@
 
 把 Marginote 打成 Windows `.exe` 安装包的 Tauri 工程。前端复用 `../shared/`。
 
-Windows 安装包还包含独立的 `marginote-cli.exe`（源码在 `cli/`）。安装器会把安装目录加入当前用户 PATH；CLI 通过本机认证桥调用 WebView 内的共享业务工具，详见 [`../docs/cli.md`](../docs/cli.md)。
+Windows 安装包还包含独立的 `marginote-cli.exe`（源码在 `cli/`）。安装器会把安装目录加入当前用户 PATH；CLI 通过本机认证桥调用 WebView 内的共享业务工具，并内置默认 12 个核心工具、可选 23 个完整工具的 `stdio` MCP Server，以及 CodeAgent/Codex/Claude Code 集成命令，详见 [`../docs/cli.md`](../docs/cli.md)。
 
 ## 构建
 
@@ -40,10 +40,11 @@ sudo apt install libwebkit2gtk-4.1-dev build-essential curl wget file \
   - `capabilities/default.json`：Tauri 2 权限模型
   - `src/lib.rs`：插件注册 + 命令路由
   - `src/cli_bridge.rs`：仅本机、随机令牌认证的 CLI 请求桥
+  - `src/agent_integration.rs`：设置页使用的 Agent 集成固定动作白名单和 CodeAgent 配置目录选择器
   - `src/commands.rs`：fetch / alarms / window 命令实现
   - `icons/`：多尺寸图标（CI 自动生成，本地需手动生成）
 - `package.json`：仅供 `@tauri-apps/cli` 使用
-- `cli/`：无 GUI 依赖的 Rust CLI，可单独构建和测试
+- `cli/`：无 GUI 依赖的 Rust CLI，可单独构建和测试；`src/mcp.rs` 提供 stdio MCP，`src/integration.rs` 提供 Agent 配置与诊断
 - `src-tauri/windows/hooks.nsh`：安装/卸载时维护当前用户 PATH
 
 ## 设计文档
