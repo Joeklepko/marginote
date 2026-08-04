@@ -147,13 +147,43 @@ check('高相关检索结果仍可复用旧笔记', (() => {
   const intent = core.classifyIntent(value);
   return core.captureTargetDecision({
     value, intent, targetId: 'phone-note', attachments: [],
-    prefetchedNotes: [{ id: 'phone-note', relevance: 42 }]
+    prefetchedNotes: [{ id: 'phone-note', title: '手机控制PC开发参考', snippet: '联系人开发经验', relevance: 42 }]
   }).allowed;
 })());
 check('明确连续补充可复用上一轮写入目标', (() => {
   const value = '再补充一下：工号是00574578';
   const intent = { kind: 'note_write', capabilities: ['capture'] };
   return core.captureTargetDecision({ value, intent, targetId: 'phone-note', previousTargetId: 'phone-note' }).allowed;
+})());
+check('UID 不会因“获取方式”重合而误追加到 ODID 笔记', (() => {
+  const value = '帮我记录一下：UID获取方式： https://clouddrive.huawei.com/p/e5dffc747a799162a29650440af93616';
+  const intent = core.classifyIntent(value);
+  const result = { id: 'odid-note', title: 'odid获取方式', snippet: '天际通设备号', notebookName: '技术资料', relevance: 69.5 };
+  return core.captureSpecificAnchors(value).join(',') === 'uid'
+    && !core.captureTargetDecision({ value, intent, targetId: result.id, prefetchedNotes: [result] }).allowed;
+})());
+check('模型不调用工具时 UID 记录会确定性新建同分类笔记', (() => {
+  const value = '帮我记录一下：UID获取方式： https://clouddrive.huawei.com/p/e5dffc747a799162a29650440af93616';
+  const plan = core.planDeterministicNoteCapture({
+    value,
+    intent: core.classifyIntent(value),
+    prefetchedNotes: [{ id: 'odid-note', title: 'odid获取方式', snippet: '设备号', notebookName: '技术资料', relevance: 69.5 }],
+    notebooks: [{ id: 'tech', name: '技术资料' }]
+  });
+  return plan?.tool === 'create_note'
+    && plan.args.title === 'UID获取方式'
+    && plan.args.notebookName === '技术资料'
+    && plan.args.content.includes('clouddrive.huawei.com');
+})());
+check('模型不调用工具时同一英文主题仍优先追加', (() => {
+  const value = '帮我记录一下：UID获取方式新增了网页登录入口';
+  const plan = core.planDeterministicNoteCapture({
+    value,
+    intent: core.classifyIntent(value),
+    prefetchedNotes: [{ id: 'uid-note', title: 'UID获取方式', snippet: '已有入口', notebookName: '技术资料', relevance: 30 }],
+    notebooks: [{ id: 'tech', name: '技术资料' }]
+  });
+  return plan?.tool === 'append_to_note' && plan.args.noteId === 'uid-note' && plan.args.text.includes('新增了网页登录入口');
 })());
 check('普通请求只带入偏好和相关记忆', (() => {
   const memories = [

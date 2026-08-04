@@ -1940,7 +1940,40 @@ async function runAssistantTurn(userInput) {
       }
     }
 
-    const wroteSomething = toolLog.some(t => t.ok && ASSISTANT_WRITE_TOOLS.has(t.tool));
+    let wroteSomething = toolLog.some(t => t.ok && ASSISTANT_WRITE_TOOLS.has(t.tool));
+    const writeCancelled = toolLog.some(item => item.cancelled);
+    const failedWrites = toolLog.filter(item => !item.ok && item.isWrite);
+    const fallbackRecoverable = failedWrites.every(item => /相关性不足|title 必须|notebookName 必填|笔记未找到/.test(item.summary || ''));
+    if (!wroteSomething && !writeCancelled && fallbackRecoverable) {
+      const fallbackPlan = AssistantCore.planDeterministicNoteCapture({
+        value: requestText,
+        intent,
+        attachments: turnAttachments,
+        prefetchedNotes,
+        notebooks,
+        previousTargetId: previousNoteTargetId,
+        inherited: planningRequest.inherited
+      });
+      if (fallbackPlan) {
+        try {
+          const result = await runAssistantTool(fallbackPlan.tool, fallbackPlan.args, { allowedToolNames });
+          const summary = AssistantCore.summarizeToolResult(fallbackPlan.tool, result, { formatDate: formatFullDate });
+          toolLog.push({
+            tool: fallbackPlan.tool,
+            summary,
+            ok: true,
+            isWrite: true,
+            deterministicFallback: true,
+            changeSetId: lastAssistantChangeSetId || undefined,
+            ...AssistantCore.toolResultTarget(fallbackPlan.tool, result)
+          });
+          wroteSomething = true;
+          finalReply = `✓\n${summary}`;
+        } catch (error) {
+          toolLog.push({ tool: fallbackPlan.tool, summary: error.message || String(error), ok: false, isWrite: true, deterministicFallback: true });
+        }
+      }
+    }
     const needsLegacyWorkdirFlush = toolLog.some(t => t.ok && ToolPolicy.projectsToWorkdir(t.tool) && !t.changeSetId);
     if (needsLegacyWorkdirFlush) {
       try { if (typeof workdirWriteAll === 'function') await workdirWriteAll(true); } catch {}
@@ -1949,7 +1982,6 @@ async function runAssistantTurn(userInput) {
     // 防"幻觉式成功"：模型在 reply 里声称已创建/保存了笔记/待办/记忆，但本轮没有任何写工具
     // 真正成功执行（模型只是描述结果没调用工具，或工具执行失败）——不能让用户误以为成功了。
     const claimsWrite = AssistantCore.claimsSuccessfulWrite(finalReply);
-    const writeCancelled = toolLog.some(item => item.cancelled);
     if ((claimsWrite || intent.isWrite) && !wroteSomething && !writeCancelled) {
       const failed = toolLog.filter(t => !t.ok).map(t => t.tool + (t.summary ? '（' + t.summary + '）' : ''));
       finalReply = '⚠️ 实际并未创建/保存成功——' + (failed.length

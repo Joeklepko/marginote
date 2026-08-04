@@ -179,6 +179,72 @@
     return /^(?:再|另外|还有|补充|同时|顺便|接着|继续)/.test(normalizeText(value));
   }
 
+  const CAPTURE_PREFIX_RE = /^\s*(?:(?:请|麻烦)?\s*帮我\s*)?(?:记录一下|记录下|记录|记一下|记下|记一笔|写下来|存下来)\s*[：:,，]?\s*/i;
+  const CAPTURE_ANCHOR_STOPWORDS = new Set(['http', 'https', 'www', 'com', 'cn', 'net', 'org', 'app']);
+
+  function extractNoteCapturePayload(value) {
+    const original = String(value || '').trim();
+    const match = original.match(CAPTURE_PREFIX_RE);
+    if (!match) return '';
+    return original.slice(match[0].length).trim();
+  }
+
+  // URL 本身不参与主题锚点判断；保留 UID、ODID、PC、Q3 等英文/数字标识，
+  // 避免仅因“获取方式”“使用方法”等通用中文短语相同而误合并笔记。
+  function captureSpecificAnchors(value) {
+    const payload = extractNoteCapturePayload(value) || String(value || '');
+    const withoutUrls = payload.replace(/https?:\/\/\S+/gi, ' ');
+    const matches = withoutUrls.match(/[a-z][a-z0-9_+#.-]{1,31}/gi) || [];
+    return [...new Set(matches.map(item => item.toLowerCase().replace(/^[.]+|[.]+$/g, '')))]
+      .filter(item => item && !CAPTURE_ANCHOR_STOPWORDS.has(item));
+  }
+
+  function captureTargetHasAnchors(value, target) {
+    const anchors = captureSpecificAnchors(value);
+    if (!anchors.length) return true;
+    const haystack = normalizeText(`${target?.title || ''} ${target?.snippet || ''} ${target?.content || ''}`)
+      .replace(/https?:\/\/\S+/gi, ' ');
+    const targetTokens = new Set(haystack.match(/[a-z][a-z0-9_+#.-]{1,31}/g) || []);
+    return anchors.every(anchor => targetTokens.has(anchor));
+  }
+
+  function inferCaptureTitle(payload) {
+    const text = String(payload || '').trim();
+    if (!text) return '';
+    const urlIndex = text.search(/https?:\/\//i);
+    const separatorIndex = text.search(/[：:]/);
+    if (separatorIndex > 0 && (urlIndex < 0 || separatorIndex < urlIndex)) {
+      const labeled = text.slice(0, separatorIndex).replace(/^[#*\s]+|[#*\s]+$/g, '').trim();
+      if (labeled.length >= 2 && labeled.length <= 48 && !/[。！？!?]/.test(labeled)) return labeled;
+    }
+    const withoutUrls = text.replace(/https?:\/\/\S+/gi, ' ').replace(/\s+/g, ' ').trim();
+    const sentence = withoutUrls.split(/[。！？!?\n]/)[0].replace(/^[#*\s]+|[#*\s]+$/g, '').trim();
+    if (!sentence) return '随手记录';
+    return sentence.length <= 36 ? sentence : sentence.slice(0, 36).replace(/[，,、；;：:\s]+$/g, '');
+  }
+
+  function selectCaptureNotebookName(payload, prefetchedNotes, notebookList) {
+    const results = Array.isArray(prefetchedNotes) ? prefetchedNotes : [];
+    const fromRelatedArea = results.find(item => item?.notebookName && Number(item.relevance) > 0)?.notebookName;
+    if (fromRelatedArea) return String(fromRelatedArea);
+    const names = (Array.isArray(notebookList) ? notebookList : []).map(item => String(item?.name || '')).filter(Boolean);
+    const text = normalizeText(payload);
+    const named = names.find(name => text.includes(normalizeText(name)));
+    if (named) return named;
+    const categoryPatterns = [
+      { content: /(?:https?:\/\/|开发|代码|命令|接口|配置|安装|获取方式|使用方法|技术)/i, notebook: /技术|开发|知识|资料/, fallback: '知识资料' },
+      { content: /(?:联系人|工号|电话|请教|同事)/, notebook: /联系人|人脉|通讯/, fallback: '联系人' },
+      { content: /(?:项目|需求|会议|工作|版本|发布)/, notebook: /工作|项目|会议/, fallback: '工作' },
+      { content: /(?:生活|购物|旅行|健康|家庭)/, notebook: /生活|个人|家庭/, fallback: '生活' }
+    ];
+    for (const category of categoryPatterns) {
+      if (!category.content.test(payload)) continue;
+      const existing = names.find(name => category.notebook.test(name));
+      return existing || category.fallback;
+    }
+    return names.find(name => /随手|收件箱|默认|未分类/.test(name)) || '随手记录';
+  }
+
   // 捕获型写入只有在“明确指定 / 高相关检索 / 明确连续补充”三种情况下才能复用旧笔记。
   // 其余情况拒绝 append/update，让模型回退到 create_note，而不是先污染旧笔记再建议新建。
   function captureTargetDecision(options = {}) {
@@ -193,12 +259,53 @@
       && attachments.some(item => item?.type === 'note' && item.id === targetId);
     if (explicitlyAttached || currentTarget) return { allowed: true, reason: 'explicit-target' };
     const relevant = (Array.isArray(options.prefetchedNotes) ? options.prefetchedNotes : [])
-      .some(note => String(note?.id || '') === targetId && Number(note?.relevance) >= 8);
+      .some(note => String(note?.id || '') === targetId
+        && Number(note?.relevance) >= 8
+        && captureTargetHasAnchors(options.value, note));
     if (relevant) return { allowed: true, reason: 'relevant-search' };
     const followsPrevious = targetId === String(options.previousTargetId || '')
       && (options.inherited === true || isContinuationCapture(options.value));
     if (followsPrevious) return { allowed: true, reason: 'conversation-continuation' };
     return { allowed: false, reason: 'low-relevance' };
+  }
+
+  // 明确的“记录一下：内容”在模型没有产生工具调用时由应用兜底执行。
+  // 这不是另一个 AI 决策器：只做可预测的追加/新建，确保用户请求真实落盘。
+  function planDeterministicNoteCapture(options = {}) {
+    const intent = options.intent || classifyIntent(options.value);
+    const capabilities = Array.isArray(intent.capabilities) ? intent.capabilities : [];
+    if (intent.kind !== 'note_write' || !capabilities.includes('capture')) return null;
+    const payload = extractNoteCapturePayload(options.value);
+    if (!payload) return null;
+    const attachments = Array.isArray(options.attachments) ? options.attachments : [];
+    const explicitTarget = attachments.find(item => item?.type === 'note' && item.id && item.automatic !== true);
+    if (explicitTarget) {
+      return { tool: 'append_to_note', args: { noteId: String(explicitTarget.id), text: payload }, payload, reason: 'explicit-target' };
+    }
+    const related = (Array.isArray(options.prefetchedNotes) ? options.prefetchedNotes : []).find(note => (
+      captureTargetDecision({
+        value: options.value,
+        intent,
+        targetId: note?.id,
+        attachments,
+        prefetchedNotes: options.prefetchedNotes,
+        previousTargetId: options.previousTargetId,
+        inherited: options.inherited
+      }).allowed
+    ));
+    if (related?.id) {
+      return { tool: 'append_to_note', args: { noteId: String(related.id), text: payload }, payload, reason: 'relevant-search' };
+    }
+    return {
+      tool: 'create_note',
+      args: {
+        title: inferCaptureTitle(payload),
+        content: payload,
+        notebookName: selectCaptureNotebookName(payload, options.prefetchedNotes, options.notebooks)
+      },
+      payload,
+      reason: 'new-note'
+    };
   }
 
   function planAssistantTurn(value, attachments, contextK) {
@@ -798,7 +905,13 @@
     filterAutomaticAttachments,
     lastSuccessfulWriteTarget,
     isContinuationCapture,
+    extractNoteCapturePayload,
+    captureSpecificAnchors,
+    captureTargetHasAnchors,
+    inferCaptureTitle,
+    selectCaptureNotebookName,
     captureTargetDecision,
+    planDeterministicNoteCapture,
     planAssistantTurn,
     isToolAllowed,
     resolveNoteAttachmentImages,

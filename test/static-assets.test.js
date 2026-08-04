@@ -214,6 +214,8 @@ for (const assistantPath of ['shared/js/assistant.js', 'extension/js/assistant.j
   assert.match(source, /turnPlan\.promptToolNames/, `${assistantPath} 必须分离默认授权面与模型工具提示面`);
   assert.match(source, /AssistantCore\.captureTargetDecision/, `${assistantPath} 必须阻止低相关旧笔记被误追加`);
   assert.match(source, /这是明确的写入请求，但你尚未真正调用工具/, `${assistantPath} 必须对只描述不执行的写入请求自动重试`);
+  assert.match(source, /AssistantCore\.planDeterministicNoteCapture/, `${assistantPath} 明确记录请求在模型不调用工具时必须由应用兜底落盘`);
+  assert.match(source, /deterministicFallback: true/, `${assistantPath} 必须标记确定性兜底写入以便追溯`);
   assert.match(source, /function getAutomaticAssistantContext\(/, `${assistantPath} 必须自动注入当前笔记或待办上下文`);
   assert.match(source, /turnPlan\.maxToolSteps/, `${assistantPath} 必须使用 Skill 的步骤上限`);
   assert.match(source, /AssistantCore\.selectRecentHistory/, `${assistantPath} 必须使用统一且有界的历史窗口`);

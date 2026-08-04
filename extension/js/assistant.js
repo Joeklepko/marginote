@@ -1790,12 +1790,43 @@ async function runAssistantTurn(userInput) {
       }
     }
 
+    let wroteSomething = toolLog.some(item => item.ok && EXTENSION_ASSISTANT_WRITE_TOOLS.has(item.tool));
+    const writeCancelled = toolLog.some(item => item.cancelled);
+    const failedWrites = toolLog.filter(item => !item.ok && item.isWrite);
+    const fallbackRecoverable = failedWrites.every(item => /相关性不足|title 必须|notebookName 必填|笔记未找到/.test(item.summary || ''));
+    if (!wroteSomething && !writeCancelled && fallbackRecoverable) {
+      const fallbackPlan = AssistantCore.planDeterministicNoteCapture({
+        value: requestText,
+        intent,
+        attachments: turnAttachments,
+        prefetchedNotes,
+        notebooks,
+        previousTargetId: previousNoteTargetId,
+        inherited: planningRequest.inherited
+      });
+      if (fallbackPlan) {
+        try {
+          const result = await runAssistantTool(fallbackPlan.tool, fallbackPlan.args, { allowedToolNames });
+          const summary = AssistantCore.summarizeToolResult(fallbackPlan.tool, result, { formatDate: formatFullDate });
+          toolLog.push({
+            tool: fallbackPlan.tool,
+            summary,
+            ok: true,
+            isWrite: true,
+            deterministicFallback: true,
+            ...AssistantCore.toolResultTarget(fallbackPlan.tool, result)
+          });
+          wroteSomething = true;
+          finalReply = `✓\n${summary}`;
+        } catch (error) {
+          toolLog.push({ tool: fallbackPlan.tool, summary: error.message || String(error), ok: false, isWrite: true, deterministicFallback: true });
+        }
+      }
+    }
     if (toolLog.some(t => t.ok && ToolPolicy.projectsToWorkdir(t.tool))) {
       try { if (typeof workdirWriteAll === 'function') await workdirWriteAll(true); } catch {}
     }
 
-    const wroteSomething = toolLog.some(item => item.ok && EXTENSION_ASSISTANT_WRITE_TOOLS.has(item.tool));
-    const writeCancelled = toolLog.some(item => item.cancelled);
     if ((AssistantCore.claimsSuccessfulWrite(finalReply) || intent.isWrite) && !wroteSomething && !writeCancelled) {
       const failed = toolLog.filter(item => !item.ok).map(item => item.tool + (item.summary ? `（${item.summary}）` : ''));
       finalReply = '⚠️ 实际并未创建或保存成功——' + (failed.length

@@ -51,7 +51,7 @@ const prompt = prompts.buildAssistantPrompt({
   contextK: 16
 });
 
-assert.equal(prompt.promptId, 'marginote-assistant-v4');
+assert.equal(prompt.promptId, 'marginote-assistant-v5');
 assert.match(prompt.system, /Skill:笔记检索/);
 assert.match(prompt.system, /search_notes:搜索笔记/);
 assert.match(prompt.system, /get_note:读取笔记/);
@@ -119,6 +119,7 @@ assert.match(capturePrompt.system, /必须生成具体、可检索的 title/);
 assert.match(capturePrompt.system, /显式传 notebookName/);
 assert.match(capturePrompt.system, /由 create_note 自动创建/);
 assert.match(capturePrompt.system, /禁止先污染不相关笔记再建议新建/);
+assert.match(capturePrompt.system, /UID 与 ODID/);
 assert.match(capturePrompt.system, /声称权限不足/);
 assert.match(capturePrompt.context, /相关度:27\.1/);
 assert.doesNotMatch(capturePrompt.system, /新建、创建一篇笔记”时必须 create_note/);
